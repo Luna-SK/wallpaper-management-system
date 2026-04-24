@@ -14,6 +14,9 @@ import java.util.UUID;
 import java.util.zip.GZIPOutputStream;
 
 import org.springframework.beans.factory.annotation.Autowired;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.scheduling.support.CronExpression;
 import org.springframework.stereotype.Service;
@@ -39,6 +42,7 @@ public class AuditLogArchiveService {
 	private static final String ARCHIVE_STORAGE = "audit.archive.storage";
 	private static final String ARCHIVE_BATCH_SIZE = "audit.archive.batch_size";
 
+	private static final Logger log = LoggerFactory.getLogger(AuditLogArchiveService.class);
 	private static final AuditRetentionSettings DEFAULT_SETTINGS =
 			new AuditRetentionSettings(180, true, "0 30 2 * * *", "RUSTFS", 1000);
 	private static final DateTimeFormatter OBJECT_TIME_FORMAT =
@@ -127,16 +131,19 @@ public class AuditLogArchiveService {
 			run.fail(exception);
 		}
 
-		return AuditArchiveRunResponse.from(archiveRunRepository.save(run));
+		AuditArchiveRunResponse response = AuditArchiveRunResponse.from(archiveRunRepository.save(run));
+		pruneExpiredArchiveRunsQuietly(settings);
+		return response;
 	}
 
 	@Transactional(readOnly = true)
-	public List<AuditArchiveRunResponse> listArchiveRuns(int limit) {
-		return archiveRunRepository.findAllByOrderByStartedAtDesc(
-						PageRequest.of(0, Math.clamp(limit, 1, 100)))
-				.stream()
-				.map(AuditArchiveRunResponse::from)
-				.toList();
+	public AuditArchiveRunPageResponse listArchiveRuns(int page, int size) {
+		int safePage = Math.max(1, page);
+		int safeSize = Math.min(Math.max(1, size), 100);
+		Page<AuditLogArchiveRun> result = archiveRunRepository.findAllByOrderByStartedAtDesc(
+				PageRequest.of(safePage - 1, safeSize));
+		return new AuditArchiveRunPageResponse(result.getContent().stream().map(AuditArchiveRunResponse::from).toList(),
+				safePage, safeSize, result.getTotalElements());
 	}
 
 	@Transactional(readOnly = true)
@@ -144,6 +151,26 @@ public class AuditLogArchiveService {
 		AuditRetentionSettings settings = getSettings();
 		LocalDateTime cutoffTime = LocalDateTime.now(clock).minusDays(settings.retentionDays());
 		return auditLogRepository.countByCreatedAtBefore(cutoffTime);
+	}
+
+	@Transactional(readOnly = true)
+	public long countExpiredArchiveRuns() {
+		AuditRetentionSettings settings = getSettings();
+		LocalDateTime cutoffTime = LocalDateTime.now(clock).minusDays(settings.retentionDays());
+		return archiveRunRepository.countByStartedAtBefore(cutoffTime);
+	}
+
+	private void pruneExpiredArchiveRunsQuietly(AuditRetentionSettings settings) {
+		try {
+			LocalDateTime cutoffTime = LocalDateTime.now(clock).minusDays(settings.retentionDays());
+			archiveRunRepository.deleteByStartedAtBefore(cutoffTime);
+		}
+		catch (Exception exception) {
+			log.warn("Failed to prune expired audit archive run metadata", exception);
+		}
+	}
+
+	public record AuditArchiveRunPageResponse(List<AuditArchiveRunResponse> items, int page, int size, long total) {
 	}
 
 	private List<AuditLog> findLogsToArchive(LocalDateTime cutoffTime, int batchSize) {

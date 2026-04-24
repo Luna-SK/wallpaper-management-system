@@ -17,6 +17,8 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 
+import org.springframework.data.domain.PageImpl;
+import org.springframework.data.domain.PageRequest;
 import org.junit.jupiter.api.Test;
 import org.springframework.data.domain.Pageable;
 import org.springframework.test.util.ReflectionTestUtils;
@@ -58,6 +60,7 @@ class AuditLogArchiveServiceTests {
 		assertThat(response.archiveObjectKey()).startsWith("audit-logs/2026/04/");
 		verify(s3Client).putObject(any(PutObjectRequest.class), any(RequestBody.class));
 		verify(auditLogRepository).deleteAllByIdInBatch(List.of("log-1"));
+		verify(archiveRunRepository).deleteByStartedAtBefore(LocalDateTime.of(2025, 10, 26, 10, 30));
 	}
 
 	@Test
@@ -94,6 +97,33 @@ class AuditLogArchiveServiceTests {
 		verify(systemSettingService).put("audit.archive.cron", "0 0 3 * * *");
 		verify(systemSettingService).put("audit.archive.storage", "RUSTFS");
 		verify(systemSettingService).put("audit.archive.batch_size", "2000");
+	}
+
+	@Test
+	void paginatesArchiveRuns() {
+		AuditLogArchiveRun run = new AuditLogArchiveRun("run-1", AuditLogArchiveService.TRIGGER_MANUAL,
+				LocalDateTime.of(2025, 10, 26, 10, 30));
+		AuditLogArchiveService service = service();
+
+		when(archiveRunRepository.findAllByOrderByStartedAtDesc(any(Pageable.class)))
+				.thenReturn(new PageImpl<>(List.of(run), PageRequest.of(1, 20), 21));
+
+		AuditLogArchiveService.AuditArchiveRunPageResponse response = service.listArchiveRuns(2, 20);
+
+		assertThat(response.page()).isEqualTo(2);
+		assertThat(response.size()).isEqualTo(20);
+		assertThat(response.total()).isEqualTo(21);
+		assertThat(response.items()).hasSize(1);
+	}
+
+	@Test
+	void countsExpiredArchiveRunsUsingAuditRetentionDays() {
+		AuditLogArchiveService service = service();
+		LocalDateTime cutoffTime = LocalDateTime.of(2025, 10, 26, 10, 30);
+
+		when(archiveRunRepository.countByStartedAtBefore(cutoffTime)).thenReturn(3L);
+
+		assertThat(service.countExpiredArchiveRuns()).isEqualTo(3);
 	}
 
 	@Test

@@ -20,6 +20,7 @@ export interface AuditRetentionSettings {
 export interface AuditRetentionPayload {
   settings: AuditRetentionSettings
   expiredCount: number
+  expiredArchiveRunCount: number
 }
 
 export interface AuditArchiveRun {
@@ -45,6 +46,13 @@ export interface AuditLog {
   createdAt: string
 }
 
+export interface AuditPage<T> {
+  items: T[]
+  page: number
+  size: number
+  total: number
+}
+
 export async function getAuditRetention() {
   const response = await http.get<ApiResponse<AuditRetentionPayload>>('/audit-log-retention')
   return response.data.data
@@ -55,9 +63,9 @@ export async function updateAuditRetention(settings: AuditRetentionSettings) {
   return response.data.data
 }
 
-export async function getAuditArchiveRuns(limit = 20) {
-  const response = await http.get<ApiResponse<AuditArchiveRun[]>>('/audit-log-archives', {
-    params: { limit },
+export async function getAuditArchiveRuns(params: { page?: number; size?: number } = {}) {
+  const response = await http.get<ApiResponse<AuditPage<AuditArchiveRun>>>('/audit-log-archives', {
+    params,
   })
   return response.data.data
 }
@@ -67,7 +75,32 @@ export async function createAuditArchiveRun() {
   return response.data.data
 }
 
-export async function getAuditLogs(params: { keyword?: string; limit?: number } = {}) {
-  const response = await http.get<AuditLog[]>('/audit-logs', { params })
+export async function getAuditLogs(params: { keyword?: string; startDate?: string; endDate?: string; page?: number; size?: number } = {}) {
+  const response = await http.get<AuditPage<AuditLog>>('/audit-logs', { params })
   return response.data
+}
+
+export async function exportAuditLogs(params: { keyword?: string; startDate?: string; endDate?: string } = {}) {
+  const response = await http.get<Blob>('/audit-logs/export', {
+    params,
+    responseType: 'blob',
+  })
+  downloadBlob(response.data, filenameFromDisposition(response.headers['content-disposition']) ?? 'audit-logs.csv')
+}
+
+function downloadBlob(blob: Blob, filename: string) {
+  const url = URL.createObjectURL(blob)
+  const link = document.createElement('a')
+  link.href = url
+  link.download = filename
+  link.click()
+  URL.revokeObjectURL(url)
+}
+
+function filenameFromDisposition(value: unknown) {
+  if (typeof value !== 'string') return null
+  const encoded = value.match(/filename\*=UTF-8''([^;]+)/i)?.[1]
+  if (encoded) return decodeURIComponent(encoded)
+  const quoted = value.match(/filename="([^"]+)"/i)?.[1]
+  return quoted ?? value.match(/filename=([^;]+)/i)?.[1] ?? null
 }

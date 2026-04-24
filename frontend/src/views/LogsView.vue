@@ -1,10 +1,11 @@
 <script setup lang="ts">
 import { ElMessage } from 'element-plus'
-import { Download, Refresh, Timer } from '@element-plus/icons-vue'
+import { Download, Refresh, Search, Timer } from '@element-plus/icons-vue'
 import { isAxiosError } from 'axios'
 import { computed, onMounted, reactive, ref } from 'vue'
 import {
   createAuditArchiveRun,
+  exportAuditLogs,
   getAuditArchiveRuns,
   getAuditLogs,
   getAuditRetention,
@@ -14,6 +15,8 @@ import {
 
 const loading = ref(false)
 const archiving = ref(false)
+const exporting = ref(false)
+const auditTab = ref<'logs' | 'archives'>('logs')
 
 const retention = reactive({
   days: 180,
@@ -21,15 +24,29 @@ const retention = reactive({
   schedule: '每天 02:30',
   storage: 'RustFS',
   expiredCount: 0,
+  expiredArchiveRunCount: 0,
 })
 
 const archiveRuns = ref<AuditArchiveRun[]>([])
 const auditLogs = ref<AuditLog[]>([])
 const keyword = ref('')
+const auditFilterDateRange = ref<[string, string] | [] | null>([])
+const auditPagination = reactive({ page: 1, size: 20, total: 0 })
+const archivePagination = reactive({ page: 1, size: 20, total: 0 })
 
 const latestRunLabel = computed(() => {
   const latestRun = archiveRuns.value[0]
   return latestRun ? formatDateTime(latestRun.startedAt) : '暂无归档记录'
+})
+
+const archiveRunSummary = computed(() => {
+  if (archivePagination.total === 0) {
+    return '暂无归档记录'
+  }
+  if (archivePagination.page !== 1) {
+    return `第 ${archivePagination.page} 页 / 共 ${archivePagination.total} 条`
+  }
+  return `最近执行 ${latestRunLabel.value}`
 })
 
 const archiveRunRows = computed(() =>
@@ -105,14 +122,27 @@ async function loadRetention() {
   retention.schedule = cronLabel(data.settings.archiveCron)
   retention.storage = data.settings.archiveStorage === 'RUSTFS' ? 'RustFS' : data.settings.archiveStorage
   retention.expiredCount = data.expiredCount
+  retention.expiredArchiveRunCount = data.expiredArchiveRunCount ?? 0
 }
 
 async function loadArchiveRuns() {
-  archiveRuns.value = await getAuditArchiveRuns()
+  const page = await getAuditArchiveRuns({ page: archivePagination.page, size: archivePagination.size })
+  archiveRuns.value = page.items
+  archivePagination.page = page.page
+  archivePagination.size = page.size
+  archivePagination.total = page.total
 }
 
 async function loadAuditLogs() {
-  auditLogs.value = await getAuditLogs({ keyword: keyword.value || undefined, limit: 100 })
+  const page = await getAuditLogs({
+    ...auditFilterParams(),
+    page: auditPagination.page,
+    size: auditPagination.size,
+  })
+  auditLogs.value = page.items
+  auditPagination.page = page.page
+  auditPagination.size = page.size
+  auditPagination.total = page.total
 }
 
 async function refreshAuditState() {
@@ -126,19 +156,61 @@ async function refreshAuditState() {
   }
 }
 
-function exportCurrentLogs() {
-  const header = ['操作', '对象', '时间', '详情']
-  const lines = auditRows.value.map((row) => [row.action, row.target, row.time, row.detailJson ?? ''])
-  const csv = [header, ...lines]
-    .map((line) => line.map((value) => `"${String(value).replaceAll('"', '""')}"`).join(','))
-    .join('\n')
-  const blob = new Blob([csv], { type: 'text/csv;charset=utf-8' })
-  const url = URL.createObjectURL(blob)
-  const link = document.createElement('a')
-  link.href = url
-  link.download = 'audit-logs.csv'
-  link.click()
-  URL.revokeObjectURL(url)
+function auditFilterParams() {
+  const params: { keyword?: string; startDate?: string; endDate?: string } = {
+    keyword: keyword.value || undefined,
+  }
+  if (auditFilterDateRange.value?.length === 2) {
+    const [startDate, endDate] = auditFilterDateRange.value
+    params.startDate = startDate
+    params.endDate = endDate
+  }
+  return params
+}
+
+async function exportFilteredAuditLogs() {
+  exporting.value = true
+  try {
+    await exportAuditLogs(auditFilterParams())
+  } catch (error) {
+    ElMessage.error(errorMessage(error, '审计日志导出失败'))
+  } finally {
+    exporting.value = false
+  }
+}
+
+function applyAuditFilter() {
+  auditPagination.page = 1
+  void loadAuditLogs()
+}
+
+function resetAuditFilter() {
+  keyword.value = ''
+  auditFilterDateRange.value = []
+  auditPagination.page = 1
+  void loadAuditLogs()
+}
+
+function handleAuditPageChange(page: number) {
+  auditPagination.page = page
+  void loadAuditLogs()
+}
+
+function handleAuditPageSizeChange(size: number) {
+  auditPagination.size = size
+  auditPagination.page = 1
+  void loadAuditLogs()
+}
+
+function handleArchivePageChange(page: number) {
+  archivePagination.page = page
+  void loadArchiveRuns()
+}
+
+function handleArchivePageSizeChange(size: number) {
+  archivePagination.size = size
+  archivePagination.page = 1
+  void loadArchiveRuns()
 }
 
 async function archiveNow() {
@@ -146,6 +218,7 @@ async function archiveNow() {
   try {
     const run = await createAuditArchiveRun()
     ElMessage.success(run.status === 'SUCCESS' ? '审计日志归档清理已完成' : '审计日志归档任务已记录')
+    archivePagination.page = 1
     await refreshAuditState()
   } catch (error) {
     ElMessage.error(errorMessage(error, '审计日志归档清理失败'))
@@ -164,18 +237,12 @@ onMounted(refreshAuditState)
         <h1>审计日志</h1>
         <p>记录登录、上传、标签、预览、下载和管理操作，历史日志归档后再清理。</p>
       </div>
-      <div class="head-actions">
-        <el-button :icon="Download" @click="exportCurrentLogs">导出当前筛选</el-button>
-        <el-button type="primary" :icon="Refresh" :loading="archiving" @click="archiveNow">
-          立即归档并清理
-        </el-button>
-      </div>
     </div>
 
     <div v-loading="loading" class="surface surface-pad">
       <div class="retention-strip">
         <div class="retention-item">
-          <span class="retention-label">数据库保留</span>
+          <span class="retention-label">近期记录保留</span>
           <strong>{{ retention.days }} 天</strong>
         </div>
         <div class="retention-item">
@@ -196,66 +263,132 @@ onMounted(refreshAuditState)
           <span class="retention-label">待归档</span>
           <strong>{{ retention.expiredCount }} 条</strong>
         </div>
+        <div class="retention-item">
+          <span class="retention-label">归档历史保留</span>
+          <strong>{{ retention.days }} 天</strong>
+        </div>
+        <div class="retention-item">
+          <span class="retention-label">待清理历史</span>
+          <strong>{{ retention.expiredArchiveRunCount }} 条</strong>
+        </div>
       </div>
 
       <el-alert
         type="info"
         show-icon
         :closable="false"
-        title="系统只会清理已经成功写入 RustFS 归档文件的历史日志；归档失败时数据库记录会保留。"
+        :title="`近期审计记录在数据库保留 ${retention.days} 天；成功写入 ${retention.storage} 后会清理过期日志，归档历史数据库记录也按 ${retention.days} 天保留。`"
       />
 
-      <div class="section-title">
-        <div>
-          <h2>近期审计记录</h2>
-          <p>用于快速查看最近保留期内的操作记录。</p>
+      <div class="audit-scope-row">
+        <el-radio-group v-model="auditTab">
+          <el-radio-button label="logs">近期审计记录</el-radio-button>
+          <el-radio-button label="archives">归档历史</el-radio-button>
+        </el-radio-group>
+      </div>
+
+      <div v-if="auditTab === 'logs'" class="audit-panel">
+        <div class="toolbar-row audit-toolbar">
+          <div class="audit-filter-row">
+            <el-input
+              v-model="keyword"
+              placeholder="搜索操作或对象"
+              :prefix-icon="Search"
+              clearable
+              @clear="applyAuditFilter"
+              @keyup.enter="applyAuditFilter"
+            />
+            <el-date-picker
+              v-model="auditFilterDateRange"
+              class="audit-filter-date-range"
+              type="daterange"
+              value-format="YYYY-MM-DD"
+              range-separator="至"
+              start-placeholder="开始日期"
+              end-placeholder="结束日期"
+            />
+            <div class="audit-filter-actions">
+              <el-button @click="applyAuditFilter">筛选</el-button>
+              <el-button @click="resetAuditFilter">重置</el-button>
+            </div>
+          </div>
+
+          <div class="audit-export-actions">
+            <el-button type="primary" plain :icon="Download" :loading="exporting" @click="exportFilteredAuditLogs">
+              导出筛选结果
+            </el-button>
+          </div>
+        </div>
+
+        <el-table :data="auditRows" stripe>
+          <el-table-column prop="action" label="操作" width="180" />
+          <el-table-column prop="target" label="对象" />
+          <el-table-column prop="time" label="时间" width="180" />
+          <el-table-column prop="detailJson" label="详情" min-width="220" show-overflow-tooltip />
+        </el-table>
+
+        <div class="pagination-row">
+          <el-pagination
+            v-model:current-page="auditPagination.page"
+            v-model:page-size="auditPagination.size"
+            :page-sizes="[20, 50, 100]"
+            :total="auditPagination.total"
+            background
+            layout="total, sizes, prev, pager, next, jumper"
+            @size-change="handleAuditPageSizeChange"
+            @current-change="handleAuditPageChange"
+          />
         </div>
       </div>
 
-      <div class="toolbar-row">
-        <el-input v-model="keyword" placeholder="搜索操作或对象" style="max-width: 320px" clearable />
-        <el-button @click="loadAuditLogs">筛选</el-button>
-      </div>
-
-      <el-table :data="auditRows" stripe>
-        <el-table-column prop="action" label="操作" width="180" />
-        <el-table-column prop="target" label="对象" />
-        <el-table-column prop="time" label="时间" width="180" />
-        <el-table-column prop="detailJson" label="详情" min-width="220" show-overflow-tooltip />
-      </el-table>
-
-      <div class="section-title archive-title">
-        <div>
-          <h2>归档历史</h2>
-          <p>记录每次保存和清理结果，便于审计追溯。</p>
-        </div>
-        <el-tag type="success" effect="light">
-          <el-icon><Timer /></el-icon>
-          最近执行 {{ latestRunLabel }}
-        </el-tag>
-      </div>
-
-      <el-table :data="archiveRunRows" stripe>
-        <el-table-column prop="startedAtText" label="开始时间" width="170" />
-        <el-table-column prop="triggerTypeText" label="触发方式" width="110" />
-        <el-table-column prop="cutoffTimeText" label="归档截止" width="170" />
-        <el-table-column prop="archivedCount" label="保存条数" width="110" />
-        <el-table-column prop="deletedCount" label="清理条数" width="110" />
-        <el-table-column prop="status" label="状态" width="100">
-          <template #default="{ row }">
-            <el-tag :type="row.status === 'SUCCESS' ? 'success' : row.status === 'FAILED' ? 'danger' : 'info'" effect="light">
-              {{ row.statusText }}
+      <div v-else class="audit-panel">
+        <div class="archive-toolbar">
+          <div class="archive-actions">
+            <el-tag type="success" effect="light">
+              <el-icon><Timer /></el-icon>
+              {{ archiveRunSummary }}
             </el-tag>
-          </template>
-        </el-table-column>
-        <el-table-column prop="objectKey" label="归档对象" min-width="360" show-overflow-tooltip />
-      </el-table>
+            <el-button type="primary" :icon="Refresh" :loading="archiving" @click="archiveNow">
+              立即归档并清理
+            </el-button>
+          </div>
+        </div>
+
+        <el-table :data="archiveRunRows" stripe>
+          <el-table-column prop="startedAtText" label="开始时间" width="170" />
+          <el-table-column prop="triggerTypeText" label="触发方式" width="110" />
+          <el-table-column prop="cutoffTimeText" label="归档截止" width="170" />
+          <el-table-column prop="archivedCount" label="保存条数" width="110" />
+          <el-table-column prop="deletedCount" label="清理条数" width="110" />
+          <el-table-column prop="status" label="状态" width="100">
+            <template #default="{ row }">
+              <el-tag :type="row.status === 'SUCCESS' ? 'success' : row.status === 'FAILED' ? 'danger' : 'info'" effect="light">
+                {{ row.statusText }}
+              </el-tag>
+            </template>
+          </el-table-column>
+          <el-table-column prop="objectKey" label="归档对象" min-width="360" show-overflow-tooltip />
+        </el-table>
+
+        <div class="pagination-row">
+          <el-pagination
+            v-model:current-page="archivePagination.page"
+            v-model:page-size="archivePagination.size"
+            :page-sizes="[20, 50, 100]"
+            :total="archivePagination.total"
+            background
+            layout="total, sizes, prev, pager, next, jumper"
+            @size-change="handleArchivePageSizeChange"
+            @current-change="handleArchivePageChange"
+          />
+        </div>
+      </div>
     </div>
   </section>
 </template>
 
 <style scoped>
-.head-actions {
+.archive-actions {
   display: flex;
   flex-wrap: wrap;
   gap: 10px;
@@ -283,37 +416,94 @@ onMounted(refreshAuditState)
   font-size: 13px;
 }
 
-.section-title {
+.audit-scope-row {
   display: flex;
+  margin: 18px 0 14px;
+}
+
+.audit-panel {
+  min-width: 0;
+}
+
+.audit-toolbar {
   align-items: center;
   justify-content: space-between;
-  gap: 16px;
-  margin: 24px 0 12px;
+  margin-bottom: 12px;
 }
 
-.section-title h2 {
-  margin: 0 0 4px;
-  font-size: 18px;
+.audit-toolbar .el-input {
+  width: 260px;
 }
 
-.section-title p {
-  margin: 0;
-  color: #64748b;
+.audit-filter-row,
+.audit-filter-actions,
+.audit-export-actions {
+  display: flex;
+  gap: 8px;
 }
 
-.archive-title .el-tag {
+.audit-filter-row,
+.audit-export-actions {
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+.audit-export-actions {
+  justify-content: flex-end;
+}
+
+.audit-filter-row :deep(.audit-filter-date-range.el-date-editor) {
+  flex: 0 0 300px;
+  width: 300px;
+}
+
+.archive-toolbar {
+  display: flex;
+  justify-content: flex-end;
+  margin-bottom: 12px;
+}
+
+.archive-actions {
+  align-items: center;
+}
+
+.archive-actions .el-tag {
   gap: 6px;
 }
 
+.pagination-row {
+  display: flex;
+  justify-content: flex-end;
+  margin-top: 16px;
+}
+
 @media (max-width: 720px) {
-  .page-head,
-  .section-title {
+  .page-head {
     align-items: flex-start;
     flex-direction: column;
   }
 
-  .head-actions {
+  .archive-actions,
+  .archive-toolbar,
+  .audit-toolbar,
+  .audit-export-actions,
+  .pagination-row {
     justify-content: flex-start;
+  }
+
+  .audit-filter-row,
+  .audit-export-actions {
+    flex-wrap: wrap;
+    width: 100%;
+  }
+
+  .audit-toolbar .el-input {
+    width: 100%;
+  }
+
+  .audit-filter-row :deep(.audit-filter-date-range.el-date-editor) {
+    flex-basis: 100%;
+    width: 100%;
   }
 }
 </style>
