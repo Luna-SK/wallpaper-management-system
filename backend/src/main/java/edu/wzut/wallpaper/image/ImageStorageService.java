@@ -8,7 +8,11 @@ import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
+import java.time.Instant;
+import java.util.ArrayList;
+import java.util.Collection;
 import java.util.HexFormat;
+import java.util.List;
 import java.util.Locale;
 
 import javax.imageio.ImageIO;
@@ -21,8 +25,10 @@ import software.amazon.awssdk.core.ResponseBytes;
 import software.amazon.awssdk.core.sync.RequestBody;
 import software.amazon.awssdk.services.s3.S3Client;
 import software.amazon.awssdk.services.s3.model.CreateBucketRequest;
+import software.amazon.awssdk.services.s3.model.DeleteObjectRequest;
 import software.amazon.awssdk.services.s3.model.GetObjectRequest;
 import software.amazon.awssdk.services.s3.model.HeadBucketRequest;
+import software.amazon.awssdk.services.s3.model.ListObjectsV2Request;
 import software.amazon.awssdk.services.s3.model.NoSuchBucketException;
 import software.amazon.awssdk.services.s3.model.PutObjectRequest;
 import software.amazon.awssdk.services.s3.model.S3Exception;
@@ -39,6 +45,8 @@ class ImageStorageService {
 	}
 
 	StoredImage store(MultipartFile file, String imageId) {
+		String bucket = storage.bucketOriginal();
+		List<String> writtenKeys = new ArrayList<>();
 		try {
 			String mimeType = normalizeMime(file);
 			byte[] originalBytes = file.getBytes();
@@ -55,17 +63,25 @@ class ImageStorageService {
 			String thumbnailKey = baseKey + "/thumbnail.png";
 			String highKey = baseKey + "/preview-high.png";
 			String standardKey = baseKey + "/preview-standard.png";
-			String bucket = storage.bucketOriginal();
 			ensureBucket(bucket);
 			put(bucket, originalKey, mimeType, originalBytes);
+			writtenKeys.add(originalKey);
 			put(bucket, thumbnailKey, "image/png", thumbnail);
+			writtenKeys.add(thumbnailKey);
 			put(bucket, highKey, "image/png", highPreview);
+			writtenKeys.add(highKey);
 			put(bucket, standardKey, "image/png", standardPreview);
+			writtenKeys.add(standardKey);
 			return new StoredImage(file.getOriginalFilename(), sha256, mimeType, originalBytes.length, width, height, bucket,
 					originalKey, thumbnailKey, highKey, standardKey);
 		}
 		catch (IOException ex) {
+			deleteObjectsQuietly(bucket, writtenKeys);
 			throw new IllegalArgumentException("读取图片文件失败");
+		}
+		catch (RuntimeException ex) {
+			deleteObjectsQuietly(bucket, writtenKeys);
+			throw ex;
 		}
 	}
 
@@ -74,9 +90,70 @@ class ImageStorageService {
 		return bytes.asByteArray();
 	}
 
+	void delete(StoredImage stored) {
+		if (stored == null || stored.bucket() == null) {
+			return;
+		}
+		deleteObjects(stored.bucket(), List.of(stored.originalObjectKey(), stored.thumbnailObjectKey(),
+				stored.highPreviewObjectKey(), stored.standardPreviewObjectKey()));
+	}
+
+	void deleteQuietly(StoredImage stored) {
+		if (stored == null || stored.bucket() == null) {
+			return;
+		}
+		deleteObjectsQuietly(stored.bucket(), List.of(stored.originalObjectKey(), stored.thumbnailObjectKey(),
+				stored.highPreviewObjectKey(), stored.standardPreviewObjectKey()));
+	}
+
+	void deleteObjectsQuietly(String bucket, Collection<String> keys) {
+		try {
+			deleteObjects(bucket, keys);
+		}
+		catch (RuntimeException ignored) {
+		}
+	}
+
+	List<StoredObject> listImageObjects() {
+		String bucket = storage.bucketOriginal();
+		try {
+			ensureBucket(bucket);
+			List<StoredObject> objects = new ArrayList<>();
+			String continuationToken = null;
+			do {
+				var response = s3Client.listObjectsV2(ListObjectsV2Request.builder()
+						.bucket(bucket)
+						.prefix("images/")
+						.continuationToken(continuationToken)
+						.build());
+				objects.addAll(response.contents().stream()
+						.map(object -> new StoredObject(bucket, object.key(), object.lastModified()))
+						.toList());
+				continuationToken = response.nextContinuationToken();
+			}
+			while (continuationToken != null);
+			return objects;
+		}
+		catch (NoSuchBucketException ex) {
+			return List.of();
+		}
+	}
+
 	private void put(String bucket, String key, String mimeType, byte[] bytes) {
 		s3Client.putObject(PutObjectRequest.builder().bucket(bucket).key(key).contentType(mimeType).build(),
 				RequestBody.fromBytes(bytes));
+	}
+
+	private void deleteObjects(String bucket, Collection<String> keys) {
+		if (bucket == null || keys == null || keys.isEmpty()) {
+			return;
+		}
+		for (String key : keys) {
+			if (key == null || key.isBlank()) {
+				continue;
+			}
+			s3Client.deleteObject(DeleteObjectRequest.builder().bucket(bucket).key(key).build());
+		}
 	}
 
 	private void ensureBucket(String bucket) {
@@ -130,5 +207,8 @@ class ImageStorageService {
 		catch (NoSuchAlgorithmException ex) {
 			throw new IllegalStateException("SHA-256 不可用", ex);
 		}
+	}
+
+	record StoredObject(String bucket, String key, Instant lastModified) {
 	}
 }

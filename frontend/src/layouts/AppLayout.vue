@@ -5,7 +5,6 @@ import {
   Document,
   Picture,
   Setting,
-  UploadFilled,
   User,
 } from '@element-plus/icons-vue'
 import { useRoute, useRouter } from 'vue-router'
@@ -17,7 +16,6 @@ const auth = useAuthStore()
 
 const menuItems = [
   { path: '/images', label: '图片库', icon: Picture },
-  { path: '/upload', label: '批量上传', icon: UploadFilled },
   { path: '/taxonomy', label: '分类标签', icon: CollectionTag },
   { path: '/users', label: '用户权限', icon: User },
   { path: '/logs', label: '审计日志', icon: Document },

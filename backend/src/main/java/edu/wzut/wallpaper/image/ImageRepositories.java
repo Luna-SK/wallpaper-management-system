@@ -49,9 +49,11 @@ interface ImageVersionRepository extends JpaRepository<ImageVersion, String> {
 
 interface UploadBatchRepository extends JpaRepository<UploadBatch, String> {
 	List<UploadBatch> findAllByOrderByCreatedAtDesc(Pageable pageable);
+	List<UploadBatch> findByStatusInAndExpiresAtBefore(Collection<String> statuses, LocalDateTime expiresAt);
 }
 
 interface UploadBatchItemRepository extends JpaRepository<UploadBatchItem, String> {
 	List<UploadBatchItem> findByBatchIdOrderByCreatedAtAsc(String batchId);
 	List<UploadBatchItem> findByBatchIdIn(Collection<String> batchIds);
+	List<UploadBatchItem> findByStatusIn(Collection<String> statuses);
 }

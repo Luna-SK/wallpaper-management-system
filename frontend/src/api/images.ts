@@ -31,6 +31,7 @@ export interface ImageRecord {
 export interface UploadBatchItem {
   id: string
   imageId: string | null
+  candidateImageId: string | null
   originalFilename: string
   status: string
   progressPercent: number
@@ -48,6 +49,11 @@ export interface UploadBatch {
   progressPercent: number
   createdAt: string
   finishedAt: string | null
+  mode: 'SINGLE' | 'BATCH'
+  categoryId: string | null
+  tagIds: string[]
+  expiresAt: string | null
+  confirmedAt: string | null
   items: UploadBatchItem[]
 }
 
@@ -73,15 +79,17 @@ export async function deleteImage(id: string) {
   await http.delete(`/images/${id}`)
 }
 
-export async function uploadImages(files: File[], categoryId?: string, tagIds: string[] = []) {
-  const form = new FormData()
-  files.forEach((file) => form.append('files', file))
-  if (categoryId) {
-    form.append('categoryId', categoryId)
+export async function uploadImages(files: File[], categoryId: string, tagIds: string[]) {
+  let session = await createUploadSession({
+    mode: files.length === 1 ? 'SINGLE' : 'BATCH',
+    categoryId,
+    tagIds,
+    totalCount: files.length,
+  })
+  for (const file of files) {
+    session = await uploadSessionItem(session.id, file)
   }
-  tagIds.forEach((tagId) => form.append('tagIds', tagId))
-  const response = await http.post<UploadBatch>('/images/batch', form, { timeout: 120000 })
-  return response.data
+  return confirmUploadSession(session.id)
 }
 
 export async function getUploadBatch(id: string) {
@@ -91,6 +99,40 @@ export async function getUploadBatch(id: string) {
 
 export async function retryUploadItem(batchId: string, itemId: string) {
   const response = await http.post<UploadBatch>(`/image-upload-batches/${batchId}/items/${itemId}/retry`)
+  return response.data
+}
+
+export async function createUploadSession(payload: { mode: 'SINGLE' | 'BATCH'; categoryId: string; tagIds: string[]; totalCount: number }) {
+  const response = await http.post<UploadBatch>('/image-upload-sessions', payload)
+  return response.data
+}
+
+export async function getUploadSession(id: string) {
+  const response = await http.get<UploadBatch>(`/image-upload-sessions/${id}`)
+  return response.data
+}
+
+export async function uploadSessionItem(sessionId: string, file: File, signal?: AbortSignal) {
+  const form = new FormData()
+  form.append('file', file)
+  const response = await http.post<UploadBatch>(`/image-upload-sessions/${sessionId}/items`, form, { timeout: 120000, signal })
+  return response.data
+}
+
+export async function retryUploadSessionItem(sessionId: string, itemId: string, file: File, signal?: AbortSignal) {
+  const form = new FormData()
+  form.append('file', file)
+  const response = await http.post<UploadBatch>(`/image-upload-sessions/${sessionId}/items/${itemId}/retry`, form, { timeout: 120000, signal })
+  return response.data
+}
+
+export async function confirmUploadSession(id: string) {
+  const response = await http.post<UploadBatch>(`/image-upload-sessions/${id}/confirm`)
+  return response.data
+}
+
+export async function cancelUploadSession(id: string) {
+  const response = await http.post<UploadBatch>(`/image-upload-sessions/${id}/cancel`)
   return response.data
 }
 

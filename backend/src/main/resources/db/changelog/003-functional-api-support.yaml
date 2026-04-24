@@ -201,3 +201,36 @@ databaseChangeLog:
               INSERT IGNORE INTO role_permissions (role_id, permission_id)
               SELECT '00000000-0000-0000-0000-000000000004', id FROM permissions
               WHERE code IN ('image:view');
+
+  - changeSet:
+      id: 006-extend-upload-session-storage
+      author: codex
+      changes:
+        - addColumn:
+            tableName: upload_batches
+            columns:
+              - column: { name: mode, type: varchar(16), defaultValue: "BATCH", constraints: { nullable: false } }
+              - column: { name: category_id, type: varchar(36) }
+              - column: { name: tag_ids, type: varchar(2000) }
+              - column: { name: expires_at, type: datetime(6) }
+              - column: { name: confirmed_at, type: datetime(6) }
+        - addColumn:
+            tableName: upload_batch_items
+            columns:
+              - column: { name: candidate_image_id, type: varchar(36) }
+              - column: { name: sha256, type: char(64), defaultValue: "", constraints: { nullable: false } }
+              - column: { name: mime_type, type: varchar(120) }
+              - column: { name: size_bytes, type: bigint }
+              - column: { name: width, type: int }
+              - column: { name: height, type: int }
+              - column: { name: bucket, type: varchar(120) }
+              - column: { name: original_object_key, type: varchar(512) }
+              - column: { name: thumbnail_object_key, type: varchar(512) }
+              - column: { name: high_preview_object_key, type: varchar(512) }
+              - column: { name: standard_preview_object_key, type: varchar(512) }
+        - createIndex:
+            tableName: upload_batches
+            indexName: idx_upload_batches_status_expires
+            columns:
+              - column: { name: status }
+              - column: { name: expires_at }

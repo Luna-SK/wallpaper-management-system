@@ -14,7 +14,7 @@
 - `image_objects`：保留为对象索引扩展表；首版运行主要以 `image_versions` 记录当前可用对象。
 - `image_categories`：图片与分类的多对多关系。
 - `image_tags`：图片与标签的多对多关系。
-- `upload_batches`、`upload_batch_items`：批量上传进度、文件级状态、失败原因和重试记录。
+- `upload_batches`、`upload_batch_items`：上传会话、文件级状态、暂存对象 key、失败原因和重试记录。文件先暂存到 RustFS，确认后才创建正式 `images + image_versions` 记录；取消或过期会话会清理未确认对象。
 
 ## Taxonomy
 

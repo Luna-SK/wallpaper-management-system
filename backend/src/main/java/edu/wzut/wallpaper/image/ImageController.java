@@ -23,6 +23,7 @@ import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 import edu.wzut.wallpaper.image.ImageDtos.ImageResponse;
 import edu.wzut.wallpaper.image.ImageDtos.ImageUpdateRequest;
 import edu.wzut.wallpaper.image.ImageDtos.UploadBatchResponse;
+import edu.wzut.wallpaper.image.ImageDtos.UploadSessionCreateRequest;
 
 @RestController
 @RequestMapping("/api")
@@ -67,16 +68,61 @@ class ImageController {
 		return service.upload(files, categoryId, tagIds);
 	}
 
+	@PostMapping("/image-upload-sessions")
+	@PreAuthorize("hasAuthority('image:upload')")
+	UploadBatchResponse createUploadSession(@RequestBody UploadSessionCreateRequest request) {
+		return service.createUploadSession(request);
+	}
+
+	@PostMapping(path = "/image-upload-sessions/{id}/items", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
+	@PreAuthorize("hasAuthority('image:upload')")
+	UploadBatchResponse stageUploadSessionItem(@PathVariable String id, @RequestParam("file") MultipartFile file) {
+		return service.stageUploadSessionItem(id, file);
+	}
+
+	@PostMapping(path = "/image-upload-sessions/{id}/items/{itemId}/retry", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
+	@PreAuthorize("hasAuthority('image:upload')")
+	UploadBatchResponse retryUploadSessionItem(@PathVariable String id, @PathVariable String itemId,
+			@RequestParam("file") MultipartFile file) {
+		return service.retryUploadSessionItem(id, itemId, file);
+	}
+
+	@PostMapping("/image-upload-sessions/{id}/confirm")
+	@PreAuthorize("hasAuthority('image:upload')")
+	UploadBatchResponse confirmUploadSession(@PathVariable String id) {
+		return service.confirmUploadSession(id);
+	}
+
+	@PostMapping("/image-upload-sessions/{id}/cancel")
+	@PreAuthorize("hasAuthority('image:upload')")
+	UploadBatchResponse cancelUploadSession(@PathVariable String id) {
+		return service.cancelUploadSession(id);
+	}
+
 	@GetMapping("/image-upload-batches/{id}")
 	@PreAuthorize("hasAuthority('image:upload')")
 	UploadBatchResponse batch(@PathVariable String id) {
 		return service.batch(id);
 	}
 
+	@GetMapping("/image-upload-sessions/{id}")
+	@PreAuthorize("hasAuthority('image:upload')")
+	UploadBatchResponse uploadSession(@PathVariable String id) {
+		return service.uploadSession(id);
+	}
+
 	@GetMapping("/image-upload-batches/{id}/events")
 	SseEmitter batchEvents(@PathVariable String id) throws Exception {
 		SseEmitter emitter = new SseEmitter(5_000L);
 		emitter.send(SseEmitter.event().name("batch").data(service.batch(id)));
+		emitter.complete();
+		return emitter;
+	}
+
+	@GetMapping("/image-upload-sessions/{id}/events")
+	SseEmitter uploadSessionEvents(@PathVariable String id) throws Exception {
+		SseEmitter emitter = new SseEmitter(5_000L);
+		emitter.send(SseEmitter.event().name("session").data(service.uploadSession(id)));
 		emitter.complete();
 		return emitter;
 	}

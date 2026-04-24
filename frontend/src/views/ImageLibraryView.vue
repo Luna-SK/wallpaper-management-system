@@ -1,13 +1,26 @@
 <script setup lang="ts">
 import { computed, onMounted, reactive, ref } from 'vue'
-import { useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
+import type { UploadUserFile } from 'element-plus'
 import { Download, Search, UploadFilled } from '@element-plus/icons-vue'
 import { isAxiosError } from 'axios'
-import { deleteImage, downloadImage, getImages, imageBlobUrl, updateImage, type ImageRecord } from '../api/images'
+import {
+  cancelUploadSession,
+  confirmUploadSession,
+  createUploadSession,
+  deleteImage,
+  downloadImage,
+  getImages,
+  imageBlobUrl,
+  retryUploadSessionItem,
+  updateImage,
+  uploadSessionItem,
+  type ImageRecord,
+  type UploadBatch,
+  type UploadBatchItem,
+} from '../api/images'
 import { getCategories, getTags, type Category, type Tag } from '../api/taxonomy'
 
-const router = useRouter()
 const loading = ref(false)
 const keyword = ref('')
 const selectedCategoryId = ref('')
@@ -21,9 +34,23 @@ const previewUrl = ref('')
 const editing = ref<ImageRecord | null>(null)
 const editVisible = ref(false)
 const editForm = reactive({ title: '', status: 'ACTIVE', categoryIds: [] as string[], tagIds: [] as string[] })
+const uploadVisible = ref(false)
+const uploadLoading = ref(false)
+const uploadConfirming = ref(false)
+const uploadCancelling = ref(false)
+const uploadMode = ref<'SINGLE' | 'BATCH'>('SINGLE')
+const uploadFileList = ref<UploadUserFile[]>([])
+const uploadTags = ref<Tag[]>([])
+const uploadSession = ref<UploadBatch | null>(null)
+const uploadAbortController = ref<AbortController | null>(null)
+const uploadItemFiles = reactive<Record<string, File>>({})
+const uploadForm = reactive({ categoryId: '', tagIds: [] as string[] })
 
 const categoryOptions = computed(() => categories.value.filter((category) => category.enabled))
 const tagOptions = computed(() => tags.value.filter((tag) => tag.enabled))
+const uploadTagOptions = computed(() => uploadTags.value.filter((tag) => tag.enabled))
+const uploadHasStagedItems = computed(() => Boolean(uploadSession.value?.items.some((item) => item.status === 'STAGED' || item.status === 'DUPLICATE')))
+const uploadLocked = computed(() => Boolean(uploadSession.value) || uploadLoading.value || uploadConfirming.value || uploadCancelling.value)
 
 function errorMessage(error: unknown, fallback: string) {
   if (isAxiosError<{ message?: string }>(error)) {
@@ -47,6 +74,11 @@ async function loadCategories() {
 async function loadTagsForFilter() {
   selectedTagId.value = ''
   tags.value = selectedCategoryId.value ? await getTags(selectedCategoryId.value) : []
+}
+
+async function loadUploadTags() {
+  uploadForm.tagIds = []
+  uploadTags.value = uploadForm.categoryId ? await getTags(uploadForm.categoryId) : []
 }
 
 async function loadImages() {
@@ -75,6 +107,195 @@ function resetFilters() {
   selectedTagId.value = ''
   tags.value = []
   void loadImages()
+}
+
+async function openUploadDialog() {
+  if (categories.value.length === 0) {
+    await loadCategories()
+  }
+  const textile = categories.value.find((category) => category.code === 'TEXTILE_DEFECT' && category.enabled)
+  const fallback = categoryOptions.value[0]
+  uploadMode.value = 'SINGLE'
+  uploadForm.categoryId = textile?.id ?? fallback?.id ?? ''
+  uploadForm.tagIds = []
+  uploadFileList.value = []
+  uploadSession.value = null
+  Object.keys(uploadItemFiles).forEach((key) => delete uploadItemFiles[key])
+  uploadTags.value = uploadForm.categoryId ? await getTags(uploadForm.categoryId) : []
+  uploadVisible.value = true
+}
+
+function handleUploadModeChange() {
+  uploadFileList.value = []
+  uploadSession.value = null
+  Object.keys(uploadItemFiles).forEach((key) => delete uploadItemFiles[key])
+}
+
+function handleUploadExceed() {
+  ElMessage.warning(uploadMode.value === 'SINGLE' ? '单次只能选择 1 张图片' : '已超过本次上传数量限制')
+}
+
+async function startUploadSession() {
+  const files = uploadFileList.value.flatMap((item) => (item.raw ? [item.raw as unknown as File] : []))
+  if (files.length === 0) {
+    ElMessage.warning('请先选择图片文件')
+    return
+  }
+  if (uploadMode.value === 'SINGLE' && files.length !== 1) {
+    ElMessage.warning('单张上传只能选择 1 张图片')
+    return
+  }
+  if (!uploadForm.categoryId) {
+    ElMessage.warning('请先选择图片分类')
+    return
+  }
+  if (uploadForm.tagIds.length === 0) {
+    ElMessage.warning('请至少选择一个标签')
+    return
+  }
+  uploadLoading.value = true
+  uploadAbortController.value = new AbortController()
+  try {
+    let session = await createUploadSession({
+      mode: uploadMode.value,
+      categoryId: uploadForm.categoryId,
+      tagIds: uploadForm.tagIds,
+      totalCount: files.length,
+    })
+    uploadSession.value = session
+    for (const file of files) {
+      session = await uploadSessionItem(session.id, file, uploadAbortController.value.signal)
+      const latestItem = session.items.at(-1)
+      if (latestItem) {
+        uploadItemFiles[latestItem.id] = file
+      }
+      uploadSession.value = session
+    }
+    uploadSession.value = session
+    ElMessage.success('文件已上传到暂存区，请确认入库')
+  } catch (error) {
+    if (!uploadCancelling.value) {
+      ElMessage.error(errorMessage(error, '图片上传失败'))
+    }
+  } finally {
+    uploadLoading.value = false
+    uploadAbortController.value = null
+  }
+}
+
+async function retryUploadItem(item: UploadBatchItem) {
+  const file = uploadItemFiles[item.id]
+  if (!uploadSession.value || !file) {
+    ElMessage.warning('找不到该失败文件，请重新打开上传弹窗选择文件')
+    return
+  }
+  uploadLoading.value = true
+  uploadAbortController.value = new AbortController()
+  try {
+    uploadSession.value = await retryUploadSessionItem(uploadSession.value.id, item.id, file, uploadAbortController.value.signal)
+    ElMessage.success('文件已重新上传')
+  } catch (error) {
+    if (!uploadCancelling.value) {
+      ElMessage.error(errorMessage(error, '文件重试失败'))
+    }
+  } finally {
+    uploadLoading.value = false
+    uploadAbortController.value = null
+  }
+}
+
+async function confirmUploadDialog() {
+  if (!uploadSession.value) {
+    ElMessage.warning('请先开始上传')
+    return
+  }
+  if (!uploadHasStagedItems.value) {
+    ElMessage.warning('没有可确认入库的文件')
+    return
+  }
+  uploadConfirming.value = true
+  try {
+    const session = await confirmUploadSession(uploadSession.value.id)
+    ElMessage.success(session.duplicateCount > 0 ? '上传已确认，重复图片已关联既有记录' : '上传已确认入库')
+    uploadVisible.value = false
+    resetUploadDialog()
+    await loadImages()
+  } catch (error) {
+    ElMessage.error(errorMessage(error, '上传确认失败'))
+  } finally {
+    uploadConfirming.value = false
+  }
+}
+
+async function cancelUploadDialog(showMessage = true) {
+  const cancellableSession = uploadSession.value && !['CONFIRMED', 'CANCELLED', 'EXPIRED'].includes(uploadSession.value.status)
+  if (cancellableSession) {
+    uploadCancelling.value = true
+  }
+  uploadAbortController.value?.abort()
+  if (cancellableSession && uploadSession.value) {
+    try {
+      uploadSession.value = await cancelUploadSession(uploadSession.value.id)
+      if (showMessage) {
+        ElMessage.success('已清理本次未确认上传文件')
+      }
+    } catch (error) {
+      ElMessage.error(errorMessage(error, '上传会话取消失败'))
+      uploadCancelling.value = false
+      return false
+    }
+    uploadCancelling.value = false
+  }
+  uploadVisible.value = false
+  resetUploadDialog()
+  return true
+}
+
+function handleUploadBeforeClose(done: () => void) {
+  void cancelUploadDialog(false).then((closed) => {
+    if (closed) {
+      done()
+    }
+  })
+}
+
+function resetUploadDialog() {
+  uploadFileList.value = []
+  uploadSession.value = null
+  uploadLoading.value = false
+  uploadConfirming.value = false
+  uploadCancelling.value = false
+  uploadAbortController.value = null
+  Object.keys(uploadItemFiles).forEach((key) => delete uploadItemFiles[key])
+}
+
+function uploadStatusType(status: string) {
+  if (status === 'STAGED' || status === 'CONFIRMED') return 'success'
+  if (status === 'DUPLICATE') return 'warning'
+  if (status === 'FAILED' || status === 'CANCELLED') return 'danger'
+  return 'info'
+}
+
+function uploadStatusText(status: string) {
+  const labels: Record<string, string> = {
+    PROCESSING: '处理中',
+    STAGED: '待确认',
+    DUPLICATE: '重复',
+    FAILED: '失败',
+    CONFIRMED: '已入库',
+    CANCELLED: '已取消',
+  }
+  return labels[status] ?? status
+}
+
+function uploadModeLimit() {
+  return uploadMode.value === 'SINGLE' ? 1 : 100
+}
+
+function uploadDialogTip() {
+  return uploadMode.value === 'SINGLE'
+    ? '拖入 1 张 JPG / PNG / WebP 图片或点击选择'
+    : '拖入多张 JPG / PNG / WebP 图片或点击选择'
 }
 
 async function preview(row: ImageRecord) {
@@ -151,7 +372,7 @@ onMounted(async () => {
         <h1>图片库</h1>
         <p>按关键词、分类、标签、上传者和时间范围检索图片。</p>
       </div>
-      <el-button type="primary" :icon="UploadFilled" @click="router.push('/upload')">上传图片</el-button>
+      <el-button type="primary" :icon="UploadFilled" @click="openUploadDialog">上传图片</el-button>
     </div>
 
     <div class="surface surface-pad">
@@ -206,6 +427,81 @@ onMounted(async () => {
       <img class="preview-image" :src="previewUrl" alt="图片预览" />
     </el-dialog>
 
+    <el-dialog v-model="uploadVisible" title="上传图片" width="720px" :before-close="handleUploadBeforeClose">
+      <el-form label-width="88px">
+        <el-form-item label="上传模式">
+          <el-radio-group v-model="uploadMode" :disabled="uploadLocked" @change="handleUploadModeChange">
+            <el-radio-button label="SINGLE">单张</el-radio-button>
+            <el-radio-button label="BATCH">批量</el-radio-button>
+          </el-radio-group>
+        </el-form-item>
+        <el-form-item label="图片文件" required>
+          <el-upload
+            v-model:file-list="uploadFileList"
+            drag
+            :limit="uploadModeLimit()"
+            :multiple="uploadMode === 'BATCH'"
+            accept="image/jpeg,image/png,image/webp"
+            action="#"
+            :auto-upload="false"
+            :disabled="uploadLocked"
+            :on-exceed="handleUploadExceed"
+          >
+            <el-icon class="el-icon--upload"><UploadFilled /></el-icon>
+            <div class="el-upload__text">{{ uploadDialogTip() }}</div>
+          </el-upload>
+        </el-form-item>
+        <el-form-item label="分类" required>
+          <el-select v-model="uploadForm.categoryId" placeholder="选择分类" :disabled="uploadLocked" @change="loadUploadTags">
+            <el-option v-for="category in categoryOptions" :key="category.id" :label="category.name" :value="category.id" />
+          </el-select>
+        </el-form-item>
+        <el-form-item label="标签" required>
+          <el-select
+            v-model="uploadForm.tagIds"
+            multiple
+            filterable
+            clearable
+            collapse-tags
+            collapse-tags-tooltip
+            placeholder="搜索并选择至少一个标签"
+            :disabled="!uploadForm.categoryId || uploadLocked"
+          >
+            <el-option v-for="tag in uploadTagOptions" :key="tag.id" :label="tag.name" :value="tag.id" />
+          </el-select>
+        </el-form-item>
+      </el-form>
+      <el-alert
+        v-if="uploadSession"
+        class="upload-session-tip"
+        type="info"
+        :closable="false"
+        show-icon
+        title="文件已进入暂存区，确认入库前不会出现在图片库；取消会清理本次未确认文件。"
+      />
+      <el-table v-if="uploadSession" class="upload-session-table" :data="uploadSession.items" size="small" border>
+        <el-table-column prop="originalFilename" label="文件" min-width="220" />
+        <el-table-column label="状态" width="110">
+          <template #default="{ row }">
+            <el-tag :type="uploadStatusType(row.status)">{{ uploadStatusText(row.status) }}</el-tag>
+          </template>
+        </el-table-column>
+        <el-table-column prop="errorMessage" label="说明" min-width="220" show-overflow-tooltip />
+        <el-table-column label="操作" width="100">
+          <template #default="{ row }">
+            <el-button v-if="row.status === 'FAILED'" link type="primary" :loading="uploadLoading" @click="retryUploadItem(row)">重试</el-button>
+          </template>
+        </el-table-column>
+      </el-table>
+      <template #footer>
+        <el-button :loading="uploadCancelling" @click="cancelUploadDialog()">取消</el-button>
+        <el-button v-if="!uploadSession" type="primary" :loading="uploadLoading" @click="startUploadSession">开始上传</el-button>
+        <el-button v-else type="primary" :loading="uploadConfirming" :disabled="!uploadHasStagedItems" @click="confirmUploadDialog">
+          确认入库
+        </el-button>
+      </template>
+    </el-dialog>
+
     <el-dialog v-model="editVisible" title="编辑图片信息" width="520px">
       <el-form label-width="88px">
         <el-form-item label="标题">
@@ -223,7 +519,7 @@ onMounted(async () => {
           </el-select>
         </el-form-item>
         <el-form-item label="标签">
-          <el-select v-model="editForm.tagIds" multiple>
+          <el-select v-model="editForm.tagIds" multiple filterable clearable collapse-tags collapse-tags-tooltip placeholder="搜索并选择标签">
             <el-option v-for="tag in tagOptions" :key="tag.id" :label="tag.name" :value="tag.id" />
           </el-select>
         </el-form-item>
@@ -281,5 +577,13 @@ onMounted(async () => {
   max-height: 72vh;
   max-width: 100%;
   object-fit: contain;
+}
+
+.upload-session-tip {
+  margin-bottom: 12px;
+}
+
+.upload-session-table {
+  margin-top: 12px;
 }
 </style>

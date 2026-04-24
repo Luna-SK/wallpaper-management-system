@@ -3,7 +3,6 @@ import { useAuthStore } from '../stores/auth'
 import AppLayout from '../layouts/AppLayout.vue'
 import LoginView from '../views/LoginView.vue'
 import ImageLibraryView from '../views/ImageLibraryView.vue'
-import UploadView from '../views/UploadView.vue'
 import TaxonomyView from '../views/TaxonomyView.vue'
 import UsersView from '../views/UsersView.vue'
 import LogsView from '../views/LogsView.vue'
@@ -24,7 +23,7 @@ const routes: RouteRecordRaw[] = [
     children: [
       { path: '', redirect: '/images' },
       { path: 'images', name: 'images', component: ImageLibraryView, meta: { title: '图片库' } },
-      { path: 'upload', name: 'upload', component: UploadView, meta: { title: '批量上传' } },
+      { path: 'upload', redirect: '/images' },
       { path: 'taxonomy', name: 'taxonomy', component: TaxonomyView, meta: { title: '分类标签' } },
       { path: 'users', name: 'users', component: UsersView, meta: { title: '用户权限' } },
       { path: 'logs', name: 'logs', component: LogsView, meta: { title: '审计日志' } },

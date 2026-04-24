@@ -13,6 +13,9 @@ public final class ImageDtos {
 	public record ImageUpdateRequest(String title, String status, List<String> categoryIds, List<String> tagIds) {
 	}
 
+	public record UploadSessionCreateRequest(String mode, String categoryId, List<String> tagIds, int totalCount) {
+	}
+
 	public record ImageResponse(String id, String title, String originalFilename, String mimeType, long sizeBytes,
 			Integer width, Integer height, String status, long viewCount, long downloadCount, List<CategoryBrief> categories,
 			List<TagBrief> tags, LocalDateTime createdAt) {
@@ -38,19 +41,21 @@ public final class ImageDtos {
 
 	public record UploadBatchResponse(String id, String status, int totalCount, int successCount, int failedCount,
 			int duplicateCount, int progressPercent, LocalDateTime createdAt, LocalDateTime finishedAt,
+			String mode, String categoryId, List<String> tagIds, LocalDateTime expiresAt, LocalDateTime confirmedAt,
 			List<UploadBatchItemResponse> items) {
 		static UploadBatchResponse from(UploadBatch batch, List<UploadBatchItem> items) {
 			return new UploadBatchResponse(batch.id(), batch.status(), batch.totalCount(), batch.successCount(),
 					batch.failedCount(), batch.duplicateCount(), batch.progressPercent(), batch.createdAt(),
-					batch.finishedAt(), items.stream().map(UploadBatchItemResponse::from).toList());
+					batch.finishedAt(), batch.mode(), batch.categoryId(), batch.tagIds(), batch.expiresAt(), batch.confirmedAt(),
+					items.stream().map(UploadBatchItemResponse::from).toList());
 		}
 	}
 
-	public record UploadBatchItemResponse(String id, String imageId, String originalFilename, String status,
-			int progressPercent, int retryCount, String errorMessage) {
+	public record UploadBatchItemResponse(String id, String imageId, String candidateImageId, String originalFilename,
+			String status, int progressPercent, int retryCount, String errorMessage) {
 		static UploadBatchItemResponse from(UploadBatchItem item) {
-			return new UploadBatchItemResponse(item.id(), item.imageId(), item.originalFilename(), item.status(),
-					item.progressPercent(), item.retryCount(), item.errorMessage());
+			return new UploadBatchItemResponse(item.id(), item.imageId(), item.candidateImageId(), item.originalFilename(),
+					item.status(), item.progressPercent(), item.retryCount(), item.errorMessage());
 		}
 	}
 }

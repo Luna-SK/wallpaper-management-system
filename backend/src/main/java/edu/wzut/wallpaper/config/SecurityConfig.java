@@ -29,7 +29,8 @@ class SecurityConfig {
 						.requestMatchers("/actuator/health/**", "/api/system/health").permitAll()
 						.requestMatchers(HttpMethod.POST, "/api/auth/login", "/api/auth/register",
 								"/api/auth/password/forgot", "/api/auth/password/reset").permitAll()
-						.requestMatchers(HttpMethod.GET, "/api/image-upload-batches/*/events").permitAll()
+						.requestMatchers(HttpMethod.GET, "/api/image-upload-batches/*/events",
+								"/api/image-upload-sessions/*/events").permitAll()
 						.anyRequest().authenticated())
 				.addFilterBefore(developmentTokenAuthenticationFilter, BasicAuthenticationFilter.class)
 				.httpBasic(Customizer.withDefaults())

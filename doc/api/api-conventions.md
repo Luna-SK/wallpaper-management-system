@@ -43,10 +43,14 @@
 - `PATCH /api/roles/{id}`
 - `PUT /api/roles/{id}/permissions`
 - `GET /api/permissions`
-- `POST /api/images/batch`
-- `GET /api/image-upload-batches/{id}`
-- `GET /api/image-upload-batches/{id}/events`
-- `POST /api/image-upload-batches/{id}/items/{itemId}/retry`
+- `POST /api/image-upload-sessions`
+- `POST /api/image-upload-sessions/{id}/items`
+- `POST /api/image-upload-sessions/{id}/items/{itemId}/retry`
+- `POST /api/image-upload-sessions/{id}/confirm`
+- `POST /api/image-upload-sessions/{id}/cancel`
+- `GET /api/image-upload-sessions/{id}`
+- `GET /api/image-upload-sessions/{id}/events`
+- `POST /api/images/batch`（兼容旧调用）
 - `GET /api/images`
 - `GET /api/images/{id}`
 - `PATCH /api/images/{id}`
@@ -68,6 +72,10 @@
 - `GET /api/statistics`
 - `GET /api/system-settings`
 - `PATCH /api/system-settings`
+
+上传使用会话化接口：`POST /api/image-upload-sessions` 创建会话，`POST /api/image-upload-sessions/{id}/items` 上传文件到 RustFS 暂存区，`POST /api/image-upload-sessions/{id}/confirm` 确认入库，`POST /api/image-upload-sessions/{id}/cancel` 取消并清理未确认对象。创建会话必须包含 `categoryId`，并至少提交一个 `tagIds`；所有标签必须属于该分类且处于启用状态。旧 `POST /api/images/batch` 仅作为兼容接口保留。
+
+确认入库前，暂存文件不会出现在图片库。取消会话、过期会话和孤儿对象清理都会删除未被 `image_versions` 引用的 RustFS 对象。
 
 ## Audit Log Retention
 

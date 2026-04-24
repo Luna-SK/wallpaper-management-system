@@ -84,7 +84,12 @@ class ImageAsset {
 
 	ImageAsset(String title, String originalFilename, String sha256, String mimeType, long sizeBytes, Integer width,
 			Integer height) {
-		this.id = UUID.randomUUID().toString();
+		this(UUID.randomUUID().toString(), title, originalFilename, sha256, mimeType, sizeBytes, width, height);
+	}
+
+	ImageAsset(String id, String title, String originalFilename, String sha256, String mimeType, long sizeBytes, Integer width,
+			Integer height) {
+		this.id = id;
 		this.title = title;
 		this.originalFilename = originalFilename;
 		this.sha256 = sha256;
