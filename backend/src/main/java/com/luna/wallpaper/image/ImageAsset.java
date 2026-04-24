@@ -148,6 +148,11 @@ class ImageAsset {
 		this.deletedAt = LocalDateTime.now();
 	}
 
+	void restore() {
+		this.status = "ACTIVE";
+		this.deletedAt = null;
+	}
+
 	void viewed() {
 		this.viewCount++;
 	}

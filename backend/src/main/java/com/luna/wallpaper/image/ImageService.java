@@ -1,5 +1,6 @@
 package com.luna.wallpaper.image;
 
+import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
@@ -7,19 +8,26 @@ import java.time.Instant;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.util.Collection;
+import java.util.HashMap;
 import java.util.HashSet;
 import java.util.HexFormat;
 import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
+import java.util.zip.ZipEntry;
+import java.util.zip.ZipOutputStream;
 
+import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.multipart.MultipartFile;
 
 import com.luna.wallpaper.audit.AuditLogService;
+import com.luna.wallpaper.image.ImageDtos.ImageBatchRequest;
+import com.luna.wallpaper.image.ImageDtos.ImagePageResponse;
 import com.luna.wallpaper.image.ImageDtos.ImageResponse;
 import com.luna.wallpaper.image.ImageDtos.ImageUpdateRequest;
 import com.luna.wallpaper.image.ImageDtos.UploadBatchResponse;
@@ -58,10 +66,15 @@ class ImageService {
 	}
 
 	@Transactional(readOnly = true)
-	List<ImageResponse> list(String keyword, String categoryId, String tagId, int limit) {
+	ImagePageResponse list(String keyword, String categoryId, String tagId, String status, int page, int size) {
 		String query = keyword == null || keyword.isBlank() ? null : keyword.trim();
-		return images.search(query, blankToNull(categoryId), blankToNull(tagId), PageRequest.of(0, Math.min(limit, 200)))
-				.stream().map(ImageResponse::from).toList();
+		String statusFilter = status == null || status.isBlank() ? null : status.trim().toUpperCase();
+		int safePage = Math.max(1, page);
+		int safeSize = Math.min(Math.max(1, size), 100);
+		Page<ImageAsset> result = images.search(query, blankToNull(categoryId), blankToNull(tagId),
+				statusFilter, PageRequest.of(safePage - 1, safeSize));
+		return new ImagePageResponse(result.getContent().stream().map(ImageResponse::from).toList(),
+				safePage, safeSize, result.getTotalElements());
 	}
 
 	@Transactional(readOnly = true)
@@ -216,15 +229,59 @@ class ImageService {
 	}
 
 	@Transactional
+	void batchDisable(ImageBatchRequest request) {
+		for (ImageAsset image : getBatchImages(request)) {
+			image.markDeleted();
+			auditLogService.record("image.delete", "IMAGE", image.id(), "{\"batch\":true}");
+		}
+	}
+
+	@Transactional
+	void restore(String id) {
+		ImageAsset image = getDeletedImage(id);
+		image.restore();
+		auditLogService.record("image.restore", "IMAGE", id, "{}");
+	}
+
+	@Transactional
+	void batchRestore(ImageBatchRequest request) {
+		for (ImageAsset image : getDeletedBatchImages(request)) {
+			image.restore();
+			auditLogService.record("image.restore", "IMAGE", image.id(), "{\"batch\":true}");
+		}
+	}
+
+	@Transactional
+	void purge(String id) {
+		purgeImage(getDeletedImage(id), false);
+	}
+
+	@Transactional
+	void batchPurge(ImageBatchRequest request) {
+		for (ImageAsset image : getDeletedBatchImages(request)) {
+			purgeImage(image, true);
+		}
+	}
+
+	@Transactional
+	int purgeDeleted() {
+		List<ImageAsset> deletedImages = images.findByStatus("DELETED");
+		for (ImageAsset image : deletedImages) {
+			purgeImage(image, true);
+		}
+		return deletedImages.size();
+	}
+
+	@Transactional
 	ObjectFile thumbnail(String id) {
-		ImageAsset image = getImage(id);
+		ImageAsset image = getRetainedImage(id);
 		ImageVersion version = currentVersion(image);
 		return new ObjectFile(version.bucket(), version.thumbnailObjectKey(), "image/png", image.originalFilename());
 	}
 
 	@Transactional
 	ObjectFile preview(String id) {
-		ImageAsset image = getImage(id);
+		ImageAsset image = getRetainedImage(id);
 		image.viewed();
 		ImageVersion version = currentVersion(image);
 		String quality = settings.get("preview.quality", "ORIGINAL");
@@ -245,6 +302,30 @@ class ImageService {
 		ImageVersion version = currentVersion(image);
 		auditLogService.record("image.download", "IMAGE", id, "{}");
 		return new ObjectFile(version.bucket(), version.originalObjectKey(), version.mimeType(), version.originalFilename());
+	}
+
+	@Transactional
+	BatchDownloadFile batchDownload(ImageBatchRequest request) {
+		List<ImageAsset> selectedImages = getBatchImages(request);
+		ByteArrayOutputStream output = new ByteArrayOutputStream();
+		Map<String, Integer> usedNames = new HashMap<>();
+		try (ZipOutputStream zip = new ZipOutputStream(output)) {
+			for (ImageAsset image : selectedImages) {
+				ImageVersion version = currentVersion(image);
+				byte[] content = storage.read(version.bucket(), version.originalObjectKey());
+				ZipEntry entry = new ZipEntry(uniqueZipFilename(version.originalFilename(), usedNames));
+				zip.putNextEntry(entry);
+				zip.write(content);
+				zip.closeEntry();
+				image.downloaded();
+				auditLogService.record("image.download", "IMAGE", image.id(), "{\"batch\":true}");
+			}
+		}
+		catch (IOException ex) {
+			throw new IllegalStateException("批量下载生成失败", ex);
+		}
+		return new BatchDownloadFile("wallpaper-images-" + LocalDateTime.now().format(java.time.format.DateTimeFormatter.ofPattern("yyyyMMddHHmmss")) + ".zip",
+				output.toByteArray());
 	}
 
 	byte[] read(ObjectFile file) {
@@ -298,6 +379,62 @@ class ImageService {
 		image.setCurrentVersionId(version.id());
 		auditLogService.record("image.upload", "IMAGE", image.id(), "{\"filename\":\"" + escape(stored.originalFilename()) + "\"}");
 		return image;
+	}
+
+	private List<ImageAsset> getBatchImages(ImageBatchRequest request) {
+		List<String> ids = request == null || request.ids() == null
+				? List.of()
+				: request.ids().stream()
+						.filter(id -> id != null && !id.isBlank())
+						.map(String::trim)
+						.distinct()
+						.toList();
+		if (ids.isEmpty()) {
+			throw new IllegalArgumentException("请选择至少一张图片");
+		}
+		Map<String, ImageAsset> found = images.findAllById(ids).stream()
+				.filter(image -> !"DELETED".equals(image.status()))
+				.collect(java.util.stream.Collectors.toMap(ImageAsset::id, image -> image));
+		List<String> missing = ids.stream().filter(id -> !found.containsKey(id)).toList();
+		if (!missing.isEmpty()) {
+			throw new IllegalArgumentException("部分图片不存在或已停用");
+		}
+		return ids.stream().map(found::get).toList();
+	}
+
+	private List<ImageAsset> getDeletedBatchImages(ImageBatchRequest request) {
+		List<String> ids = request == null || request.ids() == null
+				? List.of()
+				: request.ids().stream()
+						.filter(id -> id != null && !id.isBlank())
+						.map(String::trim)
+						.distinct()
+						.toList();
+		if (ids.isEmpty()) {
+			throw new IllegalArgumentException("请选择至少一张图片");
+		}
+		Map<String, ImageAsset> found = images.findAllById(ids).stream()
+				.filter(image -> "DELETED".equals(image.status()))
+				.collect(java.util.stream.Collectors.toMap(ImageAsset::id, image -> image));
+		List<String> missing = ids.stream().filter(id -> !found.containsKey(id)).toList();
+		if (!missing.isEmpty()) {
+			throw new IllegalArgumentException("部分图片不存在或未停用");
+		}
+		return ids.stream().map(found::get).toList();
+	}
+
+	private void purgeImage(ImageAsset image, boolean batch) {
+		List<ImageVersion> imageVersions = versions.findByImageIdOrderByVersionNoDesc(image.id());
+		for (ImageVersion version : imageVersions) {
+			storage.delete(new StoredImage(version.originalFilename(), "", version.mimeType(), 0L, null, null,
+					version.bucket(), version.originalObjectKey(), version.thumbnailObjectKey(), version.highPreviewObjectKey(),
+					version.standardPreviewObjectKey()));
+		}
+		versions.deleteAll(imageVersions);
+		image.categories().clear();
+		image.tags().clear();
+		images.delete(image);
+		auditLogService.record("image.purge", "IMAGE", image.id(), batch ? "{\"batch\":true}" : "{}");
 	}
 
 	private void refreshUploadBatch(UploadBatch batch) {
@@ -375,6 +512,17 @@ class ImageService {
 				.orElseThrow(() -> new IllegalArgumentException("图片不存在"));
 	}
 
+	private ImageAsset getDeletedImage(String id) {
+		return images.findById(id)
+				.filter(image -> "DELETED".equals(image.status()))
+				.orElseThrow(() -> new IllegalArgumentException("图片不存在或未停用"));
+	}
+
+	private ImageAsset getRetainedImage(String id) {
+		return images.findById(id)
+				.orElseThrow(() -> new IllegalArgumentException("图片不存在"));
+	}
+
 	private ImageVersion currentVersion(ImageAsset image) {
 		if (image.currentVersionId() != null) {
 			return versions.findById(image.currentVersionId())
@@ -416,6 +564,28 @@ class ImageService {
 	private static String titleFrom(String filename) {
 		int dot = filename.lastIndexOf('.');
 		return dot > 0 ? filename.substring(0, dot) : filename;
+	}
+
+	private static String uniqueZipFilename(String filename, Map<String, Integer> usedNames) {
+		String cleaned = filename == null || filename.isBlank() ? "image" : filename.replace("\\", "/");
+		int slash = cleaned.lastIndexOf('/');
+		if (slash >= 0) {
+			cleaned = cleaned.substring(slash + 1);
+		}
+		if (cleaned.isBlank()) {
+			cleaned = "image";
+		}
+		String candidate = cleaned;
+		int counter = 1;
+		while (usedNames.containsKey(candidate)) {
+			counter++;
+			int dot = cleaned.lastIndexOf('.');
+			candidate = dot > 0
+					? cleaned.substring(0, dot) + "-" + counter + cleaned.substring(dot)
+					: cleaned + "-" + counter;
+		}
+		usedNames.put(candidate, 1);
+		return candidate;
 	}
 
 	private static String blankToNull(String value) {
@@ -468,6 +638,9 @@ class ImageService {
 	}
 
 	record ObjectFile(String bucket, String objectKey, String mimeType, String filename) {
+	}
+
+	record BatchDownloadFile(String filename, byte[] content) {
 	}
 
 	record Statistics(long imageTotal, long todayUploaded, long viewCount, long downloadCount, long storageBytes) {

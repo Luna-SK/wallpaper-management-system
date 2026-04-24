@@ -5,6 +5,7 @@ import java.util.Collection;
 import java.util.List;
 import java.util.Optional;
 
+import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Query;
@@ -13,24 +14,36 @@ import org.springframework.data.repository.query.Param;
 interface ImageAssetRepository extends JpaRepository<ImageAsset, String> {
 	Optional<ImageAsset> findBySha256AndStatusNot(String sha256, String status);
 
+	List<ImageAsset> findByStatus(String status);
+
 	long countByStatusNot(String status);
 
 	long countByCreatedAtAfterAndStatusNot(LocalDateTime time, String status);
 
-	@Query("""
+	@Query(value = """
 			select distinct image from ImageAsset image
 			left join image.categories category
 			left join image.tags tag
-			where image.status <> 'DELETED'
+			where ((:status is null and image.status <> 'DELETED') or (:status is not null and image.status = :status))
 			  and (:keyword is null or lower(image.title) like lower(concat('%', :keyword, '%'))
 			    or lower(image.originalFilename) like lower(concat('%', :keyword, '%'))
 			    or lower(tag.name) like lower(concat('%', :keyword, '%')))
 			  and (:categoryId is null or category.id = :categoryId)
 			  and (:tagId is null or tag.id = :tagId)
 			order by image.createdAt desc
+			""", countQuery = """
+			select count(distinct image) from ImageAsset image
+			left join image.categories category
+			left join image.tags tag
+			where ((:status is null and image.status <> 'DELETED') or (:status is not null and image.status = :status))
+			  and (:keyword is null or lower(image.title) like lower(concat('%', :keyword, '%'))
+			    or lower(image.originalFilename) like lower(concat('%', :keyword, '%'))
+			    or lower(tag.name) like lower(concat('%', :keyword, '%')))
+			  and (:categoryId is null or category.id = :categoryId)
+			  and (:tagId is null or tag.id = :tagId)
 			""")
-	List<ImageAsset> search(@Param("keyword") String keyword, @Param("categoryId") String categoryId,
-			@Param("tagId") String tagId, Pageable pageable);
+	Page<ImageAsset> search(@Param("keyword") String keyword, @Param("categoryId") String categoryId,
+			@Param("tagId") String tagId, @Param("status") String status, Pageable pageable);
 
 	@Query("select coalesce(sum(image.sizeBytes), 0) from ImageAsset image where image.status <> 'DELETED'")
 	long totalStorageBytes();

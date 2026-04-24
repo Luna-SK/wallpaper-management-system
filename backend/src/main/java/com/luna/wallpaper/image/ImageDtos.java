@@ -13,6 +13,15 @@ public final class ImageDtos {
 	public record ImageUpdateRequest(String title, String status, List<String> categoryIds, List<String> tagIds) {
 	}
 
+	public record ImageBatchRequest(List<String> ids) {
+	}
+
+	public record ImagePageResponse(List<ImageResponse> items, int page, int size, long total) {
+	}
+
+	public record ImagePurgeResponse(int count) {
+	}
+
 	public record UploadSessionCreateRequest(String mode, String categoryId, List<String> tagIds, int totalCount) {
 	}
 

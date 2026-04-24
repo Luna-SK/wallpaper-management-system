@@ -1,18 +1,25 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, reactive, ref } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import type { UploadFile, UploadFiles, UploadUserFile } from 'element-plus'
-import { Download, Search, UploadFilled } from '@element-plus/icons-vue'
+import type { TableInstance, UploadFile, UploadFiles, UploadUserFile } from 'element-plus'
+import { ArrowLeft, ArrowRight, Delete, Download, RefreshLeft, Search, UploadFilled } from '@element-plus/icons-vue'
 import { isAxiosError } from 'axios'
 import {
+  batchDisableImages,
+  batchPurgeImages,
+  batchRestoreImages,
   cancelUploadSession,
   confirmUploadSession,
   createUploadSession,
   deleteImage,
   downloadImage,
+  downloadImagesZip,
   getImages,
   imageBlobUrl,
+  purgeImage,
+  purgeDeletedImages,
   retryUploadSessionItem,
+  restoreImage,
   updateImage,
   uploadSessionItem,
   type ImageRecord,
@@ -25,11 +32,23 @@ const loading = ref(false)
 const keyword = ref('')
 const selectedCategoryId = ref('')
 const selectedTagId = ref('')
+const imageScope = ref<'ACTIVE' | 'DELETED'>('ACTIVE')
 const rows = ref<ImageRecord[]>([])
+const imageTableRef = ref<TableInstance>()
+const selectedRows = ref<ImageRecord[]>([])
+const batchDownloadLoading = ref(false)
+const batchDisableLoading = ref(false)
+const batchRestoreLoading = ref(false)
+const batchPurgeLoading = ref(false)
+const purgeDeletedLoading = ref(false)
+const pagination = reactive({ page: 1, size: 20, total: 0 })
 const categories = ref<Category[]>([])
 const tags = ref<Tag[]>([])
 const thumbnailUrls = reactive<Record<string, string>>({})
 const previewVisible = ref(false)
+const previewLoading = ref(false)
+const previewIndex = ref(-1)
+const previewImageId = ref('')
 const previewUrl = ref('')
 const editing = ref<ImageRecord | null>(null)
 const editVisible = ref(false)
@@ -41,6 +60,7 @@ const uploadCancelling = ref(false)
 const uploadMode = ref<'SINGLE' | 'BATCH'>('SINGLE')
 const uploadFileList = ref<UploadUserFile[]>([])
 const singleUploadPreviewUrl = ref('')
+const batchUploadPreviewUrls = reactive<Record<string, string>>({})
 const uploadTags = ref<Tag[]>([])
 const uploadSession = ref<UploadBatch | null>(null)
 const uploadAbortController = ref<AbortController | null>(null)
@@ -50,11 +70,42 @@ const uploadForm = reactive({ categoryId: '', tagIds: [] as string[] })
 const categoryOptions = computed(() => categories.value.filter((category) => category.enabled))
 const tagOptions = computed(() => tags.value.filter((tag) => tag.enabled))
 const uploadTagOptions = computed(() => uploadTags.value.filter((tag) => tag.enabled))
+const selectedRowIds = computed(() => selectedRows.value.map((row) => row.id))
+const showingDeletedImages = computed(() => imageScope.value === 'DELETED')
+const currentPreview = computed(() => previewIndex.value >= 0 ? rows.value[previewIndex.value] ?? null : null)
+const canPreviewPrevious = computed(() => previewIndex.value > 0)
+const canPreviewNext = computed(() => previewIndex.value >= 0 && previewIndex.value < rows.value.length - 1)
 const selectedSingleUploadFile = computed(() => uploadFileList.value[0] ?? null)
 const uploadHasStagedItems = computed(() => Boolean(uploadSession.value?.items.some((item) => item.status === 'STAGED' || item.status === 'DUPLICATE')))
 const uploadHasFailedItems = computed(() => Boolean(uploadSession.value?.items.some((item) => item.status === 'FAILED')))
 const uploadCanConfirmSession = computed(() => Boolean(uploadSession.value && uploadHasStagedItems.value && !uploadHasFailedItems.value))
 const uploadLocked = computed(() => Boolean(uploadSession.value) || uploadLoading.value || uploadConfirming.value || uploadCancelling.value)
+const uploadFailedItems = computed(() => uploadSession.value?.items.filter((item) => item.status === 'FAILED') ?? [])
+const uploadProcessedCount = computed(() => {
+  if (!uploadSession.value) return 0
+  const processed = uploadSession.value.successCount + uploadSession.value.failedCount + uploadSession.value.duplicateCount
+  return Math.min(uploadSession.value.totalCount, processed)
+})
+const uploadProgressPercentage = computed(() => uploadSession.value?.progressPercent ?? 0)
+const uploadProgressStatus = computed(() => {
+  if (!uploadSession.value) return undefined
+  if (uploadFailedItems.value.length > 0) return 'exception'
+  return uploadProgressPercentage.value >= 100 ? 'success' : undefined
+})
+const uploadProgressTitle = computed(() => {
+  if (!uploadSession.value) return ''
+  if (uploadFailedItems.value.length > 0) return '部分图片上传失败'
+  if (uploadProgressPercentage.value >= 100) return '图片处理完成'
+  return '正在上传图片'
+})
+const uploadProgressSummary = computed(() => {
+  if (!uploadSession.value) return ''
+  const duplicateText = uploadSession.value.duplicateCount > 0 ? `，${uploadSession.value.duplicateCount} 张重复` : ''
+  if (uploadFailedItems.value.length > 0) {
+    return `${uploadFailedItems.value.length} 张失败，可单独重新上传${duplicateText}`
+  }
+  return `已处理 ${uploadProcessedCount.value} / ${uploadSession.value.totalCount} 张${duplicateText}`
+})
 
 function errorMessage(error: unknown, fallback: string) {
   if (isAxiosError<{ message?: string }>(error)) {
@@ -68,6 +119,45 @@ function formatBytes(value: number) {
   return `${(value / 1024 / 1024).toFixed(1)} MB`
 }
 
+function statusLabel(status: string) {
+  if (status === 'DELETED') return '已停用'
+  if (status === 'DISABLED') return '停用'
+  return '启用'
+}
+
+function statusTagType(status: string) {
+  if (status === 'DELETED') return 'info'
+  if (status === 'DISABLED') return 'warning'
+  return 'success'
+}
+
+function revokeThumbnailUrl(id: string) {
+  if (thumbnailUrls[id]) {
+    URL.revokeObjectURL(thumbnailUrls[id])
+    delete thumbnailUrls[id]
+  }
+}
+
+function revokeStaleThumbnailUrls() {
+  const activeIds = new Set(rows.value.map((row) => row.id))
+  Object.keys(thumbnailUrls).forEach((id) => {
+    if (!activeIds.has(id)) {
+      revokeThumbnailUrl(id)
+    }
+  })
+}
+
+function revokeAllThumbnailUrls() {
+  Object.keys(thumbnailUrls).forEach(revokeThumbnailUrl)
+}
+
+function revokePreviewUrl() {
+  if (previewUrl.value) {
+    URL.revokeObjectURL(previewUrl.value)
+    previewUrl.value = ''
+  }
+}
+
 function uploadFileSize(file: UploadUserFile) {
   return typeof file.size === 'number' ? formatBytes(file.size) : '未知大小'
 }
@@ -76,6 +166,10 @@ function uploadFileKey(file: UploadUserFile) {
   const raw = file.raw as unknown as File | undefined
   if (raw) return `${raw.name}:${raw.size}:${raw.lastModified}`
   return `${file.name}:${file.size ?? 0}`
+}
+
+function uploadPreviewKey(file: UploadUserFile) {
+  return file.uid === undefined ? uploadFileKey(file) : String(file.uid)
 }
 
 function isAcceptedUploadFile(file: UploadUserFile) {
@@ -131,6 +225,40 @@ function refreshSingleUploadPreview() {
   }
 }
 
+function revokeBatchUploadPreview(key: string) {
+  if (batchUploadPreviewUrls[key]) {
+    URL.revokeObjectURL(batchUploadPreviewUrls[key])
+    delete batchUploadPreviewUrls[key]
+  }
+}
+
+function revokeAllBatchUploadPreviews() {
+  Object.keys(batchUploadPreviewUrls).forEach(revokeBatchUploadPreview)
+}
+
+function syncBatchUploadPreviews(files = uploadFileList.value) {
+  if (uploadMode.value !== 'BATCH') {
+    revokeAllBatchUploadPreviews()
+    return
+  }
+  const activeKeys = new Set<string>()
+  files.forEach((file) => {
+    const key = uploadPreviewKey(file)
+    activeKeys.add(key)
+    if (!batchUploadPreviewUrls[key]) {
+      const raw = file.raw as unknown as File | undefined
+      if (raw) {
+        batchUploadPreviewUrls[key] = URL.createObjectURL(raw)
+      }
+    }
+  })
+  Object.keys(batchUploadPreviewUrls).forEach((key) => {
+    if (!activeKeys.has(key)) {
+      revokeBatchUploadPreview(key)
+    }
+  })
+}
+
 async function loadCategories() {
   categories.value = await getCategories()
   if (selectedCategoryId.value) {
@@ -140,6 +268,7 @@ async function loadCategories() {
 
 async function loadTagsForFilter() {
   selectedTagId.value = ''
+  pagination.page = 1
   tags.value = selectedCategoryId.value ? await getTags(selectedCategoryId.value) : []
 }
 
@@ -151,11 +280,31 @@ async function loadUploadTags() {
 async function loadImages() {
   loading.value = true
   try {
-    rows.value = await getImages({
+    const activePreviewId = previewImageId.value
+    const page = await getImages({
       keyword: keyword.value || undefined,
       categoryId: selectedCategoryId.value || undefined,
       tagId: selectedTagId.value || undefined,
+      status: showingDeletedImages.value ? 'DELETED' : undefined,
+      page: pagination.page,
+      size: pagination.size,
     })
+    rows.value = page.items
+    pagination.page = page.page
+    pagination.size = page.size
+    pagination.total = page.total
+    selectedRows.value = []
+    imageTableRef.value?.clearSelection()
+    revokeStaleThumbnailUrls()
+    if (activePreviewId) {
+      const nextPreviewIndex = rows.value.findIndex((row) => row.id === activePreviewId)
+      if (nextPreviewIndex === -1) {
+        previewVisible.value = false
+        closePreview()
+      } else {
+        previewIndex.value = nextPreviewIndex
+      }
+    }
     await Promise.all(rows.value.map(async (row) => {
       if (!thumbnailUrls[row.id]) {
         thumbnailUrls[row.id] = await imageBlobUrl(row.id, 'thumbnail')
@@ -168,11 +317,43 @@ async function loadImages() {
   }
 }
 
+function applyFilters() {
+  pagination.page = 1
+  void loadImages()
+}
+
 function resetFilters() {
   keyword.value = ''
   selectedCategoryId.value = ''
   selectedTagId.value = ''
   tags.value = []
+  pagination.page = 1
+  void loadImages()
+}
+
+function handleSelectionChange(selection: ImageRecord[]) {
+  selectedRows.value = selection
+}
+
+function handlePageChange(page: number) {
+  pagination.page = page
+  void loadImages()
+}
+
+function handlePageSizeChange(size: number) {
+  pagination.size = size
+  pagination.page = 1
+  void loadImages()
+}
+
+function handleImageScopeChange() {
+  pagination.page = 1
+  selectedRows.value = []
+  imageTableRef.value?.clearSelection()
+  if (previewVisible.value) {
+    previewVisible.value = false
+    closePreview()
+  }
   void loadImages()
 }
 
@@ -187,6 +368,7 @@ async function openUploadDialog() {
   uploadForm.tagIds = []
   uploadFileList.value = []
   revokeSingleUploadPreview()
+  revokeAllBatchUploadPreviews()
   uploadSession.value = null
   Object.keys(uploadItemFiles).forEach((key) => delete uploadItemFiles[key])
   uploadTags.value = uploadForm.categoryId ? await getTags(uploadForm.categoryId) : []
@@ -196,6 +378,7 @@ async function openUploadDialog() {
 function handleUploadModeChange() {
   uploadFileList.value = []
   revokeSingleUploadPreview()
+  revokeAllBatchUploadPreviews()
   uploadSession.value = null
   Object.keys(uploadItemFiles).forEach((key) => delete uploadItemFiles[key])
 }
@@ -209,16 +392,22 @@ function handleUploadFileChange(_file: UploadFile, files: UploadFiles) {
   if (uploadMode.value === 'SINGLE') {
     uploadFileList.value = normalized.slice(0, 1)
     refreshSingleUploadPreview()
+    revokeAllBatchUploadPreviews()
     return
   }
   uploadFileList.value = normalized
+  syncBatchUploadPreviews(normalized)
 }
 
-function removeSelectedUploadFile(uid?: number) {
+function removeSelectedUploadFile(file?: UploadUserFile) {
   if (uploadLocked.value) return
-  uploadFileList.value = uid === undefined ? [] : uploadFileList.value.filter((file) => file.uid !== uid)
+  uploadFileList.value = file === undefined
+    ? []
+    : uploadFileList.value.filter((item) => uploadPreviewKey(item) !== uploadPreviewKey(file))
   if (uploadMode.value === 'SINGLE') {
     refreshSingleUploadPreview()
+  } else {
+    syncBatchUploadPreviews()
   }
 }
 
@@ -226,6 +415,7 @@ function clearSelectedUploadFiles() {
   if (uploadLocked.value) return
   uploadFileList.value = []
   revokeSingleUploadPreview()
+  revokeAllBatchUploadPreviews()
 }
 
 function validateUploadSelection() {
@@ -260,6 +450,7 @@ async function stageSelectedUploadFiles(files: File[]) {
       totalCount: files.length,
     })
     uploadSession.value = session
+    revokeAllBatchUploadPreviews()
     for (const file of files) {
       session = await uploadSessionItem(session.id, file, uploadAbortController.value.signal)
       const latestItem = session.items.at(-1)
@@ -333,7 +524,7 @@ async function confirmUploadDialog() {
   uploadConfirming.value = true
   try {
     const session = await confirmUploadSession(uploadSession.value.id)
-    ElMessage.success(session.duplicateCount > 0 ? '图片已上传入库，重复图片已关联既有记录' : '图片已上传入库')
+    ElMessage.success(session.duplicateCount > 0 ? '图片已上传，重复图片已关联既有记录' : '图片已上传')
     uploadVisible.value = false
     resetUploadDialog()
     await loadImages()
@@ -354,7 +545,7 @@ async function cancelUploadDialog(showMessage = true) {
     try {
       uploadSession.value = await cancelUploadSession(uploadSession.value.id)
       if (showMessage) {
-        ElMessage.success('已清理本次未确认上传文件')
+        ElMessage.success('已取消上传')
       }
     } catch (error) {
       ElMessage.error(errorMessage(error, '上传会话取消失败'))
@@ -379,31 +570,13 @@ function handleUploadBeforeClose(done: () => void) {
 function resetUploadDialog() {
   uploadFileList.value = []
   revokeSingleUploadPreview()
+  revokeAllBatchUploadPreviews()
   uploadSession.value = null
   uploadLoading.value = false
   uploadConfirming.value = false
   uploadCancelling.value = false
   uploadAbortController.value = null
   Object.keys(uploadItemFiles).forEach((key) => delete uploadItemFiles[key])
-}
-
-function uploadStatusType(status: string) {
-  if (status === 'STAGED' || status === 'CONFIRMED') return 'success'
-  if (status === 'DUPLICATE') return 'warning'
-  if (status === 'FAILED' || status === 'CANCELLED') return 'danger'
-  return 'info'
-}
-
-function uploadStatusText(status: string) {
-  const labels: Record<string, string> = {
-    PROCESSING: '处理中',
-    STAGED: '待确认',
-    DUPLICATE: '重复',
-    FAILED: '失败',
-    CONFIRMED: '已入库',
-    CANCELLED: '已取消',
-  }
-  return labels[status] ?? status
 }
 
 function uploadModeLimit() {
@@ -425,19 +598,61 @@ function uploadItemMeta(item: UploadBatchItem) {
 
 function uploadItemDescription(item: UploadBatchItem) {
   if (item.errorMessage) return item.errorMessage
-  if (item.status === 'STAGED') return '已处理，等待入库确认'
-  if (item.status === 'DUPLICATE') return '重复图片不会重复写入存储'
-  if (item.status === 'CONFIRMED') return '已入库'
-  if (item.status === 'PROCESSING') return '正在处理图片'
+  if (item.status === 'FAILED') return '上传失败'
   return ''
 }
 
-async function preview(row: ImageRecord) {
+async function showPreviewAt(index: number) {
+  const row = rows.value[index]
+  if (!row) return
+  previewLoading.value = true
   try {
-    previewUrl.value = await imageBlobUrl(row.id, 'preview')
+    const url = await imageBlobUrl(row.id, 'preview')
+    revokePreviewUrl()
+    previewIndex.value = index
+    previewImageId.value = row.id
+    previewUrl.value = url
     previewVisible.value = true
   } catch (error) {
     ElMessage.error(errorMessage(error, '图片预览加载失败'))
+  } finally {
+    previewLoading.value = false
+  }
+}
+
+async function preview(row: ImageRecord) {
+  const index = rows.value.findIndex((item) => item.id === row.id)
+  await showPreviewAt(index)
+}
+
+function closePreview() {
+  revokePreviewUrl()
+  previewIndex.value = -1
+  previewImageId.value = ''
+  previewLoading.value = false
+}
+
+async function previewPrevious() {
+  if (canPreviewPrevious.value) {
+    await showPreviewAt(previewIndex.value - 1)
+  }
+}
+
+async function previewNext() {
+  if (canPreviewNext.value) {
+    await showPreviewAt(previewIndex.value + 1)
+  }
+}
+
+function handlePreviewKeydown(event: KeyboardEvent) {
+  if (!previewVisible.value || previewLoading.value) return
+  if (event.key === 'ArrowLeft' && canPreviewPrevious.value) {
+    event.preventDefault()
+    void previewPrevious()
+  }
+  if (event.key === 'ArrowRight' && canPreviewNext.value) {
+    event.preventDefault()
+    void previewNext()
   }
 }
 
@@ -475,13 +690,138 @@ async function saveEdit() {
 }
 
 async function remove(row: ImageRecord) {
-  await ElMessageBox.confirm(`确定停用图片“${row.title}”？`, '停用图片', { type: 'warning' })
+  try {
+    await ElMessageBox.confirm(`确定停用图片“${row.title}”？`, '停用图片', { type: 'warning' })
+  } catch {
+    return
+  }
   try {
     await deleteImage(row.id)
     ElMessage.success('图片已停用')
     await loadImages()
   } catch (error) {
     ElMessage.error(errorMessage(error, '图片停用失败'))
+  }
+}
+
+async function batchDisableSelected() {
+  const ids = [...selectedRowIds.value]
+  if (ids.length === 0) {
+    ElMessage.warning('请先选择图片')
+    return
+  }
+  try {
+    await ElMessageBox.confirm(`确定停用选中的 ${ids.length} 张图片？`, '批量停用图片', { type: 'warning' })
+  } catch {
+    return
+  }
+  batchDisableLoading.value = true
+  try {
+    await batchDisableImages(ids)
+    ElMessage.success('已停用选中的图片')
+    await loadImages()
+  } catch (error) {
+    ElMessage.error(errorMessage(error, '批量停用失败'))
+  } finally {
+    batchDisableLoading.value = false
+  }
+}
+
+async function restore(row: ImageRecord) {
+  try {
+    await restoreImage(row.id)
+    ElMessage.success('图片已恢复')
+    await loadImages()
+  } catch (error) {
+    ElMessage.error(errorMessage(error, '图片恢复失败'))
+  }
+}
+
+async function batchRestoreSelected() {
+  const ids = [...selectedRowIds.value]
+  if (ids.length === 0) {
+    ElMessage.warning('请先选择图片')
+    return
+  }
+  batchRestoreLoading.value = true
+  try {
+    await batchRestoreImages(ids)
+    ElMessage.success('已恢复选中的图片')
+    await loadImages()
+  } catch (error) {
+    ElMessage.error(errorMessage(error, '批量恢复失败'))
+  } finally {
+    batchRestoreLoading.value = false
+  }
+}
+
+async function purge(row: ImageRecord) {
+  try {
+    await ElMessageBox.confirm(`彻底删除图片“${row.title}”？此操作不可恢复。`, '彻底删除图片', {
+      confirmButtonText: '彻底删除',
+      type: 'warning',
+    })
+  } catch {
+    return
+  }
+  try {
+    await purgeImage(row.id)
+    ElMessage.success('图片已彻底删除')
+    await loadImages()
+  } catch (error) {
+    ElMessage.error(errorMessage(error, '图片彻底删除失败'))
+  }
+}
+
+async function batchPurgeSelected() {
+  const ids = [...selectedRowIds.value]
+  if (ids.length === 0) {
+    ElMessage.warning('请先选择图片')
+    return
+  }
+  try {
+    await ElMessageBox.confirm(`彻底删除选中的 ${ids.length} 张图片？此操作不可恢复。`, '批量彻底删除', {
+      confirmButtonText: '彻底删除',
+      type: 'warning',
+    })
+  } catch {
+    return
+  }
+  batchPurgeLoading.value = true
+  try {
+    await batchPurgeImages(ids)
+    ElMessage.success('已彻底删除选中的图片')
+    await loadImages()
+  } catch (error) {
+    ElMessage.error(errorMessage(error, '批量彻底删除失败'))
+  } finally {
+    batchPurgeLoading.value = false
+  }
+}
+
+async function purgeAllDeleted() {
+  if (pagination.total === 0) {
+    ElMessage.info('当前没有已停用图片')
+    return
+  }
+  try {
+    await ElMessageBox.confirm(`确定彻底删除全部 ${pagination.total} 张已停用图片？此操作不可恢复。`, '清空已停用图片', {
+      confirmButtonText: '清空并彻底删除',
+      type: 'warning',
+    })
+  } catch {
+    return
+  }
+  purgeDeletedLoading.value = true
+  try {
+    const result = await purgeDeletedImages()
+    ElMessage.success(`已彻底删除 ${result.count} 张已停用图片`)
+    pagination.page = 1
+    await loadImages()
+  } catch (error) {
+    ElMessage.error(errorMessage(error, '清空已停用图片失败'))
+  } finally {
+    purgeDeletedLoading.value = false
   }
 }
 
@@ -493,13 +833,35 @@ async function download(row: ImageRecord) {
   }
 }
 
+async function batchDownloadSelected() {
+  const ids = [...selectedRowIds.value]
+  if (ids.length === 0) {
+    ElMessage.warning('请先选择图片')
+    return
+  }
+  batchDownloadLoading.value = true
+  try {
+    await downloadImagesZip(ids)
+    ElMessage.success('批量下载已开始')
+  } catch (error) {
+    ElMessage.error(errorMessage(error, '批量下载失败'))
+  } finally {
+    batchDownloadLoading.value = false
+  }
+}
+
 onMounted(async () => {
+  window.addEventListener('keydown', handlePreviewKeydown)
   await loadCategories()
   await loadImages()
 })
 
 onBeforeUnmount(() => {
+  window.removeEventListener('keydown', handlePreviewKeydown)
+  revokeAllThumbnailUrls()
+  revokePreviewUrl()
   revokeSingleUploadPreview()
+  revokeAllBatchUploadPreviews()
 })
 </script>
 
@@ -514,6 +876,13 @@ onBeforeUnmount(() => {
     </div>
 
     <div class="surface surface-pad">
+      <div class="image-scope-row">
+        <el-radio-group v-model="imageScope" @change="handleImageScopeChange">
+          <el-radio-button label="ACTIVE">在库图片</el-radio-button>
+          <el-radio-button label="DELETED">已停用</el-radio-button>
+        </el-radio-group>
+      </div>
+
       <div class="toolbar-row image-toolbar">
         <el-input v-model="keyword" placeholder="文件名、标签、备注" :prefix-icon="Search" clearable />
         <el-select v-model="selectedCategoryId" placeholder="分类" clearable @change="loadTagsForFilter">
@@ -523,16 +892,77 @@ onBeforeUnmount(() => {
           <el-option v-for="tag in tagOptions" :key="tag.id" :label="tag.name" :value="tag.id" />
         </el-select>
         <div>
-          <el-button @click="loadImages">筛选</el-button>
+          <el-button @click="applyFilters">筛选</el-button>
           <el-button @click="resetFilters">重置</el-button>
         </div>
       </div>
 
-      <el-table v-loading="loading" :data="rows" stripe>
+      <div class="batch-toolbar">
+        <span>已选择 {{ selectedRows.length }} 张</span>
+        <div v-if="!showingDeletedImages" class="batch-toolbar-actions">
+          <el-button
+            type="primary"
+            plain
+            :icon="Download"
+            :disabled="selectedRows.length === 0 || batchDisableLoading"
+            :loading="batchDownloadLoading"
+            @click="batchDownloadSelected"
+          >
+            批量下载
+          </el-button>
+          <el-button
+            type="danger"
+            plain
+            :icon="Delete"
+            :disabled="selectedRows.length === 0 || batchDownloadLoading"
+            :loading="batchDisableLoading"
+            @click="batchDisableSelected"
+          >
+            批量停用
+          </el-button>
+        </div>
+      <div v-else class="batch-toolbar-actions">
+          <el-button
+            type="danger"
+            :icon="Delete"
+            :disabled="pagination.total === 0 || batchRestoreLoading || batchPurgeLoading"
+            :loading="purgeDeletedLoading"
+            @click="purgeAllDeleted"
+          >
+            清空已停用
+          </el-button>
+          <el-button
+            type="primary"
+            plain
+            :icon="RefreshLeft"
+            :disabled="selectedRows.length === 0 || batchPurgeLoading || purgeDeletedLoading"
+            :loading="batchRestoreLoading"
+            @click="batchRestoreSelected"
+          >
+            批量恢复
+          </el-button>
+          <el-button
+            type="danger"
+            plain
+            :icon="Delete"
+            :disabled="selectedRows.length === 0 || batchRestoreLoading || purgeDeletedLoading"
+            :loading="batchPurgeLoading"
+            @click="batchPurgeSelected"
+          >
+            批量彻底删除
+          </el-button>
+        </div>
+      </div>
+
+      <el-table ref="imageTableRef" v-loading="loading" :data="rows" stripe @selection-change="handleSelectionChange">
+        <el-table-column type="selection" width="44" />
         <el-table-column label="图片" min-width="260">
           <template #default="{ row }">
             <div class="image-cell">
-              <img v-if="thumbnailUrls[row.id]" :src="thumbnailUrls[row.id]" alt="" />
+              <button class="thumbnail-button" type="button" :aria-label="`预览 ${row.title}`" @click="preview(row)">
+                <img v-if="thumbnailUrls[row.id]" :src="thumbnailUrls[row.id]" alt="" />
+                <span v-else>预览</span>
+              </button>
               <div class="image-meta">
                 <strong>{{ row.title }}</strong>
                 <span>{{ row.originalFilename }} · {{ formatBytes(row.sizeBytes) }}</span>
@@ -549,20 +979,69 @@ onBeforeUnmount(() => {
             <span v-if="row.tags.length === 0">-</span>
           </template>
         </el-table-column>
-        <el-table-column prop="status" label="状态" width="110" />
-        <el-table-column label="操作" width="250" fixed="right">
+        <el-table-column label="状态" width="110">
           <template #default="{ row }">
-            <el-button link type="primary" @click="preview(row)">预览</el-button>
-            <el-button link type="primary" @click="openEdit(row)">编辑</el-button>
-            <el-button link type="primary" :icon="Download" @click="download(row)">下载</el-button>
-            <el-button link type="danger" @click="remove(row)">停用</el-button>
+            <el-tag :type="statusTagType(row.status)" effect="light">{{ statusLabel(row.status) }}</el-tag>
+          </template>
+        </el-table-column>
+        <el-table-column label="操作" width="210" fixed="right">
+          <template #default="{ row }">
+            <template v-if="!showingDeletedImages">
+              <el-button link type="primary" @click="openEdit(row)">编辑</el-button>
+              <el-button link type="primary" :icon="Download" @click="download(row)">下载</el-button>
+              <el-button link type="danger" @click="remove(row)">停用</el-button>
+            </template>
+            <template v-else>
+              <el-button link type="primary" @click="restore(row)">恢复</el-button>
+              <el-button link type="danger" @click="purge(row)">彻底删除</el-button>
+            </template>
           </template>
         </el-table-column>
       </el-table>
+
+      <div class="pagination-row">
+        <el-pagination
+          v-model:current-page="pagination.page"
+          v-model:page-size="pagination.size"
+          :page-sizes="[20, 50, 100]"
+          :total="pagination.total"
+          background
+          layout="total, sizes, prev, pager, next, jumper"
+          @size-change="handlePageSizeChange"
+          @current-change="handlePageChange"
+        />
+      </div>
     </div>
 
-    <el-dialog v-model="previewVisible" title="图片预览" width="72%">
-      <img class="preview-image" :src="previewUrl" alt="图片预览" />
+    <el-dialog v-model="previewVisible" :title="currentPreview?.title ?? '图片预览'" width="72%" @closed="closePreview">
+      <div class="preview-shell" v-loading="previewLoading">
+        <el-button
+          class="preview-nav"
+          type="primary"
+          :icon="ArrowLeft"
+          :disabled="!canPreviewPrevious || previewLoading"
+          aria-label="上一张"
+          @click="previewPrevious"
+        >
+          上一张
+        </el-button>
+        <img v-if="previewUrl" class="preview-image" :src="previewUrl" alt="图片预览" />
+        <el-empty v-else description="暂无预览" />
+        <el-button
+          class="preview-nav"
+          type="primary"
+          :icon="ArrowRight"
+          :disabled="!canPreviewNext || previewLoading"
+          aria-label="下一张"
+          @click="previewNext"
+        >
+          下一张
+        </el-button>
+      </div>
+      <div v-if="currentPreview" class="preview-meta">
+        <span>{{ currentPreview.originalFilename }}</span>
+        <span>{{ previewIndex + 1 }} / {{ rows.length }}</span>
+      </div>
     </el-dialog>
 
     <el-dialog v-model="uploadVisible" title="上传图片" width="720px" :before-close="handleUploadBeforeClose">
@@ -600,8 +1079,8 @@ onBeforeUnmount(() => {
                 <strong>{{ selectedSingleUploadFile.name }}</strong>
                 <span>{{ uploadFileSize(selectedSingleUploadFile) }}</span>
                 <div class="single-preview-actions">
-                  <el-button link type="primary" :disabled="uploadLocked" @click="removeSelectedUploadFile(selectedSingleUploadFile.uid)">重新选择</el-button>
-                  <el-button link type="danger" :disabled="uploadLocked" @click="removeSelectedUploadFile(selectedSingleUploadFile.uid)">移除</el-button>
+                  <el-button link type="primary" :disabled="uploadLocked" @click="removeSelectedUploadFile(selectedSingleUploadFile)">重新选择</el-button>
+                  <el-button link type="danger" :disabled="uploadLocked" @click="removeSelectedUploadFile(selectedSingleUploadFile)">移除</el-button>
                 </div>
               </div>
             </div>
@@ -628,13 +1107,17 @@ onBeforeUnmount(() => {
                 清空
               </el-button>
             </div>
-            <div v-if="!uploadSession && uploadFileList.length" class="batch-file-list">
-              <div v-for="file in uploadFileList" :key="file.uid" class="batch-file-row">
-                <div class="batch-file-main">
-                  <strong>{{ file.name }}</strong>
+            <div v-if="!uploadSession && uploadFileList.length" class="batch-preview-grid">
+              <div v-for="file in uploadFileList" :key="uploadPreviewKey(file)" class="batch-preview-card">
+                <div class="batch-preview-thumb">
+                  <img v-if="batchUploadPreviewUrls[uploadPreviewKey(file)]" :src="batchUploadPreviewUrls[uploadPreviewKey(file)]" alt="" />
+                  <div v-else class="batch-preview-fallback">预览</div>
+                </div>
+                <div class="batch-preview-main">
+                  <strong :title="file.name">{{ file.name }}</strong>
                   <span>{{ uploadFileSize(file) }}</span>
                 </div>
-                <el-button link type="danger" :disabled="uploadLocked" @click="removeSelectedUploadFile(file.uid)">移除</el-button>
+                <el-button class="batch-preview-remove" link type="danger" :disabled="uploadLocked" @click="removeSelectedUploadFile(file)">移除</el-button>
               </div>
             </div>
           </div>
@@ -658,25 +1141,29 @@ onBeforeUnmount(() => {
           </el-select>
         </el-form-item>
       </el-form>
-      <el-alert
-        v-if="uploadSession"
-        class="upload-session-tip"
-        type="info"
-        :closable="false"
-        show-icon
-        title="上传失败或中断时，取消会清理本次未完成文件。"
-      />
-      <div v-if="uploadSession" class="upload-result-list">
-        <div v-for="item in uploadSession.items" :key="item.id" class="upload-result-row">
+      <div v-if="uploadSession" class="upload-progress-panel">
+        <div class="upload-progress-head">
+          <strong>{{ uploadProgressTitle }}</strong>
+          <span>{{ uploadProgressSummary }}</span>
+        </div>
+        <el-progress
+          :percentage="uploadProgressPercentage"
+          :status="uploadProgressStatus"
+          :stroke-width="10"
+        />
+      </div>
+      <div v-if="uploadSession && uploadFailedItems.length" class="upload-failed-list">
+        <div class="upload-failed-head">失败项</div>
+        <div v-for="item in uploadFailedItems" :key="item.id" class="upload-result-row">
           <div class="upload-result-main">
             <div class="upload-result-title">
               <strong>{{ item.originalFilename }}</strong>
-              <el-tag :type="uploadStatusType(item.status)" effect="light">{{ uploadStatusText(item.status) }}</el-tag>
+              <el-tag type="danger" effect="light">失败</el-tag>
             </div>
             <span>{{ uploadItemMeta(item) }}</span>
             <p v-if="uploadItemDescription(item)">{{ uploadItemDescription(item) }}</p>
           </div>
-          <el-button v-if="item.status === 'FAILED'" link type="primary" :loading="uploadLoading" @click="retryUploadItem(item)">重试</el-button>
+          <el-button link type="primary" :loading="uploadLoading" @click="retryUploadItem(item)">重新上传</el-button>
         </div>
       </div>
       <template #footer>
@@ -722,9 +1209,30 @@ onBeforeUnmount(() => {
   align-items: flex-start;
 }
 
+.image-scope-row {
+  display: flex;
+  margin-bottom: 14px;
+}
+
 .image-toolbar .el-input,
 .image-toolbar .el-select {
   width: 220px;
+}
+
+.batch-toolbar {
+  align-items: center;
+  border-top: 1px solid #e2e8f0;
+  color: #64748b;
+  display: flex;
+  font-size: 13px;
+  justify-content: space-between;
+  margin-top: 14px;
+  padding-top: 12px;
+}
+
+.batch-toolbar-actions {
+  display: flex;
+  gap: 8px;
 }
 
 .image-cell {
@@ -733,18 +1241,48 @@ onBeforeUnmount(() => {
   gap: 12px;
 }
 
-.image-cell img {
+.thumbnail-button {
   background: #f1f5f9;
+  border: 0;
   border-radius: 6px;
+  color: #64748b;
+  cursor: pointer;
+  display: block;
+  flex: 0 0 auto;
   height: 58px;
-  object-fit: cover;
+  overflow: hidden;
+  padding: 0;
   width: 76px;
+}
+
+.thumbnail-button:hover {
+  outline: 2px solid #93c5fd;
+  outline-offset: 2px;
+}
+
+.thumbnail-button img,
+.thumbnail-button span {
+  display: block;
+  height: 100%;
+  width: 100%;
+}
+
+.thumbnail-button img {
+  object-fit: cover;
+}
+
+.thumbnail-button span {
+  align-items: center;
+  display: flex;
+  font-size: 12px;
+  justify-content: center;
 }
 
 .image-meta {
   display: flex;
   flex-direction: column;
   gap: 5px;
+  min-width: 0;
 }
 
 .image-meta span {
@@ -764,8 +1302,39 @@ onBeforeUnmount(() => {
   object-fit: contain;
 }
 
-.upload-session-tip {
-  margin-bottom: 12px;
+.preview-shell {
+  align-items: center;
+  display: grid;
+  gap: 18px;
+  grid-template-columns: 96px minmax(0, 1fr) 96px;
+  min-height: 280px;
+}
+
+.preview-nav {
+  border-radius: 999px;
+  box-shadow: 0 12px 28px rgb(37 99 235 / 22%);
+  font-weight: 600;
+  height: 46px;
+  justify-self: center;
+  min-width: 92px;
+}
+
+.preview-nav.is-disabled {
+  box-shadow: none;
+}
+
+.preview-meta {
+  color: #64748b;
+  display: flex;
+  font-size: 13px;
+  justify-content: space-between;
+  margin-top: 12px;
+}
+
+.pagination-row {
+  display: flex;
+  justify-content: flex-end;
+  margin-top: 16px;
 }
 
 .full-tag-select {
@@ -850,7 +1419,7 @@ onBeforeUnmount(() => {
 }
 
 .single-preview-info strong,
-.batch-file-main strong,
+.batch-preview-main strong,
 .upload-result-title strong {
   overflow: hidden;
   text-overflow: ellipsis;
@@ -859,7 +1428,8 @@ onBeforeUnmount(() => {
 
 .single-preview-info span,
 .batch-upload-actions span,
-.batch-file-main span,
+.upload-progress-head span,
+.batch-preview-main span,
 .upload-result-main span,
 .upload-result-main p {
   color: #64748b;
@@ -879,14 +1449,111 @@ onBeforeUnmount(() => {
   gap: 10px;
 }
 
-.batch-file-list,
-.upload-result-list {
+.batch-preview-grid {
+  display: grid;
+  gap: 10px;
+  grid-template-columns: repeat(auto-fill, minmax(118px, 1fr));
+  margin-top: 12px;
+  max-height: 330px;
+  overflow: auto;
+  padding-right: 2px;
+}
+
+.upload-progress-panel {
+  background: #f8fafc;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  display: grid;
+  gap: 10px;
+  margin-top: 12px;
+  padding: 12px;
+}
+
+.upload-progress-head {
+  align-items: center;
+  display: flex;
+  gap: 10px;
+  justify-content: space-between;
+  min-width: 0;
+}
+
+.upload-progress-head strong {
+  color: #1f2937;
+  font-size: 14px;
+}
+
+.upload-failed-list {
   display: grid;
   gap: 8px;
   margin-top: 12px;
 }
 
-.batch-file-row,
+.upload-failed-head {
+  color: #64748b;
+  font-size: 13px;
+}
+
+.batch-preview-card {
+  background: #f8fafc;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  min-width: 0;
+  padding: 8px;
+}
+
+.batch-preview-thumb {
+  aspect-ratio: 4 / 3;
+  background: #e2e8f0;
+  border-radius: 6px;
+  overflow: hidden;
+  width: 100%;
+}
+
+.batch-preview-thumb img,
+.batch-preview-fallback {
+  height: 100%;
+  width: 100%;
+}
+
+.batch-preview-thumb img {
+  display: block;
+  object-fit: cover;
+}
+
+.batch-preview-fallback {
+  align-items: center;
+  color: #64748b;
+  display: flex;
+  font-size: 13px;
+  justify-content: center;
+}
+
+.batch-preview-main {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 0;
+}
+
+.batch-preview-main strong {
+  color: #1f2937;
+  font-size: 13px;
+  line-height: 1.3;
+}
+
+.batch-preview-main span {
+  font-size: 12px;
+}
+
+.batch-preview-remove {
+  align-self: flex-start;
+  min-height: 22px;
+  padding: 0;
+}
+
 .upload-result-row {
   align-items: center;
   background: #f8fafc;
@@ -898,7 +1565,6 @@ onBeforeUnmount(() => {
   padding: 10px 12px;
 }
 
-.batch-file-main,
 .upload-result-main {
   display: flex;
   flex: 1;

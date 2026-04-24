@@ -20,6 +20,9 @@ import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.multipart.MultipartFile;
 import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 
+import com.luna.wallpaper.image.ImageDtos.ImageBatchRequest;
+import com.luna.wallpaper.image.ImageDtos.ImagePageResponse;
+import com.luna.wallpaper.image.ImageDtos.ImagePurgeResponse;
 import com.luna.wallpaper.image.ImageDtos.ImageResponse;
 import com.luna.wallpaper.image.ImageDtos.ImageUpdateRequest;
 import com.luna.wallpaper.image.ImageDtos.UploadBatchResponse;
@@ -37,10 +40,11 @@ class ImageController {
 
 	@GetMapping("/images")
 	@PreAuthorize("hasAuthority('image:view')")
-	List<ImageResponse> images(@RequestParam(required = false) String keyword,
+	ImagePageResponse images(@RequestParam(required = false) String keyword,
 			@RequestParam(required = false) String categoryId, @RequestParam(required = false) String tagId,
-			@RequestParam(defaultValue = "100") int limit) {
-		return service.list(keyword, categoryId, tagId, limit);
+			@RequestParam(required = false) String status,
+			@RequestParam(defaultValue = "1") int page, @RequestParam(defaultValue = "20") int size) {
+		return service.list(keyword, categoryId, tagId, status, page, size);
 	}
 
 	@GetMapping("/images/{id}")
@@ -59,6 +63,53 @@ class ImageController {
 	@PreAuthorize("hasAuthority('image:delete')")
 	void delete(@PathVariable String id) {
 		service.delete(id);
+	}
+
+	@PostMapping("/images/batch-disable")
+	@PreAuthorize("hasAuthority('image:delete')")
+	void batchDisable(@RequestBody ImageBatchRequest request) {
+		service.batchDisable(request);
+	}
+
+	@PostMapping("/images/{id}/restore")
+	@PreAuthorize("hasAuthority('image:delete')")
+	void restore(@PathVariable String id) {
+		service.restore(id);
+	}
+
+	@PostMapping("/images/batch-restore")
+	@PreAuthorize("hasAuthority('image:delete')")
+	void batchRestore(@RequestBody ImageBatchRequest request) {
+		service.batchRestore(request);
+	}
+
+	@DeleteMapping("/images/{id}/purge")
+	@PreAuthorize("hasAuthority('image:delete')")
+	void purge(@PathVariable String id) {
+		service.purge(id);
+	}
+
+	@PostMapping("/images/batch-purge")
+	@PreAuthorize("hasAuthority('image:delete')")
+	void batchPurge(@RequestBody ImageBatchRequest request) {
+		service.batchPurge(request);
+	}
+
+	@PostMapping("/images/deleted/purge")
+	@PreAuthorize("hasAuthority('image:delete')")
+	ImagePurgeResponse purgeDeleted() {
+		return new ImagePurgeResponse(service.purgeDeleted());
+	}
+
+	@PostMapping("/images/batch-download")
+	@PreAuthorize("hasAuthority('image:view')")
+	ResponseEntity<byte[]> batchDownload(@RequestBody ImageBatchRequest request) {
+		ImageService.BatchDownloadFile file = service.batchDownload(request);
+		return ResponseEntity.ok()
+				.contentType(MediaType.parseMediaType("application/zip"))
+				.header(HttpHeaders.CONTENT_DISPOSITION,
+						ContentDisposition.attachment().filename(file.filename(), StandardCharsets.UTF_8).build().toString())
+				.body(file.content());
 	}
 
 	@PostMapping(path = "/images/batch", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
