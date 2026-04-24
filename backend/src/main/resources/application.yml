@@ -1,13 +1,13 @@
 spring:
   application:
-    name: wzut-wallpaper-backend
+    name: wallpaper-backend
   docker:
     compose:
       enabled: ${SPRING_DOCKER_COMPOSE_ENABLED:false}
   datasource:
-    url: ${DB_URL:jdbc:mysql://localhost:13316/wzut_wallpaper?useUnicode=true&characterEncoding=utf8&useSSL=false&allowPublicKeyRetrieval=true&serverTimezone=Asia/Shanghai}
-    username: ${DB_USERNAME:wallpaper}
-    password: ${DB_PASSWORD:change-me}
+    url: ${DB_URL:jdbc:mysql://localhost:13316/wallpaper?useUnicode=true&characterEncoding=utf8&useSSL=false&allowPublicKeyRetrieval=true&serverTimezone=Asia/Shanghai}
+    username: ${DB_USERNAME:luna}
+    password: ${DB_PASSWORD:luna}
   data:
     redis:
       host: ${REDIS_HOST:localhost}
@@ -49,12 +49,12 @@ management:
 app:
   security:
     allowed-origins: ${APP_ALLOWED_ORIGINS:http://localhost:5173,http://127.0.0.1:5173,http://localhost}
-    development-token: ${APP_SECURITY_DEVELOPMENT_TOKEN:development-placeholder-token}
+    development-token: ${APP_SECURITY_DEVELOPMENT_TOKEN:luna}
   storage:
     endpoint: ${RUSTFS_ENDPOINT:http://localhost:19010}
     region: ${RUSTFS_REGION:cn-east-1}
-    access-key: ${RUSTFS_ACCESS_KEY:change-me-access-key}
-    secret-key: ${RUSTFS_SECRET_KEY:change-me-secret-key}
+    access-key: ${RUSTFS_ACCESS_KEY:admin}
+    secret-key: ${RUSTFS_SECRET_KEY:wallpaperadmin}
     bucket-original: ${RUSTFS_BUCKET_ORIGINAL:wallpaper-original}
     bucket-preview: ${RUSTFS_BUCKET_PREVIEW:wallpaper-preview}
     bucket-thumbnail: ${RUSTFS_BUCKET_THUMBNAIL:wallpaper-thumbnail}
