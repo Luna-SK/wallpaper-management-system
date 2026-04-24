@@ -197,7 +197,6 @@ onMounted(refresh)
   <section>
     <div class="page-head">
       <div>
-        <h1>用户权限</h1>
         <p>账号、角色、权限和访问范围管理。</p>
       </div>
     </div>

@@ -97,7 +97,6 @@ onMounted(loadSettings)
   <section>
     <div class="page-head">
       <div>
-        <h1>系统设置</h1>
         <p>上传限制、存储桶、水印和审计日志保留配置。</p>
       </div>
       <el-button type="primary" :loading="saving" @click="saveSettings">保存系统设置</el-button>

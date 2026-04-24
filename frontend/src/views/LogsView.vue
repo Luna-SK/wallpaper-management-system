@@ -234,7 +234,6 @@ onMounted(refreshAuditState)
   <section>
     <div class="page-head">
       <div>
-        <h1>审计日志</h1>
         <p>记录登录、上传、标签、预览、下载和管理操作，历史日志归档后再清理。</p>
       </div>
     </div>

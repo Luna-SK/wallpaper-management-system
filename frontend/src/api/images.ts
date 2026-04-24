@@ -74,6 +74,28 @@ export interface Statistics {
   viewCount: number
   downloadCount: number
   storageBytes: number
+  uploadTrend: StatisticsTrendPoint[]
+  categoryDistribution: StatisticsCategoryItem[]
+  topViewedImages: StatisticsRankingItem[]
+  topDownloadedImages: StatisticsRankingItem[]
+}
+
+export interface StatisticsTrendPoint {
+  date: string
+  count: number
+}
+
+export interface StatisticsCategoryItem {
+  categoryId: string | null
+  name: string
+  count: number
+}
+
+export interface StatisticsRankingItem {
+  id: string
+  title: string
+  viewCount: number
+  downloadCount: number
 }
 
 export async function getImages(params: { keyword?: string; categoryId?: string; tagId?: string; status?: string; page?: number; size?: number } = {}) {

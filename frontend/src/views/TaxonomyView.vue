@@ -115,7 +115,6 @@ onMounted(refresh)
   <section>
     <div class="page-head">
       <div>
-        <h1>分类标签</h1>
         <p>维护图片分类及其下的标签，标签名称只在所属分类内保持唯一。</p>
       </div>
       <el-button type="primary" :icon="Plus" @click="openCategory()">新增分类</el-button>

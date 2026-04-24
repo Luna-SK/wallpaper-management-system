@@ -334,9 +334,59 @@ class ImageService {
 
 	@Transactional(readOnly = true)
 	Statistics statistics() {
-		LocalDateTime today = LocalDate.now().atStartOfDay();
-		return new Statistics(images.countByStatusNot("DELETED"), images.countByCreatedAtAfterAndStatusNot(today, "DELETED"),
-				images.totalViews(), images.totalDownloads(), images.totalStorageBytes());
+		LocalDate today = LocalDate.now();
+		LocalDate trendStart = today.minusDays(29);
+		return new Statistics(images.countByStatusNot("DELETED"), images.countByCreatedAtAfterAndStatusNot(today.atStartOfDay(), "DELETED"),
+				images.totalViews(), images.totalDownloads(), images.totalStorageBytes(), uploadTrend(trendStart, today),
+				categoryDistribution(), topImagesByViews(), topImagesByDownloads());
+	}
+
+	private List<TrendPoint> uploadTrend(LocalDate startDate, LocalDate endDate) {
+		Map<LocalDate, Long> countsByDay = new HashMap<>();
+		for (Object[] row : images.countUploadsByDaySince(startDate.atStartOfDay())) {
+			countsByDay.put(localDate(row[0]), number(row[1]));
+		}
+		return startDate.datesUntil(endDate.plusDays(1))
+				.map(date -> new TrendPoint(date, countsByDay.getOrDefault(date, 0L)))
+				.toList();
+	}
+
+	private List<CategoryDistributionItem> categoryDistribution() {
+		List<CategoryDistributionItem> items = images.countImagesByCategory().stream()
+				.map(row -> new CategoryDistributionItem((String) row[0], String.valueOf(row[1]), number(row[2])))
+				.collect(java.util.stream.Collectors.toCollection(java.util.ArrayList::new));
+		long uncategorized = images.countUncategorizedImages();
+		if (uncategorized > 0) {
+			items.add(new CategoryDistributionItem(null, "未分类", uncategorized));
+		}
+		return items;
+	}
+
+	private List<ImageRankingItem> topImagesByViews() {
+		return images.findByStatusNotOrderByViewCountDescCreatedAtDesc("DELETED", PageRequest.of(0, 5))
+				.stream().map(ImageRankingItem::from).toList();
+	}
+
+	private List<ImageRankingItem> topImagesByDownloads() {
+		return images.findByStatusNotOrderByDownloadCountDescCreatedAtDesc("DELETED", PageRequest.of(0, 5))
+				.stream().map(ImageRankingItem::from).toList();
+	}
+
+	private LocalDate localDate(Object value) {
+		if (value instanceof LocalDate date) {
+			return date;
+		}
+		if (value instanceof java.sql.Date date) {
+			return date.toLocalDate();
+		}
+		if (value instanceof java.sql.Timestamp timestamp) {
+			return timestamp.toLocalDateTime().toLocalDate();
+		}
+		return LocalDate.parse(String.valueOf(value));
+	}
+
+	private long number(Object value) {
+		return ((Number) value).longValue();
 	}
 
 	private void stageItem(UploadBatch batch, UploadBatchItem item, MultipartFile file, List<UploadBatchItem> existingItems) {
@@ -643,7 +693,21 @@ class ImageService {
 	record BatchDownloadFile(String filename, byte[] content) {
 	}
 
-	record Statistics(long imageTotal, long todayUploaded, long viewCount, long downloadCount, long storageBytes) {
+	record Statistics(long imageTotal, long todayUploaded, long viewCount, long downloadCount, long storageBytes,
+			List<TrendPoint> uploadTrend, List<CategoryDistributionItem> categoryDistribution,
+			List<ImageRankingItem> topViewedImages, List<ImageRankingItem> topDownloadedImages) {
+	}
+
+	record TrendPoint(LocalDate date, long count) {
+	}
+
+	record CategoryDistributionItem(String categoryId, String name, long count) {
+	}
+
+	record ImageRankingItem(String id, String title, long viewCount, long downloadCount) {
+		static ImageRankingItem from(ImageAsset image) {
+			return new ImageRankingItem(image.id(), image.title(), image.viewCount(), image.downloadCount());
+		}
 	}
 
 	private record UploadTaxonomy(Category category, Set<Tag> tags) {

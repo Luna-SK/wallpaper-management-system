@@ -869,7 +869,6 @@ onBeforeUnmount(() => {
   <section>
     <div class="page-head">
       <div>
-        <h1>图片库</h1>
         <p>按关键词、分类、标签、上传者和时间范围检索图片。</p>
       </div>
       <el-button type="primary" :icon="UploadFilled" @click="openUploadDialog">上传图片</el-button>

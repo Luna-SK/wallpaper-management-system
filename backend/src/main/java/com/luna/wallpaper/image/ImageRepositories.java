@@ -48,11 +48,39 @@ interface ImageAssetRepository extends JpaRepository<ImageAsset, String> {
 	@Query("select coalesce(sum(image.sizeBytes), 0) from ImageAsset image where image.status <> 'DELETED'")
 	long totalStorageBytes();
 
-	@Query("select coalesce(sum(image.viewCount), 0) from ImageAsset image")
+	@Query("select coalesce(sum(image.viewCount), 0) from ImageAsset image where image.status <> 'DELETED'")
 	long totalViews();
 
-	@Query("select coalesce(sum(image.downloadCount), 0) from ImageAsset image")
+	@Query("select coalesce(sum(image.downloadCount), 0) from ImageAsset image where image.status <> 'DELETED'")
 	long totalDownloads();
+
+	@Query(value = """
+			select date(image.created_at), count(*)
+			from images image
+			where image.status <> 'DELETED'
+			  and image.created_at >= :startAt
+			group by date(image.created_at)
+			order by date(image.created_at) asc
+			""", nativeQuery = true)
+	List<Object[]> countUploadsByDaySince(@Param("startAt") LocalDateTime startAt);
+
+	@Query(value = """
+			select category.id, category.name, count(image.id)
+			from images image
+			join image_categories image_category on image.id = image_category.image_id
+			join categories category on category.id = image_category.category_id
+			where image.status <> 'DELETED'
+			group by category.id, category.name
+			order by count(image.id) desc, category.name asc
+			""", nativeQuery = true)
+	List<Object[]> countImagesByCategory();
+
+	@Query("select count(image) from ImageAsset image where image.status <> 'DELETED' and image.categories is empty")
+	long countUncategorizedImages();
+
+	List<ImageAsset> findByStatusNotOrderByViewCountDescCreatedAtDesc(String status, Pageable pageable);
+
+	List<ImageAsset> findByStatusNotOrderByDownloadCountDescCreatedAtDesc(String status, Pageable pageable);
 }
 
 interface ImageVersionRepository extends JpaRepository<ImageVersion, String> {
