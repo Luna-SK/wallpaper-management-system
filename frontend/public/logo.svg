@@ -1,0 +1,33 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="256" height="256" viewBox="0 0 256 256" role="img" aria-label="图片管理系统 logo">
+  <defs>
+    <linearGradient id="bg" x1="36" y1="28" x2="220" y2="228" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#0f5b52"/>
+      <stop offset="1" stop-color="#123a53"/>
+    </linearGradient>
+    <linearGradient id="fabric" x1="76" y1="66" x2="190" y2="188" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#f5f1df"/>
+      <stop offset="1" stop-color="#d8eadf"/>
+    </linearGradient>
+    <linearGradient id="accent" x1="86" y1="76" x2="180" y2="176" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#77d0b4"/>
+      <stop offset="1" stop-color="#f3b95f"/>
+    </linearGradient>
+    <filter id="shadow" x="48" y="48" width="160" height="160" color-interpolation-filters="sRGB" filterUnits="userSpaceOnUse">
+      <feDropShadow dx="0" dy="12" stdDeviation="10" flood-color="#062d2a" flood-opacity="0.28"/>
+    </filter>
+  </defs>
+
+  <rect width="256" height="256" rx="58" fill="url(#bg)"/>
+  <path fill="none" stroke="#ffffff" stroke-opacity="0.12" stroke-width="2" d="M55 64h146M55 92h146M55 120h146M55 148h146M55 176h146M74 50v156M102 50v156M130 50v156M158 50v156M186 50v156"/>
+
+  <g filter="url(#shadow)">
+    <path fill="url(#fabric)" d="M66 79c0-13.255 10.745-24 24-24h76c13.255 0 24 10.745 24 24v98c0 13.255-10.745 24-24 24H90c-13.255 0-24-10.745-24-24V79Z"/>
+    <path fill="#ffffff" d="M84 85c0-6.627 5.373-12 12-12h64c6.627 0 12 5.373 12 12v72c0 6.627-5.373 12-12 12H96c-6.627 0-12-5.373-12-12V85Z"/>
+    <path fill="url(#accent)" d="M96 143l20-22 17 16 18-25 25 31v14c0 6.627-5.373 12-12 12H108c-6.627 0-12-5.373-12-12v-14Z"/>
+    <circle cx="143" cy="103" r="12" fill="#f3b95f"/>
+    <path fill="#0f5b52" fill-opacity="0.14" d="M66 80c0-13.807 11.193-25 25-25h18v146H91c-13.807 0-25-11.193-25-25V80Z"/>
+    <path fill="none" stroke="#0f5b52" stroke-opacity="0.2" stroke-width="4" d="M108 60v136"/>
+    <path fill="#0f5b52" d="M105 88c0-4.418 3.582-8 8-8h6v96h-6c-4.418 0-8-3.582-8-8V88Z" opacity="0.18"/>
+    <path fill="#ffffff" fill-opacity="0.64" d="M96 73h64c6.627 0 12 5.373 12 12v8H84v-8c0-6.627 5.373-12 12-12Z"/>
+  </g>
+</svg>

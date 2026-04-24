@@ -1,0 +1,62 @@
+spring:
+  application:
+    name: wzut-wallpaper-backend
+  docker:
+    compose:
+      enabled: ${SPRING_DOCKER_COMPOSE_ENABLED:false}
+  datasource:
+    url: ${DB_URL:jdbc:mysql://localhost:13316/wzut_wallpaper?useUnicode=true&characterEncoding=utf8&useSSL=false&allowPublicKeyRetrieval=true&serverTimezone=Asia/Shanghai}
+    username: ${DB_USERNAME:wallpaper}
+    password: ${DB_PASSWORD:change-me}
+  data:
+    redis:
+      host: ${REDIS_HOST:localhost}
+      port: ${REDIS_PORT:16389}
+      password: ${REDIS_PASSWORD:}
+  jpa:
+    hibernate:
+      ddl-auto: validate
+    open-in-view: false
+    properties:
+      hibernate:
+        format_sql: true
+        jdbc:
+          time_zone: Asia/Shanghai
+  liquibase:
+    change-log: classpath:/db/changelog/db.changelog-master.yaml
+  servlet:
+    multipart:
+      max-file-size: ${UPLOAD_MAX_FILE_SIZE:50MB}
+      max-request-size: ${UPLOAD_MAX_REQUEST_SIZE:500MB}
+
+server:
+  port: ${SERVER_PORT:8080}
+  servlet:
+    encoding:
+      charset: UTF-8
+      force: true
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,metrics,prometheus
+  endpoint:
+    health:
+      probes:
+        enabled: true
+
+app:
+  security:
+    allowed-origins: ${APP_ALLOWED_ORIGINS:http://localhost:5173,http://127.0.0.1:5173,http://localhost}
+    development-token: ${APP_SECURITY_DEVELOPMENT_TOKEN:development-placeholder-token}
+  storage:
+    endpoint: ${RUSTFS_ENDPOINT:http://localhost:19010}
+    region: ${RUSTFS_REGION:cn-east-1}
+    access-key: ${RUSTFS_ACCESS_KEY:change-me-access-key}
+    secret-key: ${RUSTFS_SECRET_KEY:change-me-secret-key}
+    bucket-original: ${RUSTFS_BUCKET_ORIGINAL:wallpaper-original}
+    bucket-preview: ${RUSTFS_BUCKET_PREVIEW:wallpaper-preview}
+    bucket-thumbnail: ${RUSTFS_BUCKET_THUMBNAIL:wallpaper-thumbnail}
+    bucket-watermark: ${RUSTFS_BUCKET_WATERMARK:wallpaper-watermark}
+    bucket-audit: ${RUSTFS_BUCKET_AUDIT:wallpaper-audit}

@@ -1,0 +1,203 @@
+databaseChangeLog:
+  - changeSet:
+      id: 001-add-image-runtime-columns
+      author: codex
+      changes:
+        - addColumn:
+            tableName: roles
+            columns:
+              - column: { name: enabled, type: boolean, defaultValueBoolean: true, constraints: { nullable: false } }
+        - addColumn:
+            tableName: images
+            columns:
+              - column: { name: current_version_id, type: varchar(36) }
+              - column: { name: deleted_at, type: datetime(6) }
+
+  - changeSet:
+      id: 002-create-image-versions
+      author: codex
+      changes:
+        - createTable:
+            tableName: image_versions
+            columns:
+              - column: { name: id, type: varchar(36), constraints: { primaryKey: true, nullable: false } }
+              - column: { name: image_id, type: varchar(36), constraints: { nullable: false } }
+              - column: { name: version_no, type: int, constraints: { nullable: false } }
+              - column: { name: source_version_id, type: varchar(36) }
+              - column: { name: operation_type, type: varchar(40), constraints: { nullable: false } }
+              - column: { name: original_filename, type: varchar(255), constraints: { nullable: false } }
+              - column: { name: sha256, type: char(64), constraints: { nullable: false } }
+              - column: { name: mime_type, type: varchar(120), constraints: { nullable: false } }
+              - column: { name: size_bytes, type: bigint, constraints: { nullable: false } }
+              - column: { name: width, type: int }
+              - column: { name: height, type: int }
+              - column: { name: bucket, type: varchar(120), constraints: { nullable: false } }
+              - column: { name: original_object_key, type: varchar(512), constraints: { nullable: false } }
+              - column: { name: thumbnail_object_key, type: varchar(512), constraints: { nullable: false } }
+              - column: { name: high_preview_object_key, type: varchar(512), constraints: { nullable: false } }
+              - column: { name: standard_preview_object_key, type: varchar(512), constraints: { nullable: false } }
+              - column: { name: current_flag, type: boolean, defaultValueBoolean: true, constraints: { nullable: false } }
+              - column: { name: created_by, type: varchar(36) }
+              - column: { name: created_at, type: datetime(6), constraints: { nullable: false } }
+        - addUniqueConstraint:
+            tableName: image_versions
+            columnNames: image_id, version_no
+            constraintName: uk_image_versions_image_version
+        - createIndex:
+            tableName: image_versions
+            indexName: idx_image_versions_image
+            columns:
+              - column: { name: image_id }
+
+  - changeSet:
+      id: 003-create-upload-batches
+      author: codex
+      changes:
+        - createTable:
+            tableName: upload_batches
+            columns:
+              - column: { name: id, type: varchar(36), constraints: { primaryKey: true, nullable: false } }
+              - column: { name: status, type: varchar(24), constraints: { nullable: false } }
+              - column: { name: total_count, type: int, defaultValueNumeric: 0, constraints: { nullable: false } }
+              - column: { name: success_count, type: int, defaultValueNumeric: 0, constraints: { nullable: false } }
+              - column: { name: failed_count, type: int, defaultValueNumeric: 0, constraints: { nullable: false } }
+              - column: { name: duplicate_count, type: int, defaultValueNumeric: 0, constraints: { nullable: false } }
+              - column: { name: progress_percent, type: int, defaultValueNumeric: 0, constraints: { nullable: false } }
+              - column: { name: created_by, type: varchar(36) }
+              - column: { name: created_at, type: datetime(6), constraints: { nullable: false } }
+              - column: { name: updated_at, type: datetime(6), constraints: { nullable: false } }
+              - column: { name: finished_at, type: datetime(6) }
+        - createTable:
+            tableName: upload_batch_items
+            columns:
+              - column: { name: id, type: varchar(36), constraints: { primaryKey: true, nullable: false } }
+              - column: { name: batch_id, type: varchar(36), constraints: { nullable: false } }
+              - column: { name: image_id, type: varchar(36) }
+              - column: { name: original_filename, type: varchar(255), constraints: { nullable: false } }
+              - column: { name: status, type: varchar(24), constraints: { nullable: false } }
+              - column: { name: progress_percent, type: int, defaultValueNumeric: 0, constraints: { nullable: false } }
+              - column: { name: retry_count, type: int, defaultValueNumeric: 0, constraints: { nullable: false } }
+              - column: { name: error_message, type: varchar(1000) }
+              - column: { name: created_at, type: datetime(6), constraints: { nullable: false } }
+              - column: { name: updated_at, type: datetime(6), constraints: { nullable: false } }
+        - createIndex:
+            tableName: upload_batch_items
+            indexName: idx_upload_batch_items_batch
+            columns:
+              - column: { name: batch_id }
+
+  - changeSet:
+      id: 004-seed-users-role-settings
+      author: codex
+      changes:
+        - insert:
+            tableName: app_users
+            columns:
+              - column: { name: id, value: "30000000-0000-0000-0000-000000000001" }
+              - column: { name: username, value: "admin" }
+              - column: { name: display_name, value: "系统管理员" }
+              - column: { name: email, value: "admin@example.local" }
+              - column: { name: password_hash, value: "{noop}admin123" }
+              - column: { name: status, value: "ACTIVE" }
+              - column: { name: created_at, valueDate: "2026-04-24T00:00:00" }
+              - column: { name: updated_at, valueDate: "2026-04-24T00:00:00" }
+        - insert:
+            tableName: app_users
+            columns:
+              - column: { name: id, value: "30000000-0000-0000-0000-000000000002" }
+              - column: { name: username, value: "manager" }
+              - column: { name: display_name, value: "数据管理员" }
+              - column: { name: email, value: "manager@example.local" }
+              - column: { name: password_hash, value: "{noop}admin123" }
+              - column: { name: status, value: "ACTIVE" }
+              - column: { name: created_at, valueDate: "2026-04-24T00:00:00" }
+              - column: { name: updated_at, valueDate: "2026-04-24T00:00:00" }
+        - insert:
+            tableName: app_users
+            columns:
+              - column: { name: id, value: "30000000-0000-0000-0000-000000000003" }
+              - column: { name: username, value: "editor" }
+              - column: { name: display_name, value: "标签编辑人员" }
+              - column: { name: password_hash, value: "{noop}admin123" }
+              - column: { name: status, value: "ACTIVE" }
+              - column: { name: created_at, valueDate: "2026-04-24T00:00:00" }
+              - column: { name: updated_at, valueDate: "2026-04-24T00:00:00" }
+        - insert:
+            tableName: app_users
+            columns:
+              - column: { name: id, value: "30000000-0000-0000-0000-000000000004" }
+              - column: { name: username, value: "viewer" }
+              - column: { name: display_name, value: "普通浏览用户" }
+              - column: { name: password_hash, value: "{noop}admin123" }
+              - column: { name: status, value: "ACTIVE" }
+              - column: { name: created_at, valueDate: "2026-04-24T00:00:00" }
+              - column: { name: updated_at, valueDate: "2026-04-24T00:00:00" }
+        - insert:
+            tableName: user_roles
+            columns:
+              - column: { name: user_id, value: "30000000-0000-0000-0000-000000000001" }
+              - column: { name: role_id, value: "00000000-0000-0000-0000-000000000001" }
+        - insert:
+            tableName: user_roles
+            columns:
+              - column: { name: user_id, value: "30000000-0000-0000-0000-000000000002" }
+              - column: { name: role_id, value: "00000000-0000-0000-0000-000000000002" }
+        - insert:
+            tableName: user_roles
+            columns:
+              - column: { name: user_id, value: "30000000-0000-0000-0000-000000000003" }
+              - column: { name: role_id, value: "00000000-0000-0000-0000-000000000003" }
+        - insert:
+            tableName: user_roles
+            columns:
+              - column: { name: user_id, value: "30000000-0000-0000-0000-000000000004" }
+              - column: { name: role_id, value: "00000000-0000-0000-0000-000000000004" }
+        - insert:
+            tableName: system_settings
+            columns:
+              - column: { name: setting_key, value: "upload.max_file_size_mb" }
+              - column: { name: setting_value, value: "50" }
+              - column: { name: updated_at, valueDate: "2026-04-24T00:00:00" }
+        - insert:
+            tableName: system_settings
+            columns:
+              - column: { name: setting_key, value: "upload.max_batch_size_mb" }
+              - column: { name: setting_value, value: "500" }
+              - column: { name: updated_at, valueDate: "2026-04-24T00:00:00" }
+        - insert:
+            tableName: system_settings
+            columns:
+              - column: { name: setting_key, value: "watermark.enabled" }
+              - column: { name: setting_value, value: "true" }
+              - column: { name: updated_at, valueDate: "2026-04-24T00:00:00" }
+        - insert:
+            tableName: system_settings
+            columns:
+              - column: { name: setting_key, value: "preview.quality" }
+              - column: { name: setting_value, value: "ORIGINAL" }
+              - column: { name: updated_at, valueDate: "2026-04-24T00:00:00" }
+        - insert:
+            tableName: system_settings
+            columns:
+              - column: { name: setting_key, value: "soft_delete.retention_days" }
+              - column: { name: setting_value, value: "180" }
+              - column: { name: updated_at, valueDate: "2026-04-24T00:00:00" }
+
+  - changeSet:
+      id: 005-seed-role-permission-matrix
+      author: codex
+      changes:
+        - sql:
+            splitStatements: true
+            sql: |
+              INSERT IGNORE INTO role_permissions (role_id, permission_id)
+              SELECT '00000000-0000-0000-0000-000000000001', id FROM permissions;
+              INSERT IGNORE INTO role_permissions (role_id, permission_id)
+              SELECT '00000000-0000-0000-0000-000000000002', id FROM permissions
+              WHERE code IN ('image:view','image:upload','image:edit','image:delete','taxonomy:manage','audit:view');
+              INSERT IGNORE INTO role_permissions (role_id, permission_id)
+              SELECT '00000000-0000-0000-0000-000000000003', id FROM permissions
+              WHERE code IN ('image:view','image:upload','image:edit','taxonomy:manage');
+              INSERT IGNORE INTO role_permissions (role_id, permission_id)
+              SELECT '00000000-0000-0000-0000-000000000004', id FROM permissions
+              WHERE code IN ('image:view');

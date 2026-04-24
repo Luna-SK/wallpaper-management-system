@@ -1,0 +1,17 @@
+package edu.wzut.wallpaper.config;
+
+import org.springframework.boot.context.properties.ConfigurationProperties;
+
+@ConfigurationProperties(prefix = "app.storage")
+public record StorageProperties(
+		String endpoint,
+		String region,
+		String accessKey,
+		String secretKey,
+		String bucketOriginal,
+		String bucketPreview,
+		String bucketThumbnail,
+		String bucketWatermark,
+		String bucketAudit
+) {
+}

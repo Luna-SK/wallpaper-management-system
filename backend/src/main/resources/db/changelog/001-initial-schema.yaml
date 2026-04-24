@@ -1,0 +1,188 @@
+databaseChangeLog:
+  - changeSet:
+      id: 001-create-users
+      author: codex
+      changes:
+        - createTable:
+            tableName: app_users
+            columns:
+              - column: { name: id, type: varchar(36), constraints: { primaryKey: true, nullable: false } }
+              - column: { name: username, type: varchar(64), constraints: { nullable: false, unique: true } }
+              - column: { name: display_name, type: varchar(120), constraints: { nullable: false } }
+              - column: { name: email, type: varchar(180) }
+              - column: { name: phone, type: varchar(40) }
+              - column: { name: password_hash, type: varchar(255), constraints: { nullable: false } }
+              - column: { name: status, type: varchar(24), defaultValue: ACTIVE, constraints: { nullable: false } }
+              - column: { name: created_at, type: datetime(6), constraints: { nullable: false } }
+              - column: { name: updated_at, type: datetime(6), constraints: { nullable: false } }
+
+  - changeSet:
+      id: 002-create-rbac
+      author: codex
+      changes:
+        - createTable:
+            tableName: roles
+            columns:
+              - column: { name: id, type: varchar(36), constraints: { primaryKey: true, nullable: false } }
+              - column: { name: code, type: varchar(64), constraints: { nullable: false, unique: true } }
+              - column: { name: name, type: varchar(120), constraints: { nullable: false } }
+              - column: { name: description, type: varchar(255) }
+              - column: { name: created_at, type: datetime(6), constraints: { nullable: false } }
+              - column: { name: updated_at, type: datetime(6), constraints: { nullable: false } }
+        - createTable:
+            tableName: user_roles
+            columns:
+              - column: { name: user_id, type: varchar(36), constraints: { nullable: false } }
+              - column: { name: role_id, type: varchar(36), constraints: { nullable: false } }
+        - addPrimaryKey:
+            tableName: user_roles
+            columnNames: user_id, role_id
+            constraintName: pk_user_roles
+        - createTable:
+            tableName: permissions
+            columns:
+              - column: { name: id, type: varchar(36), constraints: { primaryKey: true, nullable: false } }
+              - column: { name: code, type: varchar(120), constraints: { nullable: false, unique: true } }
+              - column: { name: name, type: varchar(120), constraints: { nullable: false } }
+              - column: { name: resource, type: varchar(120), constraints: { nullable: false } }
+              - column: { name: action, type: varchar(40), constraints: { nullable: false } }
+        - createTable:
+            tableName: role_permissions
+            columns:
+              - column: { name: role_id, type: varchar(36), constraints: { nullable: false } }
+              - column: { name: permission_id, type: varchar(36), constraints: { nullable: false } }
+        - addPrimaryKey:
+            tableName: role_permissions
+            columnNames: role_id, permission_id
+            constraintName: pk_role_permissions
+
+  - changeSet:
+      id: 003-create-taxonomy
+      author: codex
+      changes:
+        - createTable:
+            tableName: categories
+            columns:
+              - column: { name: id, type: varchar(36), constraints: { primaryKey: true, nullable: false } }
+              - column: { name: code, type: varchar(64), constraints: { nullable: false, unique: true } }
+              - column: { name: name, type: varchar(120), constraints: { nullable: false } }
+              - column: { name: sort_order, type: int, defaultValueNumeric: 0, constraints: { nullable: false } }
+              - column: { name: enabled, type: boolean, defaultValueBoolean: true, constraints: { nullable: false } }
+              - column: { name: created_at, type: datetime(6), constraints: { nullable: false } }
+              - column: { name: updated_at, type: datetime(6), constraints: { nullable: false } }
+        - createTable:
+            tableName: tags
+            columns:
+              - column: { name: id, type: varchar(36), constraints: { primaryKey: true, nullable: false } }
+              - column: { name: category_id, type: varchar(36), constraints: { nullable: false } }
+              - column: { name: name, type: varchar(120), constraints: { nullable: false } }
+              - column: { name: sort_order, type: int, defaultValueNumeric: 0, constraints: { nullable: false } }
+              - column: { name: enabled, type: boolean, defaultValueBoolean: true, constraints: { nullable: false } }
+              - column: { name: created_at, type: datetime(6), constraints: { nullable: false } }
+              - column: { name: updated_at, type: datetime(6), constraints: { nullable: false } }
+        - addUniqueConstraint:
+            tableName: tags
+            columnNames: category_id, name
+            constraintName: uk_tags_category_name
+
+  - changeSet:
+      id: 004-create-images
+      author: codex
+      changes:
+        - createTable:
+            tableName: images
+            columns:
+              - column: { name: id, type: varchar(36), constraints: { primaryKey: true, nullable: false } }
+              - column: { name: title, type: varchar(255), constraints: { nullable: false } }
+              - column: { name: original_filename, type: varchar(255), constraints: { nullable: false } }
+              - column: { name: sha256, type: char(64), constraints: { nullable: false, unique: true } }
+              - column: { name: mime_type, type: varchar(120), constraints: { nullable: false } }
+              - column: { name: size_bytes, type: bigint, constraints: { nullable: false } }
+              - column: { name: width, type: int }
+              - column: { name: height, type: int }
+              - column: { name: uploader_id, type: varchar(36) }
+              - column: { name: source_path, type: varchar(512) }
+              - column: { name: status, type: varchar(24), defaultValue: ACTIVE, constraints: { nullable: false } }
+              - column: { name: view_count, type: bigint, defaultValueNumeric: 0, constraints: { nullable: false } }
+              - column: { name: download_count, type: bigint, defaultValueNumeric: 0, constraints: { nullable: false } }
+              - column: { name: created_at, type: datetime(6), constraints: { nullable: false } }
+              - column: { name: updated_at, type: datetime(6), constraints: { nullable: false } }
+        - createIndex:
+            tableName: images
+            indexName: idx_images_created_at
+            columns:
+              - column: { name: created_at }
+        - createTable:
+            tableName: image_objects
+            columns:
+              - column: { name: id, type: varchar(36), constraints: { primaryKey: true, nullable: false } }
+              - column: { name: image_id, type: varchar(36), constraints: { nullable: false } }
+              - column: { name: object_type, type: varchar(32), constraints: { nullable: false } }
+              - column: { name: bucket, type: varchar(120), constraints: { nullable: false } }
+              - column: { name: object_key, type: varchar(512), constraints: { nullable: false } }
+              - column: { name: size_bytes, type: bigint }
+              - column: { name: created_at, type: datetime(6), constraints: { nullable: false } }
+        - createTable:
+            tableName: image_categories
+            columns:
+              - column: { name: image_id, type: varchar(36), constraints: { nullable: false } }
+              - column: { name: category_id, type: varchar(36), constraints: { nullable: false } }
+        - addPrimaryKey:
+            tableName: image_categories
+            columnNames: image_id, category_id
+            constraintName: pk_image_categories
+        - createTable:
+            tableName: image_tags
+            columns:
+              - column: { name: image_id, type: varchar(36), constraints: { nullable: false } }
+              - column: { name: tag_id, type: varchar(36), constraints: { nullable: false } }
+        - addPrimaryKey:
+            tableName: image_tags
+            columnNames: image_id, tag_id
+            constraintName: pk_image_tags
+  - changeSet:
+      id: 005-create-audit-settings
+      author: codex
+      changes:
+        - createTable:
+            tableName: audit_logs
+            columns:
+              - column: { name: id, type: varchar(36), constraints: { primaryKey: true, nullable: false } }
+              - column: { name: actor_id, type: varchar(36) }
+              - column: { name: action, type: varchar(120), constraints: { nullable: false } }
+              - column: { name: target_type, type: varchar(80) }
+              - column: { name: target_id, type: varchar(80) }
+              - column: { name: ip_address, type: varchar(80) }
+              - column: { name: user_agent, type: varchar(512) }
+              - column: { name: detail_json, type: json }
+              - column: { name: created_at, type: datetime(6), constraints: { nullable: false } }
+        - createIndex:
+            tableName: audit_logs
+            indexName: idx_audit_logs_created_at
+            columns:
+              - column: { name: created_at }
+        - createTable:
+            tableName: audit_log_archives
+            columns:
+              - column: { name: id, type: varchar(36), constraints: { primaryKey: true, nullable: false } }
+              - column: { name: trigger_type, type: varchar(24), constraints: { nullable: false } }
+              - column: { name: cutoff_time, type: datetime(6), constraints: { nullable: false } }
+              - column: { name: archive_bucket, type: varchar(120) }
+              - column: { name: archive_object_key, type: varchar(512) }
+              - column: { name: status, type: varchar(24), constraints: { nullable: false } }
+              - column: { name: archived_count, type: bigint, defaultValueNumeric: 0, constraints: { nullable: false } }
+              - column: { name: deleted_count, type: bigint, defaultValueNumeric: 0, constraints: { nullable: false } }
+              - column: { name: started_at, type: datetime(6), constraints: { nullable: false } }
+              - column: { name: finished_at, type: datetime(6) }
+              - column: { name: error_message, type: varchar(1000) }
+        - createIndex:
+            tableName: audit_log_archives
+            indexName: idx_audit_log_archives_started_at
+            columns:
+              - column: { name: started_at }
+        - createTable:
+            tableName: system_settings
+            columns:
+              - column: { name: setting_key, type: varchar(120), constraints: { primaryKey: true, nullable: false } }
+              - column: { name: setting_value, type: text }
+              - column: { name: updated_at, type: datetime(6), constraints: { nullable: false } }
