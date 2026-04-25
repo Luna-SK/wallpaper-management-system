@@ -79,6 +79,25 @@
 
 图片记录只关联一个分类。`GET /api/images` 和 `GET /api/images/{id}` 返回 `category` 对象或 `null`，`PATCH /api/images/{id}` 使用单个 `categoryId` 更新分类，标签仍使用 `tagIds` 多选。
 
+## System Settings
+
+`GET /api/system-settings` 返回上传业务上限、后端上传硬上限、预览质量和已停用图片清理配置：
+
+```json
+{
+  "maxFileSizeMb": 10,
+  "maxBatchSizeMb": 500,
+  "maxFileHardLimitMb": 50,
+  "maxBatchHardLimitMb": 500,
+  "previewQuality": "ORIGINAL",
+  "softDeleteRetentionDays": 180,
+  "softDeleteCleanupEnabled": false,
+  "softDeleteCleanupCron": "0 0 3 * * SUN"
+}
+```
+
+`PATCH /api/system-settings` 需要 `setting:manage` 权限。上传业务上限不能超过硬上限；软删除自动清理 cron 使用 Spring 6 段表达式，默认每周日 03:00。保存后无需重启，下一次调度会读取最新 cron；后端启动后仍会补偿检查一次已到期的停用图片。
+
 ## Audit Log Retention
 
 审计日志近期数据保留在 MySQL，超过保留期的数据先归档到 RustFS，再从数据库批量清理。

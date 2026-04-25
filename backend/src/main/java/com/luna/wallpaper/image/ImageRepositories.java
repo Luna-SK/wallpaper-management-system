@@ -16,6 +16,8 @@ interface ImageAssetRepository extends JpaRepository<ImageAsset, String> {
 
 	List<ImageAsset> findByStatus(String status);
 
+	List<ImageAsset> findByStatusAndDeletedAtBefore(String status, LocalDateTime deletedAt);
+
 	long countByStatusNot(String status);
 
 	long countByCreatedAtAfterAndStatusNot(LocalDateTime time, String status);

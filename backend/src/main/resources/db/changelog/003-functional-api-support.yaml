@@ -234,3 +234,21 @@ databaseChangeLog:
             columns:
               - column: { name: status }
               - column: { name: expires_at }
+
+  - changeSet:
+      id: 007-seed-soft-delete-cleanup-setting
+      author: codex
+      changes:
+        - sql:
+            sql: |
+              INSERT IGNORE INTO system_settings (setting_key, setting_value, updated_at)
+              VALUES ('soft_delete.cleanup.enabled', 'false', '2026-04-25 00:00:00');
+
+  - changeSet:
+      id: 008-seed-soft-delete-cleanup-cron-setting
+      author: codex
+      changes:
+        - sql:
+            sql: |
+              INSERT IGNORE INTO system_settings (setting_key, setting_value, updated_at)
+              VALUES ('soft_delete.cleanup.cron', '0 0 3 * * SUN', '2026-04-25 00:00:00');

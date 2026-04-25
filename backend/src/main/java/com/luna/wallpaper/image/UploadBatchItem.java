@@ -107,10 +107,15 @@ class UploadBatchItem {
 	int progressPercent() { return progressPercent; }
 	int retryCount() { return retryCount; }
 	String errorMessage() { return errorMessage; }
+	long sizeBytes() { return sizeBytes == null ? 0 : sizeBytes; }
 	String originalObjectKey() { return originalObjectKey; }
 	String thumbnailObjectKey() { return thumbnailObjectKey; }
 	String highPreviewObjectKey() { return highPreviewObjectKey; }
 	String standardPreviewObjectKey() { return standardPreviewObjectKey; }
+
+	void receivedSize(long sizeBytes) {
+		this.sizeBytes = Math.max(0, sizeBytes);
+	}
 
 	void staged(String candidateImageId, StoredImage stored) {
 		this.candidateImageId = candidateImageId;
@@ -159,6 +164,7 @@ class UploadBatchItem {
 		this.retryCount++;
 		this.originalFilename = originalFilename;
 		this.sha256 = "";
+		this.sizeBytes = null;
 		this.status = "PROCESSING";
 		this.progressPercent = 0;
 		this.errorMessage = null;

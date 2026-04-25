@@ -34,6 +34,20 @@ docker compose -p wallpaper --env-file .env up -d --build
 docker compose -p wallpaper logs -f backend
 ```
 
+## Environment Files
+
+Docker Compose only reads `ops/docker/.env` through `--env-file .env`. This file belongs to the Docker deployment project and is independent from backend local development.
+
+The backend local development file is `backend/.env`; Docker Compose does not read it. The frontend also does not read either backend or Docker environment files.
+
+All real `.env` files in the project are ignored by Git. Commit only `.env.example` templates.
+
+The backend builds its JDBC URL from `DB_HOST`, `DB_PORT`, and `DB_NAME`; Docker Compose injects those variables into the backend container instead of passing a `DB_URL`.
+
+`SERVER_PORT` in `ops/docker/.env` should stay `8080` because the frontend Nginx container proxies `/api` to `backend:8080`. To change the host port exposed by Docker, change `BACKEND_PORT` instead.
+
+`UPLOAD_MAX_FILE_SIZE` and `UPLOAD_MAX_REQUEST_SIZE` are startup hard limits for file upload. Administrators can lower runtime business limits on the System Settings page, but they cannot raise them above the Docker `.env` hard limits.
+
 备份：
 
 ```bash
@@ -42,9 +56,10 @@ docker compose -p wallpaper --env-file .env --profile backup run --rm backup
 
 ## Notes
 
-- `.env.example` 只提供占位值，真实部署必须替换密钥。
+- `ops/docker/.env.example` 只提供占位值，真实部署必须替换密钥。
 - 依赖镜像使用本地已存在版本：`mysql:8.4`、`redis:7`、`rustfs/rustfs:1.0.0-alpha.98`。
-- Nginx 和后端上传大小上限均按 500MB 批量请求设计。
+- Nginx 和后端上传硬上限均按 500MB 批量请求设计；页面中的业务上限必须小于等于该硬上限。
 - 数据库结构由后端启动时的 Liquibase 初始化完成。
 - 审计日志历史归档写入 RustFS，默认 bucket 为 `wallpaper-audit`，对象路径形如 `audit-logs/2026/04/audit-log-archive-20260424-023000.jsonl.gz`。
 - 审计日志归档文件是 gzip JSONL，可下载后解压按行解析；只有写入成功的日志才会从 MySQL 清理。
+- 已停用图片自动清理由系统设置控制，默认关闭；启用后按保留期和 cron 执行，默认每周日 03:00，并在后端启动后补偿检查一次。

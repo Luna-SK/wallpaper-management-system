@@ -128,6 +128,7 @@ class ImageAsset {
 	Category category() { return category; }
 	Set<Tag> tags() { return tags; }
 	LocalDateTime createdAt() { return createdAt; }
+	LocalDateTime deletedAt() { return deletedAt; }
 
 	void setCurrentVersionId(String currentVersionId) {
 		this.currentVersionId = currentVersionId;

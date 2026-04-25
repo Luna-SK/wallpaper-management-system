@@ -32,7 +32,10 @@ import com.luna.wallpaper.image.ImageDtos.ImageResponse;
 import com.luna.wallpaper.image.ImageDtos.ImageUpdateRequest;
 import com.luna.wallpaper.image.ImageDtos.UploadBatchResponse;
 import com.luna.wallpaper.image.ImageDtos.UploadSessionCreateRequest;
+import com.luna.wallpaper.settings.SoftDeleteCleanupSettings;
 import com.luna.wallpaper.settings.SystemSettingService;
+import com.luna.wallpaper.settings.UploadLimitService;
+import com.luna.wallpaper.settings.UploadLimitService.UploadLimitSettings;
 import com.luna.wallpaper.taxonomy.Category;
 import com.luna.wallpaper.taxonomy.CategoryRepository;
 import com.luna.wallpaper.taxonomy.Tag;
@@ -49,11 +52,13 @@ class ImageService {
 	private final TagRepository tags;
 	private final ImageStorageService storage;
 	private final SystemSettingService settings;
+	private final UploadLimitService uploadLimitService;
 	private final AuditLogService auditLogService;
 
 	ImageService(ImageAssetRepository images, ImageVersionRepository versions, UploadBatchRepository batches,
 			UploadBatchItemRepository batchItems, CategoryRepository categories, TagRepository tags,
-			ImageStorageService storage, SystemSettingService settings, AuditLogService auditLogService) {
+			ImageStorageService storage, SystemSettingService settings, UploadLimitService uploadLimitService,
+			AuditLogService auditLogService) {
 		this.images = images;
 		this.versions = versions;
 		this.batches = batches;
@@ -62,6 +67,7 @@ class ImageService {
 		this.tags = tags;
 		this.storage = storage;
 		this.settings = settings;
+		this.uploadLimitService = uploadLimitService;
 		this.auditLogService = auditLogService;
 	}
 
@@ -276,6 +282,24 @@ class ImageService {
 	}
 
 	@Transactional
+	int purgeExpiredDeletedImages() {
+		if (!softDeleteCleanupEnabled()) {
+			return 0;
+		}
+		int retentionDays = softDeleteRetentionDays();
+		LocalDateTime cutoff = LocalDateTime.now().minusDays(retentionDays);
+		List<ImageAsset> expiredImages = images.findByStatusAndDeletedAtBefore("DELETED", cutoff);
+		for (ImageAsset image : expiredImages) {
+			purgeImage(image, false, "{\"autoCleanup\":true,\"retentionDays\":" + retentionDays + "}");
+		}
+		if (!expiredImages.isEmpty()) {
+			auditLogService.record("image.purge.retention.cleanup", "IMAGE", "DELETED",
+					"{\"deleted\":" + expiredImages.size() + ",\"retentionDays\":" + retentionDays + "}");
+		}
+		return expiredImages.size();
+	}
+
+	@Transactional
 	ObjectFile thumbnail(String id) {
 		ImageAsset image = getRetainedImage(id);
 		ImageVersion version = currentVersion(image);
@@ -395,6 +419,8 @@ class ImageService {
 	private void stageItem(UploadBatch batch, UploadBatchItem item, MultipartFile file, List<UploadBatchItem> existingItems) {
 		StoredImage stored = null;
 		try {
+			item.receivedSize(file.getSize());
+			validateUploadSize(file, existingItems);
 			String sha256 = sha256(file);
 			var existingImage = images.findBySha256AndStatusNot(sha256, "DELETED");
 			if (existingImage.isPresent()) {
@@ -421,6 +447,20 @@ class ImageService {
 			item.failed(ex.getMessage() == null ? "上传失败" : ex.getMessage());
 		}
 		refreshUploadBatch(batch);
+	}
+
+	private void validateUploadSize(MultipartFile file, List<UploadBatchItem> existingItems) {
+		UploadLimitSettings limits = uploadLimitService.current();
+		long fileSize = file.getSize();
+		if (fileSize > limits.maxFileSizeBytes()) {
+			throw new IllegalArgumentException("文件大小超过单文件上限 " + limits.maxFileSizeMb() + " MB");
+		}
+		long acceptedSize = existingItems.stream()
+				.mapToLong(UploadBatchItem::sizeBytes)
+				.sum();
+		if (acceptedSize + fileSize > limits.maxBatchSizeBytes()) {
+			throw new IllegalArgumentException("本次上传总大小超过批量上传上限 " + limits.maxBatchSizeMb() + " MB");
+		}
 	}
 
 	private ImageAsset createImage(String imageId, StoredImage stored, UploadTaxonomy uploadTaxonomy) {
@@ -477,6 +517,10 @@ class ImageService {
 	}
 
 	private void purgeImage(ImageAsset image, boolean batch) {
+		purgeImage(image, batch, batch ? "{\"batch\":true}" : "{}");
+	}
+
+	private void purgeImage(ImageAsset image, boolean batch, String auditDetail) {
 		List<ImageVersion> imageVersions = versions.findByImageIdOrderByVersionNoDesc(image.id());
 		for (ImageVersion version : imageVersions) {
 			storage.delete(new StoredImage(version.originalFilename(), "", version.mimeType(), 0L, null, null,
@@ -486,7 +530,20 @@ class ImageService {
 		versions.deleteAll(imageVersions);
 		image.replaceTaxonomy(null, Set.of());
 		images.delete(image);
-		auditLogService.record("image.purge", "IMAGE", image.id(), batch ? "{\"batch\":true}" : "{}");
+		auditLogService.record("image.purge", "IMAGE", image.id(), auditDetail);
+	}
+
+	private boolean softDeleteCleanupEnabled() {
+		return Boolean.parseBoolean(settings.get(SoftDeleteCleanupSettings.CLEANUP_ENABLED, "false"));
+	}
+
+	private int softDeleteRetentionDays() {
+		try {
+			return Math.max(1, Integer.parseInt(settings.get(SoftDeleteCleanupSettings.RETENTION_DAYS, "180")));
+		}
+		catch (NumberFormatException ex) {
+			return 180;
+		}
 	}
 
 	private void refreshUploadBatch(UploadBatch batch) {

@@ -1,6 +1,7 @@
 package com.luna.wallpaper.settings;
 
 import org.springframework.security.access.prepost.PreAuthorize;
+import org.springframework.scheduling.support.CronExpression;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PatchMapping;
 import org.springframework.web.bind.annotation.RequestBody;
@@ -13,40 +14,53 @@ import com.luna.wallpaper.audit.AuditLogService;
 @RequestMapping("/api/system-settings")
 class SystemSettingsController {
 
+	private static final String PREVIEW_QUALITY = "preview.quality";
+
 	private final SystemSettingService settings;
 	private final AuditLogService auditLogService;
+	private final UploadLimitService uploadLimitService;
 
-	SystemSettingsController(SystemSettingService settings, AuditLogService auditLogService) {
+	SystemSettingsController(SystemSettingService settings, AuditLogService auditLogService,
+			UploadLimitService uploadLimitService) {
 		this.settings = settings;
 		this.auditLogService = auditLogService;
+		this.uploadLimitService = uploadLimitService;
 	}
 
 	@GetMapping
 	@PreAuthorize("hasAuthority('setting:manage')")
 	SystemSettingsResponse get() {
+		UploadLimitService.UploadLimitSettings uploadLimits = uploadLimitService.current();
 		return new SystemSettingsResponse(
-				intSetting("upload.max_file_size_mb", 50),
-				intSetting("upload.max_batch_size_mb", 500),
-				Boolean.parseBoolean(settings.get("watermark.enabled", "true")),
-				settings.get("preview.quality", "ORIGINAL"),
-				intSetting("soft_delete.retention_days", 180));
+				uploadLimits.maxFileSizeMb(),
+				uploadLimits.maxBatchSizeMb(),
+				uploadLimits.maxFileHardLimitMb(),
+				uploadLimits.maxBatchHardLimitMb(),
+				settings.get(PREVIEW_QUALITY, "ORIGINAL"),
+				intSetting(SoftDeleteCleanupSettings.RETENTION_DAYS, 180),
+				booleanSetting(SoftDeleteCleanupSettings.CLEANUP_ENABLED, false),
+				cronSetting(SoftDeleteCleanupSettings.CLEANUP_CRON, SoftDeleteCleanupSettings.DEFAULT_CLEANUP_CRON));
 	}
 
 	@PatchMapping
 	@PreAuthorize("hasAuthority('setting:manage')")
 	SystemSettingsResponse update(@RequestBody SystemSettingsRequest request) {
-		int maxFile = requireRange(request.maxFileSizeMb(), 1, 2048, "单文件大小必须在 1-2048 MB 之间");
-		int maxBatch = requireRange(request.maxBatchSizeMb(), maxFile, 10240, "批量大小必须不小于单文件大小且不超过 10240 MB");
+		UploadLimitService.UploadLimitSettings uploadLimits =
+				uploadLimitService.validateForSave(request.maxFileSizeMb(), request.maxBatchSizeMb());
 		int retention = requireRange(request.softDeleteRetentionDays(), 1, 3650, "软删除保留期必须在 1-3650 天之间");
 		String quality = request.previewQuality() == null ? "ORIGINAL" : request.previewQuality().trim().toUpperCase();
 		if (!quality.equals("ORIGINAL") && !quality.equals("HIGH") && !quality.equals("STANDARD")) {
 			throw new IllegalArgumentException("预览质量只能是 ORIGINAL、HIGH 或 STANDARD");
 		}
-		settings.put("upload.max_file_size_mb", String.valueOf(maxFile));
-		settings.put("upload.max_batch_size_mb", String.valueOf(maxBatch));
-		settings.put("watermark.enabled", String.valueOf(Boolean.TRUE.equals(request.watermarkEnabled())));
-		settings.put("preview.quality", quality);
-		settings.put("soft_delete.retention_days", String.valueOf(retention));
+		String cleanupCron = normalizeCron(request.softDeleteCleanupCron(),
+				SoftDeleteCleanupSettings.DEFAULT_CLEANUP_CRON,
+				"自动清理执行计划必须是有效的 Spring cron 表达式");
+		settings.put("upload.max_file_size_mb", String.valueOf(uploadLimits.maxFileSizeMb()));
+		settings.put("upload.max_batch_size_mb", String.valueOf(uploadLimits.maxBatchSizeMb()));
+		settings.put(PREVIEW_QUALITY, quality);
+		settings.put(SoftDeleteCleanupSettings.RETENTION_DAYS, String.valueOf(retention));
+		settings.put(SoftDeleteCleanupSettings.CLEANUP_ENABLED, String.valueOf(Boolean.TRUE.equals(request.softDeleteCleanupEnabled())));
+		settings.put(SoftDeleteCleanupSettings.CLEANUP_CRON, cleanupCron);
 		auditLogService.record("settings.update", "SYSTEM_SETTINGS", "system", "{\"previewQuality\":\"" + quality + "\"}");
 		return get();
 	}
@@ -67,11 +81,29 @@ class SystemSettingsController {
 		return value;
 	}
 
-	record SystemSettingsRequest(Integer maxFileSizeMb, Integer maxBatchSizeMb, Boolean watermarkEnabled,
-			String previewQuality, Integer softDeleteRetentionDays) {
+	private boolean booleanSetting(String key, boolean defaultValue) {
+		return Boolean.parseBoolean(settings.get(key, String.valueOf(defaultValue)));
 	}
 
-	record SystemSettingsResponse(int maxFileSizeMb, int maxBatchSizeMb, boolean watermarkEnabled, String previewQuality,
-			int softDeleteRetentionDays) {
+	private String cronSetting(String key, String defaultValue) {
+		String cron = settings.get(key, defaultValue);
+		return CronExpression.isValidExpression(cron) ? cron : defaultValue;
+	}
+
+	private static String normalizeCron(String value, String defaultValue, String message) {
+		String cron = value == null ? defaultValue : value.trim();
+		if (!CronExpression.isValidExpression(cron)) {
+			throw new IllegalArgumentException(message);
+		}
+		return cron;
+	}
+
+	record SystemSettingsRequest(Integer maxFileSizeMb, Integer maxBatchSizeMb, String previewQuality,
+			Integer softDeleteRetentionDays, Boolean softDeleteCleanupEnabled, String softDeleteCleanupCron) {
+	}
+
+	record SystemSettingsResponse(int maxFileSizeMb, int maxBatchSizeMb, int maxFileHardLimitMb,
+			int maxBatchHardLimitMb, String previewQuality, int softDeleteRetentionDays,
+			boolean softDeleteCleanupEnabled, String softDeleteCleanupCron) {
 	}
 }

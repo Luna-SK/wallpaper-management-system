@@ -1,4 +1,9 @@
 backend/target/
+.env
+.env.*
+**/.env
+**/.env.*
+!**/.env.example
 frontend/dist/
 frontend/node_modules/
 *.log
