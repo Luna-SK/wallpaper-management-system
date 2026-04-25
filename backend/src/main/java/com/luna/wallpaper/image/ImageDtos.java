@@ -10,7 +10,7 @@ public final class ImageDtos {
 	private ImageDtos() {
 	}
 
-	public record ImageUpdateRequest(String title, String status, List<String> categoryIds, List<String> tagIds) {
+	public record ImageUpdateRequest(String title, String status, String categoryId, List<String> tagIds) {
 	}
 
 	public record ImageBatchRequest(List<String> ids) {
@@ -26,12 +26,12 @@ public final class ImageDtos {
 	}
 
 	public record ImageResponse(String id, String title, String originalFilename, String mimeType, long sizeBytes,
-			Integer width, Integer height, String status, long viewCount, long downloadCount, List<CategoryBrief> categories,
+			Integer width, Integer height, String status, long viewCount, long downloadCount, CategoryBrief category,
 			List<TagBrief> tags, LocalDateTime createdAt) {
 		static ImageResponse from(ImageAsset image) {
 			return new ImageResponse(image.id(), image.title(), image.originalFilename(), image.mimeType(), image.sizeBytes(),
 					image.width(), image.height(), image.status(), image.viewCount(), image.downloadCount(),
-					image.categories().stream().map(CategoryBrief::from).toList(),
+					image.category() == null ? null : CategoryBrief.from(image.category()),
 					image.tags().stream().map(TagBrief::from).toList(), image.createdAt());
 		}
 	}

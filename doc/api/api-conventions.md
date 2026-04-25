@@ -77,6 +77,8 @@
 
 确认入库前，暂存文件不会出现在图片库。取消会话、过期会话和孤儿对象清理都会删除未被 `image_versions` 引用的 RustFS 对象。
 
+图片记录只关联一个分类。`GET /api/images` 和 `GET /api/images/{id}` 返回 `category` 对象或 `null`，`PATCH /api/images/{id}` 使用单个 `categoryId` 更新分类，标签仍使用 `tagIds` 多选。
+
 ## Audit Log Retention
 
 审计日志近期数据保留在 MySQL，超过保留期的数据先归档到 RustFS，再从数据库批量清理。

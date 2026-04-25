@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, reactive, ref } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import type { TableInstance, UploadFile, UploadFiles, UploadUserFile } from 'element-plus'
 import { ArrowLeft, ArrowRight, Delete, Download, RefreshLeft, Search, UploadFilled } from '@element-plus/icons-vue'
@@ -33,6 +33,7 @@ const keyword = ref('')
 const selectedCategoryId = ref('')
 const selectedTagId = ref('')
 const imageScope = ref<'ACTIVE' | 'DELETED'>('ACTIVE')
+const displayMode = ref<'grid' | 'list'>('grid')
 const rows = ref<ImageRecord[]>([])
 const imageTableRef = ref<TableInstance>()
 const selectedRows = ref<ImageRecord[]>([])
@@ -52,7 +53,7 @@ const previewImageId = ref('')
 const previewUrl = ref('')
 const editing = ref<ImageRecord | null>(null)
 const editVisible = ref(false)
-const editForm = reactive({ title: '', status: 'ACTIVE', categoryIds: [] as string[], tagIds: [] as string[] })
+const editForm = reactive({ title: '', status: 'ACTIVE', categoryId: '', tagIds: [] as string[] })
 const uploadVisible = ref(false)
 const uploadLoading = ref(false)
 const uploadConfirming = ref(false)
@@ -71,6 +72,10 @@ const categoryOptions = computed(() => categories.value.filter((category) => cat
 const tagOptions = computed(() => tags.value.filter((tag) => tag.enabled))
 const uploadTagOptions = computed(() => uploadTags.value.filter((tag) => tag.enabled))
 const selectedRowIds = computed(() => selectedRows.value.map((row) => row.id))
+const selectedRowIdSet = computed(() => new Set(selectedRowIds.value))
+const selectedRowsOnPageCount = computed(() => rows.value.filter((row) => selectedRowIdSet.value.has(row.id)).length)
+const gridAllSelected = computed(() => rows.value.length > 0 && selectedRowsOnPageCount.value === rows.value.length)
+const gridSelectionIndeterminate = computed(() => selectedRowsOnPageCount.value > 0 && selectedRowsOnPageCount.value < rows.value.length)
 const showingDeletedImages = computed(() => imageScope.value === 'DELETED')
 const currentPreview = computed(() => previewIndex.value >= 0 ? rows.value[previewIndex.value] ?? null : null)
 const canPreviewPrevious = computed(() => previewIndex.value > 0)
@@ -106,6 +111,7 @@ const uploadProgressSummary = computed(() => {
   }
   return `已处理 ${uploadProcessedCount.value} / ${uploadSession.value.totalCount} 张${duplicateText}`
 })
+const gridTagDisplayLimit = 4
 
 function errorMessage(error: unknown, fallback: string) {
   if (isAxiosError<{ message?: string }>(error)) {
@@ -129,6 +135,27 @@ function statusTagType(status: string) {
   if (status === 'DELETED') return 'info'
   if (status === 'DISABLED') return 'warning'
   return 'success'
+}
+
+function categoryText(row: ImageRecord) {
+  return row.category?.name ?? '-'
+}
+
+function tagText(row: ImageRecord) {
+  return row.tags.map((item) => item.name).join('、') || '-'
+}
+
+function visibleGridTags(row: ImageRecord) {
+  return row.tags.slice(0, gridTagDisplayLimit)
+}
+
+function hiddenGridTagCount(row: ImageRecord) {
+  return Math.max(0, row.tags.length - gridTagDisplayLimit)
+}
+
+function hiddenGridTagTitle(row: ImageRecord) {
+  const hiddenCount = hiddenGridTagCount(row)
+  return hiddenCount ? `还有 ${hiddenCount} 个标签：${tagText(row)}` : tagText(row)
 }
 
 function revokeThumbnailUrl(id: string) {
@@ -333,6 +360,46 @@ function resetFilters() {
 
 function handleSelectionChange(selection: ImageRecord[]) {
   selectedRows.value = selection
+}
+
+function isRowSelected(row: ImageRecord) {
+  return selectedRowIdSet.value.has(row.id)
+}
+
+function toggleGridSelection(row: ImageRecord, checked: boolean) {
+  if (checked) {
+    if (!isRowSelected(row)) {
+      selectedRows.value = [...selectedRows.value, row]
+    }
+    return
+  }
+  selectedRows.value = selectedRows.value.filter((item) => item.id !== row.id)
+}
+
+function handleGridSelectionChange(row: ImageRecord, value: unknown) {
+  toggleGridSelection(row, Boolean(value))
+}
+
+function handleGridSelectAllChange(value: unknown) {
+  selectedRows.value = Boolean(value) ? [...rows.value] : []
+}
+
+async function syncTableSelection() {
+  if (displayMode.value !== 'list') return
+  const selectedIds = new Set(selectedRows.value.map((row) => row.id))
+  await nextTick()
+  const table = imageTableRef.value
+  if (!table) return
+  table.clearSelection()
+  rows.value.forEach((row) => {
+    if (selectedIds.has(row.id)) {
+      table.toggleRowSelection(row, true)
+    }
+  })
+}
+
+function handleDisplayModeChange() {
+  void syncTableSelection()
 }
 
 function handlePageChange(page: number) {
@@ -661,14 +728,14 @@ async function openEdit(row: ImageRecord) {
   editVisible.value = true
   editForm.title = row.title
   editForm.status = row.status
-  editForm.categoryIds = row.categories.map((category) => category.id)
+  editForm.categoryId = row.category?.id ?? ''
   editForm.tagIds = row.tags.map((tag) => tag.id)
-  tags.value = editForm.categoryIds[0] ? await getTags(editForm.categoryIds[0]) : []
+  tags.value = editForm.categoryId ? await getTags(editForm.categoryId) : []
 }
 
-async function onEditCategoryChange(ids: string[]) {
+async function onEditCategoryChange(categoryId: string) {
   editForm.tagIds = []
-  tags.value = ids[0] ? await getTags(ids[0]) : []
+  tags.value = categoryId ? await getTags(categoryId) : []
 }
 
 async function saveEdit() {
@@ -677,7 +744,7 @@ async function saveEdit() {
     await updateImage(editing.value.id, {
       title: editForm.title,
       status: editForm.status,
-      categoryIds: editForm.categoryIds,
+      categoryId: editForm.categoryId || null,
       tagIds: editForm.tagIds,
     })
     ElMessage.success('图片信息已保存')
@@ -883,21 +950,38 @@ onBeforeUnmount(() => {
       </div>
 
       <div class="toolbar-row image-toolbar">
-        <el-input v-model="keyword" placeholder="文件名、标签、备注" :prefix-icon="Search" clearable />
-        <el-select v-model="selectedCategoryId" placeholder="分类" clearable @change="loadTagsForFilter">
-          <el-option v-for="category in categoryOptions" :key="category.id" :label="category.name" :value="category.id" />
-        </el-select>
-        <el-select v-model="selectedTagId" placeholder="标签" clearable :disabled="!selectedCategoryId">
-          <el-option v-for="tag in tagOptions" :key="tag.id" :label="tag.name" :value="tag.id" />
-        </el-select>
-        <div>
-          <el-button @click="applyFilters">筛选</el-button>
-          <el-button @click="resetFilters">重置</el-button>
+        <div class="image-filter-group">
+          <el-input v-model="keyword" placeholder="文件名、标签、备注" :prefix-icon="Search" clearable />
+          <el-select v-model="selectedCategoryId" placeholder="分类" clearable @change="loadTagsForFilter">
+            <el-option v-for="category in categoryOptions" :key="category.id" :label="category.name" :value="category.id" />
+          </el-select>
+          <el-select v-model="selectedTagId" placeholder="标签" clearable :disabled="!selectedCategoryId">
+            <el-option v-for="tag in tagOptions" :key="tag.id" :label="tag.name" :value="tag.id" />
+          </el-select>
+          <div class="filter-actions">
+            <el-button @click="applyFilters">筛选</el-button>
+            <el-button @click="resetFilters">重置</el-button>
+          </div>
         </div>
+        <el-radio-group v-model="displayMode" class="display-mode-toggle" @change="handleDisplayModeChange">
+          <el-radio-button label="grid">网格</el-radio-button>
+          <el-radio-button label="list">列表</el-radio-button>
+        </el-radio-group>
       </div>
 
       <div class="batch-toolbar">
-        <span>已选择 {{ selectedRows.length }} 张</span>
+        <div class="batch-toolbar-summary">
+          <el-checkbox
+            v-if="displayMode === 'grid'"
+            class="grid-select-all"
+            :model-value="gridAllSelected"
+            :indeterminate="gridSelectionIndeterminate"
+            :disabled="rows.length === 0 || loading"
+            aria-label="选择当前页图片"
+            @change="handleGridSelectAllChange"
+          />
+          <span>已选择 {{ selectedRows.length }} 张</span>
+        </div>
         <div v-if="!showingDeletedImages" class="batch-toolbar-actions">
           <el-button
             type="primary"
@@ -920,7 +1004,7 @@ onBeforeUnmount(() => {
             批量停用
           </el-button>
         </div>
-      <div v-else class="batch-toolbar-actions">
+        <div v-else class="batch-toolbar-actions">
           <el-button
             type="danger"
             :icon="Delete"
@@ -953,7 +1037,70 @@ onBeforeUnmount(() => {
         </div>
       </div>
 
-      <el-table ref="imageTableRef" v-loading="loading" :data="rows" stripe @selection-change="handleSelectionChange">
+      <div v-if="displayMode === 'grid'" v-loading="loading" class="image-grid-view">
+        <div v-if="rows.length" class="image-grid">
+          <article v-for="row in rows" :key="row.id" class="image-grid-card" :class="{ 'is-selected': isRowSelected(row) }">
+            <el-checkbox
+              class="image-grid-check"
+              :model-value="isRowSelected(row)"
+              :aria-label="`选择 ${row.title}`"
+              @click.stop
+              @change="handleGridSelectionChange(row, $event)"
+            />
+            <button class="image-grid-thumb" type="button" :aria-label="`预览 ${row.title}`" @click="preview(row)">
+              <img v-if="thumbnailUrls[row.id]" :src="thumbnailUrls[row.id]" alt="" />
+              <span v-else>预览</span>
+            </button>
+            <div class="image-grid-body">
+              <div class="image-grid-title">
+                <strong :title="row.title">{{ row.title }}</strong>
+                <el-tag :type="statusTagType(row.status)" effect="light">{{ statusLabel(row.status) }}</el-tag>
+              </div>
+              <span class="image-grid-file" :title="row.originalFilename">{{ row.originalFilename }} · {{ formatBytes(row.sizeBytes) }}</span>
+              <div class="image-grid-taxonomy">
+                <div class="image-grid-taxonomy-row">
+                  <span class="image-grid-taxonomy-label">分类</span>
+                  <span class="image-grid-category" :title="categoryText(row)">
+                    {{ row.category?.name ?? '未分类' }}
+                  </span>
+                </div>
+                <div class="image-grid-taxonomy-row">
+                  <span class="image-grid-taxonomy-label">标签</span>
+                  <div class="image-grid-chip-row" :title="tagText(row)">
+                    <el-tag v-for="tag in visibleGridTags(row)" :key="tag.id" class="image-grid-chip" size="small" effect="light">
+                      {{ tag.name }}
+                    </el-tag>
+                    <el-tag
+                      v-if="hiddenGridTagCount(row)"
+                      class="image-grid-chip image-grid-more-chip"
+                      size="small"
+                      effect="plain"
+                      :title="hiddenGridTagTitle(row)"
+                    >
+                      …
+                    </el-tag>
+                    <span v-if="row.tags.length === 0" class="taxonomy-empty">暂无标签</span>
+                  </div>
+                </div>
+              </div>
+            </div>
+            <div class="image-grid-actions">
+              <template v-if="!showingDeletedImages">
+                <el-button link type="primary" @click="openEdit(row)">编辑</el-button>
+                <el-button link type="primary" :icon="Download" @click="download(row)">下载</el-button>
+                <el-button link type="danger" @click="remove(row)">停用</el-button>
+              </template>
+              <template v-else>
+                <el-button link type="primary" @click="restore(row)">恢复</el-button>
+                <el-button link type="danger" @click="purge(row)">彻底删除</el-button>
+              </template>
+            </div>
+          </article>
+        </div>
+        <el-empty v-else description="暂无图片" />
+      </div>
+
+      <el-table v-else ref="imageTableRef" v-loading="loading" :data="rows" stripe @selection-change="handleSelectionChange">
         <el-table-column type="selection" width="44" />
         <el-table-column label="图片" min-width="260">
           <template #default="{ row }">
@@ -970,7 +1117,7 @@ onBeforeUnmount(() => {
           </template>
         </el-table-column>
         <el-table-column label="分类" width="150">
-          <template #default="{ row }">{{ row.categories.map((item: any) => item.name).join('、') || '-' }}</template>
+          <template #default="{ row }">{{ categoryText(row) }}</template>
         </el-table-column>
         <el-table-column label="标签" min-width="180">
           <template #default="{ row }">
@@ -1040,6 +1187,19 @@ onBeforeUnmount(() => {
       <div v-if="currentPreview" class="preview-meta">
         <span>{{ currentPreview.originalFilename }}</span>
         <span>{{ previewIndex + 1 }} / {{ rows.length }}</span>
+      </div>
+      <div v-if="currentPreview" class="preview-details">
+        <div class="preview-detail-row">
+          <span class="preview-detail-label">分类</span>
+          <span class="preview-detail-text">{{ currentPreview.category?.name ?? '未分类' }}</span>
+        </div>
+        <div class="preview-detail-row">
+          <span class="preview-detail-label">标签</span>
+          <div class="preview-detail-tags">
+            <el-tag v-for="tag in currentPreview.tags" :key="tag.id" size="small" effect="light">{{ tag.name }}</el-tag>
+            <span v-if="currentPreview.tags.length === 0" class="taxonomy-empty">暂无标签</span>
+          </div>
+        </div>
       </div>
     </el-dialog>
 
@@ -1185,7 +1345,7 @@ onBeforeUnmount(() => {
           </el-select>
         </el-form-item>
         <el-form-item label="分类">
-          <el-select v-model="editForm.categoryIds" multiple @change="onEditCategoryChange">
+          <el-select v-model="editForm.categoryId" clearable placeholder="选择分类" @change="onEditCategoryChange">
             <el-option v-for="category in categoryOptions" :key="category.id" :label="category.name" :value="category.id" />
           </el-select>
         </el-form-item>
@@ -1208,14 +1368,31 @@ onBeforeUnmount(() => {
   align-items: flex-start;
 }
 
+.image-filter-group {
+  align-items: center;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  min-width: 0;
+}
+
 .image-scope-row {
   display: flex;
   margin-bottom: 14px;
 }
 
-.image-toolbar .el-input,
-.image-toolbar .el-select {
+.image-filter-group .el-input,
+.image-filter-group .el-select {
   width: 220px;
+}
+
+.filter-actions {
+  display: flex;
+  gap: 8px;
+}
+
+.display-mode-toggle {
+  flex: 0 0 auto;
 }
 
 .batch-toolbar {
@@ -1225,13 +1402,239 @@ onBeforeUnmount(() => {
   display: flex;
   font-size: 13px;
   justify-content: space-between;
+  margin-bottom: 16px;
   margin-top: 14px;
   padding-top: 12px;
 }
 
+.batch-toolbar-summary {
+  align-items: center;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+}
+
+.grid-select-all {
+  height: 28px;
+}
+
 .batch-toolbar-actions {
   display: flex;
+  flex-wrap: wrap;
   gap: 8px;
+}
+
+.image-grid-view {
+  min-height: 220px;
+}
+
+.image-grid {
+  display: grid;
+  gap: 14px;
+  grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+}
+
+.image-grid-card {
+  background: #ffffff;
+  border: 1px solid #dfe6e2;
+  border-radius: 8px;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  overflow: hidden;
+  position: relative;
+  transition:
+    border-color 0.18s ease,
+    box-shadow 0.18s ease,
+    transform 0.18s ease;
+}
+
+.image-grid-card:hover,
+.image-grid-card.is-selected {
+  border-color: #93c5fd;
+  box-shadow: 0 10px 24px rgb(15 23 42 / 8%);
+}
+
+.image-grid-card:hover {
+  transform: translateY(-1px);
+}
+
+.image-grid-card.is-selected {
+  box-shadow: 0 0 0 2px rgb(37 99 235 / 12%);
+}
+
+.image-grid-check {
+  left: 10px;
+  position: absolute;
+  top: 8px;
+  z-index: 1;
+}
+
+.image-grid-check :deep(.el-checkbox__inner) {
+  background: rgb(255 255 255 / 92%);
+  border-color: #94a3b8;
+  height: 18px;
+  width: 18px;
+}
+
+.image-grid-card.is-selected .image-grid-check :deep(.el-checkbox__inner),
+.image-grid-check :deep(.el-checkbox__input.is-checked .el-checkbox__inner) {
+  background: #2563eb !important;
+  border-color: #2563eb !important;
+}
+
+.image-grid-card.is-selected .image-grid-check :deep(.el-checkbox__inner::after),
+.image-grid-check :deep(.el-checkbox__input.is-checked .el-checkbox__inner::after) {
+  border-color: #ffffff !important;
+}
+
+.image-grid-thumb {
+  aspect-ratio: 4 / 3;
+  background: #f1f5f9;
+  border: 0;
+  color: #64748b;
+  cursor: pointer;
+  display: block;
+  overflow: hidden;
+  padding: 0;
+  width: 100%;
+}
+
+.image-grid-thumb:hover img {
+  transform: scale(1.025);
+}
+
+.image-grid-thumb img,
+.image-grid-thumb span {
+  display: block;
+  height: 100%;
+  width: 100%;
+}
+
+.image-grid-thumb img {
+  object-fit: cover;
+  transition: transform 0.2s ease;
+}
+
+.image-grid-thumb span {
+  align-items: center;
+  display: flex;
+  font-size: 13px;
+  justify-content: center;
+}
+
+.image-grid-body {
+  display: grid;
+  gap: 8px;
+  min-width: 0;
+  padding: 12px 12px 8px;
+}
+
+.image-grid-title {
+  align-items: center;
+  display: flex;
+  gap: 8px;
+  justify-content: space-between;
+  min-width: 0;
+}
+
+.image-grid-title strong,
+.image-grid-file {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.image-grid-title strong {
+  color: #1f2937;
+  font-size: 14px;
+  min-width: 0;
+}
+
+.image-grid-title .el-tag {
+  flex: 0 0 auto;
+}
+
+.image-grid-file {
+  color: #64748b;
+  font-size: 12px;
+  min-width: 0;
+}
+
+.image-grid-taxonomy {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+}
+
+.image-grid-taxonomy-row {
+  align-items: flex-start;
+  display: grid;
+  gap: 6px;
+  grid-template-columns: 30px minmax(0, 1fr);
+  min-width: 0;
+}
+
+.image-grid-taxonomy-label,
+.preview-detail-label {
+  color: #64748b;
+  flex: 0 0 auto;
+  font-size: 12px;
+  line-height: 22px;
+}
+
+.image-grid-category,
+.preview-detail-text {
+  color: #334155;
+  font-size: 12px;
+  line-height: 22px;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.image-grid-chip-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  max-height: 48px;
+  min-width: 0;
+  overflow: hidden;
+}
+
+.image-grid-chip {
+  margin: 0;
+  max-width: 100%;
+}
+
+.image-grid-more-chip {
+  min-width: 28px;
+  text-align: center;
+}
+
+.image-grid-chip :deep(.el-tag__content),
+.preview-detail-tags :deep(.el-tag__content) {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.taxonomy-empty {
+  color: #94a3b8;
+  font-size: 12px;
+  line-height: 22px;
+}
+
+.image-grid-actions {
+  align-items: center;
+  border-top: 1px solid #eef2f7;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 8px;
+  margin-top: auto;
+  min-height: 40px;
+  padding: 6px 10px 8px;
 }
 
 .image-cell {
@@ -1328,6 +1731,28 @@ onBeforeUnmount(() => {
   font-size: 13px;
   justify-content: space-between;
   margin-top: 12px;
+}
+
+.preview-details {
+  border-top: 1px solid #e2e8f0;
+  display: grid;
+  gap: 10px;
+  margin-top: 14px;
+  padding-top: 14px;
+}
+
+.preview-detail-row {
+  align-items: flex-start;
+  display: grid;
+  gap: 10px;
+  grid-template-columns: 42px minmax(0, 1fr);
+}
+
+.preview-detail-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  min-width: 0;
 }
 
 .pagination-row {
@@ -1581,5 +2006,39 @@ onBeforeUnmount(() => {
 
 .upload-result-main p {
   margin: 0;
+}
+
+@media (max-width: 980px) {
+  .image-toolbar {
+    align-items: stretch;
+  }
+
+  .image-filter-group,
+  .display-mode-toggle,
+  .batch-toolbar,
+  .batch-toolbar-summary,
+  .batch-toolbar-actions {
+    width: 100%;
+  }
+
+  .image-filter-group .el-input,
+  .image-filter-group .el-select,
+  .filter-actions {
+    width: 100%;
+  }
+
+  .filter-actions .el-button {
+    flex: 1;
+  }
+
+  .batch-toolbar {
+    align-items: flex-start;
+    flex-direction: column;
+    gap: 10px;
+  }
+
+  .image-grid {
+    grid-template-columns: repeat(auto-fill, minmax(156px, 1fr));
+  }
 }
 </style>

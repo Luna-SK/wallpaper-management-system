@@ -23,7 +23,7 @@ export interface ImageRecord {
   status: string
   viewCount: number
   downloadCount: number
-  categories: ImageCategory[]
+  category: ImageCategory | null
   tags: ImageTag[]
   createdAt: string
 }
@@ -103,7 +103,7 @@ export async function getImages(params: { keyword?: string; categoryId?: string;
   return response.data
 }
 
-export async function updateImage(id: string, payload: { title: string; status: string; categoryIds: string[]; tagIds: string[] }) {
+export async function updateImage(id: string, payload: { title: string; status: string; categoryId: string | null; tagIds: string[] }) {
   const response = await http.patch<ImageRecord>(`/images/${id}`, payload)
   return response.data
 }

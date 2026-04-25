@@ -9,10 +9,9 @@
 
 ## Image
 
-- `images`：图片元数据，包括标题、原文件名、SHA-256、MIME、大小、宽高、上传者、来源、状态、浏览量、下载量。
+- `images`：图片元数据，包括标题、原文件名、SHA-256、MIME、大小、宽高、上传者、来源、单一分类、状态、浏览量、下载量。
 - `image_versions`：图片版本记录，保存原图、缩略图、高清预览、标准预览的 RustFS object key。覆盖编辑只切换当前版本指针，历史版本进入保留期。
 - `image_objects`：保留为对象索引扩展表；首版运行主要以 `image_versions` 记录当前可用对象。
-- `image_categories`：图片与分类的多对多关系。
 - `image_tags`：图片与标签的多对多关系。
 - `upload_batches`、`upload_batch_items`：上传会话、文件级状态、暂存对象 key、失败原因和重试记录。文件先暂存到 RustFS，确认后才创建正式 `images + image_versions` 记录；取消或过期会话会清理未确认对象。
 

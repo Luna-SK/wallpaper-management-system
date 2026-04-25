@@ -5,3 +5,5 @@ databaseChangeLog:
       file: db/changelog/002-seed-data.yaml
   - include:
       file: db/changelog/003-functional-api-support.yaml
+  - include:
+      file: db/changelog/004-single-image-category.yaml

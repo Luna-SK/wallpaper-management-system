@@ -215,8 +215,11 @@ class ImageService {
 		ImageAsset image = getImage(id);
 		String title = request.title() == null || request.title().isBlank() ? image.title() : request.title().trim();
 		String status = request.status() == null || request.status().isBlank() ? image.status() : request.status().trim();
+		Category category = findCategory(request.categoryId());
+		Set<Tag> selectedTags = findTags(request.tagIds());
+		validateSelectedTags(category, selectedTags);
 		image.updateMetadata(title, status);
-		image.replaceTaxonomy(findCategories(request.categoryIds()), findTags(request.tagIds()));
+		image.replaceTaxonomy(category, selectedTags);
 		auditLogService.record("image.update", "IMAGE", image.id(), "{\"title\":\"" + escape(title) + "\"}");
 		return ImageResponse.from(image);
 	}
@@ -423,7 +426,7 @@ class ImageService {
 	private ImageAsset createImage(String imageId, StoredImage stored, UploadTaxonomy uploadTaxonomy) {
 		ImageAsset image = new ImageAsset(imageId, titleFrom(stored.originalFilename()), stored.originalFilename(), stored.sha256(), stored.mimeType(),
 				stored.sizeBytes(), stored.width(), stored.height());
-		image.replaceTaxonomy(Set.of(uploadTaxonomy.category()), uploadTaxonomy.tags());
+		image.replaceTaxonomy(uploadTaxonomy.category(), uploadTaxonomy.tags());
 		image = images.save(image);
 		ImageVersion version = versions.save(new ImageVersion(image.id(), 1, "UPLOAD", stored));
 		image.setCurrentVersionId(version.id());
@@ -481,8 +484,7 @@ class ImageService {
 					version.standardPreviewObjectKey()));
 		}
 		versions.deleteAll(imageVersions);
-		image.categories().clear();
-		image.tags().clear();
+		image.replaceTaxonomy(null, Set.of());
 		images.delete(image);
 		auditLogService.record("image.purge", "IMAGE", image.id(), batch ? "{\"batch\":true}" : "{}");
 	}
@@ -582,18 +584,48 @@ class ImageService {
 				.orElseThrow(() -> new IllegalArgumentException("图片版本不存在"));
 	}
 
-	private Set<Category> findCategories(Collection<String> ids) {
-		if (ids == null || ids.isEmpty()) {
-			return Set.of();
+	private Category findCategory(String id) {
+		if (id == null || id.isBlank()) {
+			return null;
 		}
-		return new LinkedHashSet<>(categories.findAllById(ids));
+		Category category = categories.findById(id.trim())
+				.orElseThrow(() -> new IllegalArgumentException("选择的分类不存在"));
+		if (!category.enabled()) {
+			throw new IllegalArgumentException("选择的分类已停用");
+		}
+		return category;
 	}
 
 	private Set<Tag> findTags(Collection<String> ids) {
 		if (ids == null || ids.isEmpty()) {
 			return Set.of();
 		}
-		return new LinkedHashSet<>(tags.findByIdIn(ids));
+		Set<String> requiredTagIds = ids.stream()
+				.filter(id -> id != null && !id.isBlank())
+				.map(String::trim)
+				.collect(java.util.stream.Collectors.toCollection(LinkedHashSet::new));
+		if (requiredTagIds.isEmpty()) {
+			return Set.of();
+		}
+		Set<Tag> selectedTags = new LinkedHashSet<>(tags.findByIdIn(requiredTagIds));
+		if (selectedTags.size() != requiredTagIds.size()) {
+			throw new IllegalArgumentException("选择的标签不存在");
+		}
+		return selectedTags;
+	}
+
+	private void validateSelectedTags(Category category, Set<Tag> selectedTags) {
+		if (selectedTags.isEmpty()) {
+			return;
+		}
+		if (category == null) {
+			throw new IllegalArgumentException("选择标签前必须选择分类");
+		}
+		boolean invalidTag = selectedTags.stream()
+				.anyMatch(tag -> !tag.enabled() || !tag.categoryId().equals(category.id()));
+		if (invalidTag) {
+			throw new IllegalArgumentException("选择的标签必须属于当前分类且处于启用状态");
+		}
 	}
 
 	private static String sha256(MultipartFile file) throws IOException {

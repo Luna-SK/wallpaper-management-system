@@ -22,7 +22,7 @@ interface ImageAssetRepository extends JpaRepository<ImageAsset, String> {
 
 	@Query(value = """
 			select distinct image from ImageAsset image
-			left join image.categories category
+			left join image.category category
 			left join image.tags tag
 			where ((:status is null and image.status <> 'DELETED') or (:status is not null and image.status = :status))
 			  and (:keyword is null or lower(image.title) like lower(concat('%', :keyword, '%'))
@@ -33,7 +33,7 @@ interface ImageAssetRepository extends JpaRepository<ImageAsset, String> {
 			order by image.createdAt desc
 			""", countQuery = """
 			select count(distinct image) from ImageAsset image
-			left join image.categories category
+			left join image.category category
 			left join image.tags tag
 			where ((:status is null and image.status <> 'DELETED') or (:status is not null and image.status = :status))
 			  and (:keyword is null or lower(image.title) like lower(concat('%', :keyword, '%'))
@@ -67,15 +67,14 @@ interface ImageAssetRepository extends JpaRepository<ImageAsset, String> {
 	@Query(value = """
 			select category.id, category.name, count(image.id)
 			from images image
-			join image_categories image_category on image.id = image_category.image_id
-			join categories category on category.id = image_category.category_id
+			join categories category on category.id = image.category_id
 			where image.status <> 'DELETED'
 			group by category.id, category.name
 			order by count(image.id) desc, category.name asc
 			""", nativeQuery = true)
 	List<Object[]> countImagesByCategory();
 
-	@Query("select count(image) from ImageAsset image where image.status <> 'DELETED' and image.categories is empty")
+	@Query("select count(image) from ImageAsset image where image.status <> 'DELETED' and image.category is null")
 	long countUncategorizedImages();
 
 	List<ImageAsset> findByStatusNotOrderByViewCountDescCreatedAtDesc(String status, Pageable pageable);
