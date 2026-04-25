@@ -31,15 +31,21 @@ Backend:
 ```bash
 cd backend
 JAVA_HOME=/Users/luna/.sdkman/candidates/java/25.0.1-zulu ./mvnw test
+./mvnw spring-boot:run
 ```
+
+The default local backend port is `18090`, read from `backend/.env`.
 
 Frontend:
 
 ```bash
 cd frontend
+cp .env.example .env
 npm install
 npm run dev
 ```
+
+The frontend dev server keeps API calls at `/api`; Vite reads `frontend/.env` and proxies them to `http://localhost:18090` by default.
 
 Docker config check:
 
@@ -51,8 +57,10 @@ docker compose --env-file .env.example config
 ## Configuration Boundaries
 
 - `backend/.env` is the backend local development configuration file. It is ignored by Git; commit changes only to `backend/.env.example`.
+- `frontend/.env` is the frontend local development configuration file. It is ignored by Git; commit changes only to `frontend/.env.example`.
 - `ops/docker/.env` is the Docker Compose deployment configuration file. It is ignored by Git; commit changes only to `ops/docker/.env.example`.
 - Real `.env` files anywhere in the project are ignored by Git. Keep only `.env.example` templates under version control.
+- The backend local port comes from `backend/.env`, the frontend dev proxy port comes from `frontend/.env`, and Docker deployment ports come from `ops/docker/.env`.
 - The frontend keeps its own Vite/Nginx configuration and does not read backend or Docker `.env` files.
 - Do not copy one environment file over another. The three projects stay independent even when some variable names are intentionally similar.
 - `DB_NAME` is the database name. `DB_USERNAME` is the database login user.

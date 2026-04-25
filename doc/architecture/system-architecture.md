@@ -20,7 +20,9 @@
 
 后端本地开发只读取 `backend/.env`。`backend/src/main/resources/application.yml` 通过 `spring.config.import=optional:file:.env[.properties]` 导入当前工作目录下的 `.env`，因此本地启动命令需要在 `backend/` 目录执行。后端不在 `.env` 中维护 `DB_URL`，而是通过 `DB_HOST`、`DB_PORT`、`DB_NAME` 拼接 JDBC URL；`DB_NAME` 表示数据库名，`DB_USERNAME` 表示数据库登录用户。
 
-Docker Compose 只读取 `ops/docker/.env`，并把其中的值作为容器环境变量注入后端容器；后端容器不会读取 `backend/.env`。前端配置保持独立，不读取后端或 Docker Compose 的 `.env` 文件。
+Docker Compose 只读取 `ops/docker/.env`，并把其中的值作为容器环境变量注入后端容器；后端容器不会读取 `backend/.env`。Docker 默认让后端容器监听并暴露 `18090`，前端 Nginx 代理 `/api` 到 `backend:18090`。
+
+前端开发环境只读取 `frontend/.env`。Vite dev server 保持业务请求为 `/api`，并通过 `VITE_BACKEND_PORT` 代理到本地后端，默认端口为 `18090`。前端不读取后端或 Docker Compose 的 `.env` 文件。
 
 项目内真实 `.env` 文件均不进入版本库；只提交 `.env.example` 模板。新增子项目如果需要本地环境文件，也必须加入同一忽略策略，避免密钥和本地端口配置泄露。
 

@@ -70,7 +70,7 @@ services:
       RUSTFS_BUCKET_WATERMARK: ${RUSTFS_BUCKET_WATERMARK}
       RUSTFS_BUCKET_AUDIT: ${RUSTFS_BUCKET_AUDIT}
     ports:
-      - "${BACKEND_PORT:-8080}:8080"
+      - "${BACKEND_PORT:-18090}:${SERVER_PORT:-18090}"
 
   frontend:
     build:

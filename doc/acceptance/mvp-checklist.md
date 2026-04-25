@@ -4,6 +4,7 @@
 
 - Maven 测试通过。
 - 后端本地配置只读取 `backend/.env`，并且仓库只提交 `backend/.env.example`。
+- 后端默认端口为 `18090`，从 `backend/.env` 的 `SERVER_PORT` 读取。
 - `backend/.env.example` 从原 `application.yml` 本地默认值迁移而来，且不包含 `DB_URL`。
 - `backend/src/main/resources/application.yml` 使用 `DB_HOST`、`DB_PORT`、`DB_NAME` 拼接 JDBC URL。
 - 项目内真实 `.env` 文件均被 `.gitignore` 忽略，只提交 `.env.example` 模板。
@@ -21,6 +22,7 @@
 
 - `npm run typecheck` 通过。
 - `npm run build` 通过。
+- 前端开发代理端口从 `frontend/.env` 的 `VITE_BACKEND_PORT` 读取，默认代理 `/api` 到 `http://localhost:18090`。
 - 登录页、工作台布局、图片库、分类标签、用户权限、日志、统计、设置页面可访问。
 - 图片库从 `/api/images` 读取数据，筛选、重置、单图上传、预览、编辑、下载、停用入口有实际行为。
 - 图片库“上传图片”打开统一上传弹窗，弹窗内可切换单张/批量；侧边栏不再显示独立“批量上传”页面，`/upload` 重定向到 `/images`。
@@ -47,6 +49,7 @@
 - Compose project 名为 `wallpaper`，依赖端口为 MySQL `13316`、Redis `16389`、RustFS `19010/19011`。
 - 备份 profile 可以生成压缩 SQL 文件。
 - Docker Compose 只读取 `ops/docker/.env`，不读取或复用 `backend/.env`。
+- Docker 后端容器默认监听并暴露 `18090`，前端 Nginx 代理 `/api` 到 `backend:18090`。
 - `ops/docker/.env.example` 提供后端容器所需的数据库、Redis、RustFS、上传大小和安全令牌变量，且不包含 `DB_URL`。
 - 真实 `backend/.env`、`ops/docker/.env`、其它项目内 `.env` 文件和前端本地 IDE 配置不应被暂存或提交。
 
