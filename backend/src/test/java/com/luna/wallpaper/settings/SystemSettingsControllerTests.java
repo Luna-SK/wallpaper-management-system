@@ -30,6 +30,8 @@ class SystemSettingsControllerTests {
 		when(settings.get(eq("soft_delete.retention_days"), anyString())).thenAnswer(invocation -> invocation.getArgument(1));
 		when(settings.get(eq("soft_delete.cleanup.enabled"), anyString())).thenAnswer(invocation -> invocation.getArgument(1));
 		when(settings.get(eq("soft_delete.cleanup.cron"), anyString())).thenAnswer(invocation -> invocation.getArgument(1));
+		when(settings.get(eq("watermark.enabled"), anyString())).thenAnswer(invocation -> invocation.getArgument(1));
+		when(settings.get(eq("watermark.text"), anyString())).thenAnswer(invocation -> invocation.getArgument(1));
 	}
 
 	@Test
@@ -48,7 +50,7 @@ class SystemSettingsControllerTests {
 	@Test
 	void updateRejectsFileLimitAboveHardLimit() {
 		var request = new SystemSettingsController.SystemSettingsRequest(60, 100, "ORIGINAL", 180, false,
-				"0 0 3 * * SUN");
+				"0 0 3 * * SUN", true, "仅供授权使用");
 
 		assertThatThrownBy(() -> controller.update(request))
 				.isInstanceOf(IllegalArgumentException.class)
@@ -58,7 +60,7 @@ class SystemSettingsControllerTests {
 	@Test
 	void updateRejectsBatchLimitAboveHardLimit() {
 		var request = new SystemSettingsController.SystemSettingsRequest(40, 600, "ORIGINAL", 180, false,
-				"0 0 3 * * SUN");
+				"0 0 3 * * SUN", true, "仅供授权使用");
 
 		assertThatThrownBy(() -> controller.update(request))
 				.isInstanceOf(IllegalArgumentException.class)
@@ -68,7 +70,7 @@ class SystemSettingsControllerTests {
 	@Test
 	void updateRejectsBatchLimitBelowFileLimit() {
 		var request = new SystemSettingsController.SystemSettingsRequest(40, 20, "ORIGINAL", 180, false,
-				"0 0 3 * * SUN");
+				"0 0 3 * * SUN", true, "仅供授权使用");
 
 		assertThatThrownBy(() -> controller.update(request))
 				.isInstanceOf(IllegalArgumentException.class)
@@ -103,7 +105,7 @@ class SystemSettingsControllerTests {
 	@Test
 	void updateRejectsInvalidSoftDeleteCleanupCron() {
 		var request = new SystemSettingsController.SystemSettingsRequest(10, 100, "ORIGINAL", 180, false,
-				"bad cron");
+				"bad cron", true, "仅供授权使用");
 
 		assertThatThrownBy(() -> controller.update(request))
 				.isInstanceOf(IllegalArgumentException.class)
@@ -113,10 +115,52 @@ class SystemSettingsControllerTests {
 	@Test
 	void updateSavesValidSoftDeleteCleanupCron() {
 		var request = new SystemSettingsController.SystemSettingsRequest(10, 100, "ORIGINAL", 180, true,
-				"0 0 * * * *");
+				"0 0 * * * *", true, "仅供授权使用");
 
 		controller.update(request);
 
 		verify(settings).put("soft_delete.cleanup.cron", "0 0 * * * *");
+	}
+
+	@Test
+	void getReturnsWatermarkSettings() {
+		when(settings.get(eq("watermark.enabled"), anyString())).thenReturn("true");
+		when(settings.get(eq("watermark.text"), anyString())).thenReturn("内部版权");
+
+		var response = controller.get();
+
+		assertThat(response.watermarkEnabled()).isTrue();
+		assertThat(response.watermarkText()).isEqualTo("内部版权");
+	}
+
+	@Test
+	void updateRejectsBlankWatermarkTextWhenEnabled() {
+		var request = new SystemSettingsController.SystemSettingsRequest(10, 100, "ORIGINAL", 180, false,
+				"0 0 3 * * SUN", true, " ");
+
+		assertThatThrownBy(() -> controller.update(request))
+				.isInstanceOf(IllegalArgumentException.class)
+				.hasMessage("启用水印时必须填写水印文字");
+	}
+
+	@Test
+	void updateRejectsTooLongWatermarkText() {
+		var request = new SystemSettingsController.SystemSettingsRequest(10, 100, "ORIGINAL", 180, false,
+				"0 0 3 * * SUN", true, "水".repeat(65));
+
+		assertThatThrownBy(() -> controller.update(request))
+				.isInstanceOf(IllegalArgumentException.class)
+				.hasMessage("水印文字不能超过 64 个字符");
+	}
+
+	@Test
+	void updateSavesWatermarkSettings() {
+		var request = new SystemSettingsController.SystemSettingsRequest(10, 100, "ORIGINAL", 180, false,
+				"0 0 3 * * SUN", true, "版权文字");
+
+		controller.update(request);
+
+		verify(settings).put("watermark.enabled", "true");
+		verify(settings).put("watermark.text", "版权文字");
 	}
 }

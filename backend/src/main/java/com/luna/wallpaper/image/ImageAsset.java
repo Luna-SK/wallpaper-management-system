@@ -115,6 +115,25 @@ class ImageAsset {
 		this.status = status;
 	}
 
+	void replaceCurrentFile(StoredImage stored) {
+		this.originalFilename = stored.originalFilename();
+		this.sha256 = stored.sha256();
+		this.mimeType = stored.mimeType();
+		this.sizeBytes = stored.sizeBytes();
+		this.width = stored.width();
+		this.height = stored.height();
+	}
+
+	void replaceCurrentVersion(ImageVersion version) {
+		this.currentVersionId = version.id();
+		this.originalFilename = version.originalFilename();
+		this.sha256 = version.sha256();
+		this.mimeType = version.mimeType();
+		this.sizeBytes = version.sizeBytes();
+		this.width = version.width();
+		this.height = version.height();
+	}
+
 	void markDeleted() {
 		this.status = ImageStatus.DELETED;
 		this.deletedAt = LocalDateTime.now();

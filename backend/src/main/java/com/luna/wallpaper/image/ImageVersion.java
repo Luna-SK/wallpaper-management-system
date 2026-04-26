@@ -10,7 +10,7 @@ import com.baomidou.mybatisplus.annotation.TableId;
 import com.baomidou.mybatisplus.annotation.TableName;
 
 @TableName("image_versions")
-class ImageVersion {
+public class ImageVersion {
 
 	@TableId(type = IdType.INPUT)
 	private String id;
@@ -55,9 +55,14 @@ class ImageVersion {
 	}
 
 	ImageVersion(String imageId, int versionNo, String operationType, StoredImage stored) {
+		this(imageId, versionNo, operationType, stored, null);
+	}
+
+	ImageVersion(String imageId, int versionNo, String operationType, StoredImage stored, String sourceVersionId) {
 		this.id = UUID.randomUUID().toString();
 		this.imageId = imageId;
 		this.versionNo = versionNo;
+		this.sourceVersionId = sourceVersionId;
 		this.operationType = operationType;
 		this.originalFilename = stored.originalFilename();
 		this.sha256 = stored.sha256();
@@ -75,6 +80,9 @@ class ImageVersion {
 	String id() { return id; }
 	String imageId() { return imageId; }
 	int versionNo() { return versionNo; }
+	String sourceVersionId() { return sourceVersionId; }
+	String operationType() { return operationType; }
+	String sha256() { return sha256; }
 	String bucket() { return bucket; }
 	String originalObjectKey() { return originalObjectKey; }
 	String thumbnailObjectKey() { return thumbnailObjectKey; }
@@ -82,4 +90,9 @@ class ImageVersion {
 	String standardPreviewObjectKey() { return standardPreviewObjectKey; }
 	String mimeType() { return mimeType; }
 	String originalFilename() { return originalFilename; }
+	long sizeBytes() { return sizeBytes; }
+	Integer width() { return width; }
+	Integer height() { return height; }
+	boolean currentFlag() { return currentFlag; }
+	LocalDateTime createdAt() { return createdAt; }
 }

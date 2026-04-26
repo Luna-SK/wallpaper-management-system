@@ -1,5 +1,9 @@
 package com.luna.wallpaper.image;
 
+import java.awt.AlphaComposite;
+import java.awt.Color;
+import java.awt.Font;
+import java.awt.FontMetrics;
 import java.awt.Graphics2D;
 import java.awt.RenderingHints;
 import java.awt.image.BufferedImage;
@@ -88,6 +92,29 @@ class ImageStorageService {
 	byte[] read(String bucket, String objectKey) {
 		ResponseBytes<?> bytes = s3Client.getObjectAsBytes(GetObjectRequest.builder().bucket(bucket).key(objectKey).build());
 		return bytes.asByteArray();
+	}
+
+	WatermarkedImage watermark(byte[] bytes, String text) {
+		try {
+			BufferedImage source = ImageIO.read(new ByteArrayInputStream(bytes));
+			if (source == null) {
+				return new WatermarkedImage(bytes, "application/octet-stream");
+			}
+			BufferedImage canvas = new BufferedImage(source.getWidth(), source.getHeight(), BufferedImage.TYPE_INT_ARGB);
+			Graphics2D graphics = canvas.createGraphics();
+			graphics.setRenderingHint(RenderingHints.KEY_INTERPOLATION, RenderingHints.VALUE_INTERPOLATION_BICUBIC);
+			graphics.setRenderingHint(RenderingHints.KEY_RENDERING, RenderingHints.VALUE_RENDER_QUALITY);
+			graphics.setRenderingHint(RenderingHints.KEY_TEXT_ANTIALIASING, RenderingHints.VALUE_TEXT_ANTIALIAS_ON);
+			graphics.drawImage(source, 0, 0, null);
+			drawWatermark(graphics, source.getWidth(), source.getHeight(), text);
+			graphics.dispose();
+			ByteArrayOutputStream output = new ByteArrayOutputStream();
+			ImageIO.write(canvas, "png", output);
+			return new WatermarkedImage(output.toByteArray(), "image/png");
+		}
+		catch (IOException ex) {
+			throw new IllegalArgumentException("生成水印图片失败");
+		}
 	}
 
 	void delete(StoredImage stored) {
@@ -187,6 +214,25 @@ class ImageStorageService {
 		return output.toByteArray();
 	}
 
+	private static void drawWatermark(Graphics2D graphics, int width, int height, String text) {
+		String value = text == null || text.isBlank() ? "仅供授权使用" : text;
+		int fontSize = Math.max(18, Math.min(56, Math.max(width, height) / 18));
+		graphics.setFont(new Font(Font.SANS_SERIF, Font.BOLD, fontSize));
+		FontMetrics metrics = graphics.getFontMetrics();
+		int textWidth = metrics.stringWidth(value);
+		int xStep = Math.max(textWidth + fontSize * 4, 260);
+		int yStep = Math.max(fontSize * 5, 150);
+		graphics.setComposite(AlphaComposite.getInstance(AlphaComposite.SRC_OVER, 0.22F));
+		graphics.setColor(Color.WHITE);
+		graphics.rotate(Math.toRadians(-30), width / 2D, height / 2D);
+		for (int y = -height; y < height * 2; y += yStep) {
+			for (int x = -width; x < width * 2; x += xStep) {
+				graphics.drawString(value, x, y);
+			}
+		}
+		graphics.setComposite(AlphaComposite.SrcOver);
+	}
+
 	private static String normalizeMime(MultipartFile file) {
 		String mime = file.getContentType() == null ? "" : file.getContentType().toLowerCase(Locale.ROOT);
 		if (!mime.equals("image/jpeg") && !mime.equals("image/png") && !mime.equals("image/webp")) {
@@ -210,5 +256,8 @@ class ImageStorageService {
 	}
 
 	record StoredObject(String bucket, String key, Instant lastModified) {
+	}
+
+	record WatermarkedImage(byte[] bytes, String mimeType) {
 	}
 }

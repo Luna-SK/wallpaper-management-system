@@ -22,6 +22,17 @@ public final class ImageDtos {
 	public record ImagePurgeResponse(int count) {
 	}
 
+	public record ImageVersionResponse(String id, int versionNo, boolean current, String operationType,
+			String originalFilename, String mimeType, long sizeBytes, Integer width, Integer height,
+			LocalDateTime createdAt) {
+		static ImageVersionResponse from(ImageVersion version, String currentVersionId) {
+			return new ImageVersionResponse(version.id(), version.versionNo(),
+					version.id().equals(currentVersionId),
+					version.operationType(), version.originalFilename(), version.mimeType(), version.sizeBytes(),
+					version.width(), version.height(), version.createdAt());
+		}
+	}
+
 	public record UploadSessionCreateRequest(String mode, String categoryId, List<String> tagIds, int totalCount) {
 	}
 

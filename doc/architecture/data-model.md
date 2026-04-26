@@ -13,11 +13,13 @@
 ## Image
 
 - `images`：图片元数据，包括标题、原文件名、SHA-256、MIME、大小、宽高、上传者、来源、单一分类、状态、浏览量、下载量。
-- `image_versions`：图片版本记录，保存原图、缩略图、高清预览、标准预览的 RustFS object key。覆盖编辑只切换当前版本指针，历史版本进入保留期。
+- `image_versions`：图片版本记录，保存原图、缩略图、高清预览、标准预览的 RustFS object key。覆盖编辑只切换当前版本指针，历史版本进入保留期；版本号按单张图片现有最大版本号递增。
 - `image_tags`：图片与标签的多对多关系。
 - `upload_batches`、`upload_batch_items`、`upload_batch_tags`：上传会话、文件级状态、会话标签、暂存对象 key、失败原因和重试记录。文件先暂存到 RustFS，确认后才创建正式 `images + image_versions` 记录；取消或过期会话会清理未确认对象。
 
 `image_objects` 不再作为活动模型使用。空库初始化会创建历史基线表，再由增量 changelog 在确认为空后删除；如果旧库中该表存在数据，迁移会中止，需先人工核对备份和对象索引数据。
+
+旧版本图片存放在 `image_versions + RustFS` 中，当前版本由 `images.current_version_id` 指向。恢复版本只切换当前版本指针并同步 `images` 当前元信息，不复制对象；删除版本只允许删除非当前版本，并同步删除该版本的原图、缩略图和预览对象。系统设置 `image.version.max_retained` 控制单张图片版本保留上限，默认 5 个且包含当前版本；新增编辑版本和定时清理都会自动删除最早的非当前超限版本，当前版本不会被自动清理。
 
 ## Taxonomy
 

@@ -45,6 +45,19 @@ export interface ImagePurgeResult {
   count: number
 }
 
+export interface ImageVersionRecord {
+  id: string
+  versionNo: number
+  current: boolean
+  operationType: string
+  originalFilename: string
+  mimeType: string
+  sizeBytes: number
+  width: number | null
+  height: number | null
+  createdAt: string
+}
+
 export interface UploadBatchItem {
   id: string
   imageId: string | null
@@ -117,6 +130,28 @@ export async function getImage(id: string) {
 export async function updateImage(id: string, payload: { title: string; status: ImageStatus; categoryId: string | null; tagIds: string[] }) {
   const response = await http.patch<ImageRecord>(`/images/${id}`, payload)
   return response.data
+}
+
+export async function editImageContent(id: string, file: File, operations: string) {
+  const form = new FormData()
+  form.append('file', file)
+  form.append('operations', operations)
+  const response = await http.post<ImageRecord>(`/images/${id}/edit`, form, { timeout: 120000 })
+  return response.data
+}
+
+export async function getImageVersions(id: string) {
+  const response = await http.get<ImageVersionRecord[]>(`/images/${id}/versions`)
+  return response.data
+}
+
+export async function restoreImageVersion(id: string, versionId: string) {
+  const response = await http.post<ImageRecord>(`/images/${id}/versions/${versionId}/restore`)
+  return response.data
+}
+
+export async function deleteImageVersion(id: string, versionId: string) {
+  await http.delete(`/images/${id}/versions/${versionId}`)
 }
 
 export async function deleteImage(id: string) {
@@ -207,6 +242,11 @@ export async function cancelUploadSession(id: string) {
 
 export async function imageBlobUrl(id: string, kind: 'thumbnail' | 'preview') {
   const response = await http.get<Blob>(`/images/${id}/${kind}`, { responseType: 'blob' })
+  return URL.createObjectURL(response.data)
+}
+
+export async function imageEditSourceUrl(id: string) {
+  const response = await http.get<Blob>(`/images/${id}/edit-source`, { responseType: 'blob' })
   return URL.createObjectURL(response.data)
 }
 

@@ -41,7 +41,9 @@ class SystemSettingsController {
 				settings.get(PREVIEW_QUALITY, "ORIGINAL"),
 				intSetting(SoftDeleteCleanupSettings.RETENTION_DAYS, 180),
 				booleanSetting(SoftDeleteCleanupSettings.CLEANUP_ENABLED, false),
-				cronSetting(SoftDeleteCleanupSettings.CLEANUP_CRON, SoftDeleteCleanupSettings.DEFAULT_CLEANUP_CRON));
+				cronSetting(SoftDeleteCleanupSettings.CLEANUP_CRON, SoftDeleteCleanupSettings.DEFAULT_CLEANUP_CRON),
+				booleanSetting(WatermarkSettings.ENABLED, true),
+				settings.get(WatermarkSettings.TEXT, WatermarkSettings.DEFAULT_TEXT));
 	}
 
 	@PatchMapping
@@ -54,6 +56,14 @@ class SystemSettingsController {
 		if (!quality.equals("ORIGINAL") && !quality.equals("HIGH") && !quality.equals("STANDARD")) {
 			throw new IllegalArgumentException("预览质量只能是 ORIGINAL、HIGH 或 STANDARD");
 		}
+		boolean watermarkEnabled = request.watermarkEnabled() == null
+				? booleanSetting(WatermarkSettings.ENABLED, true)
+				: request.watermarkEnabled();
+		String watermarkText = normalizeWatermarkText(
+				request.watermarkText() == null
+						? settings.get(WatermarkSettings.TEXT, WatermarkSettings.DEFAULT_TEXT)
+						: request.watermarkText(),
+				watermarkEnabled);
 		String cleanupCron = normalizeCron(request.softDeleteCleanupCron(),
 				SoftDeleteCleanupSettings.DEFAULT_CLEANUP_CRON,
 				"自动清理执行计划必须是有效的 Spring cron 表达式");
@@ -63,7 +73,10 @@ class SystemSettingsController {
 		settings.put(SoftDeleteCleanupSettings.RETENTION_DAYS, String.valueOf(retention));
 		settings.put(SoftDeleteCleanupSettings.CLEANUP_ENABLED, String.valueOf(Boolean.TRUE.equals(request.softDeleteCleanupEnabled())));
 		settings.put(SoftDeleteCleanupSettings.CLEANUP_CRON, cleanupCron);
-		auditLogService.record("settings.update", "SYSTEM_SETTINGS", "system", Map.of("previewQuality", quality));
+		settings.put(WatermarkSettings.ENABLED, String.valueOf(watermarkEnabled));
+		settings.put(WatermarkSettings.TEXT, watermarkText);
+		auditLogService.record("settings.update", "SYSTEM_SETTINGS", "system",
+				Map.of("previewQuality", quality, "watermarkEnabled", watermarkEnabled));
 		return get();
 	}
 
@@ -100,12 +113,25 @@ class SystemSettingsController {
 		return cron;
 	}
 
+	private static String normalizeWatermarkText(String value, boolean enabled) {
+		String text = value == null ? "" : value.trim();
+		if (text.length() > WatermarkSettings.MAX_TEXT_LENGTH) {
+			throw new IllegalArgumentException("水印文字不能超过 64 个字符");
+		}
+		if (enabled && text.isBlank()) {
+			throw new IllegalArgumentException("启用水印时必须填写水印文字");
+		}
+		return text.isBlank() ? WatermarkSettings.DEFAULT_TEXT : text;
+	}
+
 	record SystemSettingsRequest(Integer maxFileSizeMb, Integer maxBatchSizeMb, String previewQuality,
-			Integer softDeleteRetentionDays, Boolean softDeleteCleanupEnabled, String softDeleteCleanupCron) {
+			Integer softDeleteRetentionDays, Boolean softDeleteCleanupEnabled, String softDeleteCleanupCron,
+			Boolean watermarkEnabled, String watermarkText) {
 	}
 
 	record SystemSettingsResponse(int maxFileSizeMb, int maxBatchSizeMb, int maxFileHardLimitMb,
 			int maxBatchHardLimitMb, String previewQuality, int softDeleteRetentionDays,
-			boolean softDeleteCleanupEnabled, String softDeleteCleanupCron) {
+			boolean softDeleteCleanupEnabled, String softDeleteCleanupCron, boolean watermarkEnabled,
+			String watermarkText) {
 	}
 }

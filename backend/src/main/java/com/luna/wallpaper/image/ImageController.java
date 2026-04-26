@@ -25,6 +25,7 @@ import com.luna.wallpaper.image.ImageDtos.ImagePageResponse;
 import com.luna.wallpaper.image.ImageDtos.ImagePurgeResponse;
 import com.luna.wallpaper.image.ImageDtos.ImageResponse;
 import com.luna.wallpaper.image.ImageDtos.ImageUpdateRequest;
+import com.luna.wallpaper.image.ImageDtos.ImageVersionResponse;
 import com.luna.wallpaper.image.ImageDtos.UploadBatchResponse;
 import com.luna.wallpaper.image.ImageDtos.UploadSessionCreateRequest;
 
@@ -57,6 +58,31 @@ class ImageController {
 	@PreAuthorize("hasAuthority('image:edit')")
 	ImageResponse update(@PathVariable String id, @RequestBody ImageUpdateRequest request) {
 		return service.update(id, request);
+	}
+
+	@PostMapping(path = "/images/{id}/edit", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
+	@PreAuthorize("hasAuthority('image:edit')")
+	ImageResponse editImage(@PathVariable String id, @RequestParam("file") MultipartFile file,
+			@RequestParam(required = false) String operations) {
+		return service.editImage(id, file, operations);
+	}
+
+	@GetMapping("/images/{id}/versions")
+	@PreAuthorize("hasAuthority('image:view')")
+	List<ImageVersionResponse> versions(@PathVariable String id) {
+		return service.versions(id);
+	}
+
+	@PostMapping("/images/{id}/versions/{versionId}/restore")
+	@PreAuthorize("hasAuthority('image:edit')")
+	ImageResponse restoreVersion(@PathVariable String id, @PathVariable String versionId) {
+		return service.restoreVersion(id, versionId);
+	}
+
+	@DeleteMapping("/images/{id}/versions/{versionId}")
+	@PreAuthorize("hasAuthority('image:delete')")
+	void deleteVersion(@PathVariable String id, @PathVariable String versionId) {
+		service.deleteVersion(id, versionId);
 	}
 
 	@DeleteMapping("/images/{id}")
@@ -205,6 +231,12 @@ class ImageController {
 				.header(HttpHeaders.CONTENT_DISPOSITION,
 						ContentDisposition.attachment().filename(file.filename(), StandardCharsets.UTF_8).build().toString())
 				.body(service.read(file));
+	}
+
+	@GetMapping("/images/{id}/edit-source")
+	@PreAuthorize("hasAuthority('image:edit')")
+	ResponseEntity<byte[]> editSource(@PathVariable String id) {
+		return inline(service.editSource(id));
 	}
 
 	@GetMapping("/statistics")

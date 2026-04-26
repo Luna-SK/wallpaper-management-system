@@ -62,6 +62,11 @@
 - `GET /api/images`
 - `GET /api/images/{id}`
 - `PATCH /api/images/{id}`
+- `POST /api/images/{id}/edit`
+- `GET /api/images/{id}/edit-source`
+- `GET /api/images/{id}/versions`
+- `POST /api/images/{id}/versions/{versionId}/restore`
+- `DELETE /api/images/{id}/versions/{versionId}`
 - `DELETE /api/images/{id}`
 - `GET /api/images/{id}/thumbnail`
 - `GET /api/images/{id}/preview`
@@ -96,6 +101,14 @@
 
 图片记录只关联一个分类。`GET /api/images` 和 `GET /api/images/{id}` 返回 `category` 对象或 `null`，`PATCH /api/images/{id}` 使用单个 `categoryId` 更新分类，标签使用 `tagIds` 多选且不受分类限制。标签响应包含 `groupId` 和 `groupName`。
 
+在线图像编辑使用 `image:edit` 权限。前端通过 `GET /api/images/{id}/edit-source` 读取无水印当前版本作为编辑源，通过 `POST /api/images/{id}/edit` 提交编辑后的图片文件和操作摘要；后端创建新的 `image_versions` 记录并更新当前版本，原始对象不会被覆盖。
+
+图片版本记录保存在 `image_versions`，版本对象保存在 RustFS，当前版本由 `images.current_version_id` 指向。`GET /api/images/{id}/versions` 使用 `image:view` 权限返回版本号、当前标识、操作类型、文件名、尺寸、大小、MIME 和创建时间；`POST /api/images/{id}/versions/{versionId}/restore` 使用 `image:edit` 权限把指定版本切为当前版本；`DELETE /api/images/{id}/versions/{versionId}` 使用 `image:delete` 权限删除非当前版本及其对象存储文件，当前版本禁止删除。
+
+系统默认每张图片最多保留 5 个版本，包含当前版本。每次在线编辑保存新版本后，后端会按 `image.version.max_retained` 自动清理最早的非当前版本；定时清理链路也会补偿扫描历史超限数据，当前版本永远不会被自动清理。
+
+图片水印由系统设置统一控制。启用后，`GET /api/images/{id}/preview`、`GET /api/images/{id}/download` 和 `POST /api/images/batch-download` 输出带文字水印的图片；缩略图和编辑源不叠加水印，数据库与对象存储中的原图保持无水印。
+
 分类、标签组、标签的彻底删除只允许对已停用项执行。若存在图片、上传会话或下级标签引用，未传 `force=true` 时返回 `409 REFERENCE_EXISTS` 和引用数量；前端二次确认后可带 `force=true` 自动解除引用并物理删除。
 
 ## Auth and RBAC
@@ -123,11 +136,13 @@
   "previewQuality": "ORIGINAL",
   "softDeleteRetentionDays": 180,
   "softDeleteCleanupEnabled": false,
-  "softDeleteCleanupCron": "0 0 3 * * SUN"
+  "softDeleteCleanupCron": "0 0 3 * * SUN",
+  "watermarkEnabled": true,
+  "watermarkText": "仅供授权使用"
 }
 ```
 
-`PATCH /api/system-settings` 需要 `setting:manage` 权限。上传业务上限不能超过硬上限；软删除自动清理 cron 使用 Spring 6 段表达式，默认每周日 03:00。保存后无需重启，下一次调度会读取最新 cron；后端启动后仍会补偿检查一次已到期的停用图片。
+`PATCH /api/system-settings` 需要 `setting:manage` 权限。上传业务上限不能超过硬上限；水印启用时必须填写不超过 64 个字符的水印文字；软删除自动清理 cron 使用 Spring 6 段表达式，默认每周日 03:00。保存后无需重启，下一次预览或下载会使用最新水印配置，下一次调度会读取最新 cron；后端启动后仍会补偿检查一次已到期的停用图片。
 
 ## Audit Log Retention
 

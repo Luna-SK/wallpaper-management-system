@@ -1,0 +1,11 @@
+databaseChangeLog:
+  - changeSet:
+      id: 001-seed-image-version-retention-setting
+      author: codex
+      changes:
+        - sql:
+            splitStatements: false
+            sql: |
+              INSERT INTO system_settings (setting_key, setting_value, updated_at)
+              VALUES ('image.version.max_retained', '5', CURRENT_TIMESTAMP(6))
+              ON DUPLICATE KEY UPDATE setting_value = setting_value;

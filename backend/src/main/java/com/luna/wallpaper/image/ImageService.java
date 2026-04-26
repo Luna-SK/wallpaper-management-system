@@ -30,12 +30,15 @@ import com.luna.wallpaper.image.ImageDtos.ImageBatchRequest;
 import com.luna.wallpaper.image.ImageDtos.ImagePageResponse;
 import com.luna.wallpaper.image.ImageDtos.ImageResponse;
 import com.luna.wallpaper.image.ImageDtos.ImageUpdateRequest;
+import com.luna.wallpaper.image.ImageDtos.ImageVersionResponse;
 import com.luna.wallpaper.image.ImageDtos.UploadBatchResponse;
 import com.luna.wallpaper.image.ImageDtos.UploadSessionCreateRequest;
+import com.luna.wallpaper.settings.ImageVersionSettings;
 import com.luna.wallpaper.settings.SoftDeleteCleanupSettings;
 import com.luna.wallpaper.settings.SystemSettingService;
 import com.luna.wallpaper.settings.UploadLimitService;
 import com.luna.wallpaper.settings.UploadLimitService.UploadLimitSettings;
+import com.luna.wallpaper.settings.WatermarkSettings;
 import com.luna.wallpaper.taxonomy.Category;
 import com.luna.wallpaper.taxonomy.CategoryMapper;
 import com.luna.wallpaper.taxonomy.Tag;
@@ -254,11 +257,75 @@ class ImageService {
 	}
 
 	@Transactional
+	ImageResponse editImage(String id, MultipartFile file, String operations) {
+		ImageAsset image = getImage(id);
+		validateEditFile(file);
+		StoredImage stored = storage.store(file, image.id());
+		try {
+			ImageVersion sourceVersion = currentVersion(image);
+			int nextVersionNo = versions.findLatestByImageId(image.id())
+					.map(ImageVersion::versionNo)
+					.orElse(sourceVersion.versionNo()) + 1;
+			versions.clearCurrentFlag(image.id());
+			ImageVersion version = new ImageVersion(image.id(), nextVersionNo, "EDIT", stored,
+					sourceVersion.id());
+			versions.insert(version);
+			image.replaceCurrentFile(stored);
+			image.setCurrentVersionId(version.id());
+			images.updateById(image);
+			auditLogService.record("image.edit.image", "IMAGE", image.id(),
+					Map.of("sourceVersionId", sourceVersion.id(), "versionId", version.id(),
+							"operations", operations == null ? "" : operations));
+			cleanupExcessVersions(image.id(), false);
+			return ImageResponse.from(image);
+		}
+		catch (RuntimeException ex) {
+			storage.deleteQuietly(stored);
+			throw ex;
+		}
+	}
+
+	@Transactional
 	void delete(String id) {
 		ImageAsset image = getImage(id);
 		image.markDeleted();
 		images.updateById(image);
 		auditLogService.record("image.delete", "IMAGE", id, Map.of());
+	}
+
+	@Transactional(readOnly = true)
+	List<ImageVersionResponse> versions(String id) {
+		ImageAsset image = getRetainedImage(id);
+		ImageVersion current = currentVersion(image);
+		return versions.selectByImageIdOrdered(image.id()).stream()
+				.map(version -> ImageVersionResponse.from(version, current.id()))
+				.toList();
+	}
+
+	@Transactional
+	ImageResponse restoreVersion(String id, String versionId) {
+		ImageAsset image = getImage(id);
+		ImageVersion version = getImageVersion(image.id(), versionId);
+		versions.clearCurrentFlag(image.id());
+		versions.markCurrent(version.id());
+		image.replaceCurrentVersion(version);
+		images.updateById(image);
+		auditLogService.record("image.version.restore", "IMAGE", image.id(),
+				Map.of("versionId", version.id(), "versionNo", version.versionNo()));
+		return ImageResponse.from(loadImageRelations(image));
+	}
+
+	@Transactional
+	void deleteVersion(String id, String versionId) {
+		ImageAsset image = getImage(id);
+		ImageVersion current = currentVersion(image);
+		if (current.id().equals(versionId)) {
+			throw new IllegalArgumentException("当前版本不能删除");
+		}
+		ImageVersion version = getImageVersion(image.id(), versionId);
+		deleteVersionObjectsAndRecord(version);
+		auditLogService.record("image.version.delete", "IMAGE", image.id(),
+				Map.of("versionId", version.id(), "versionNo", version.versionNo()));
 	}
 
 	@Transactional
@@ -347,7 +414,7 @@ class ImageService {
 		};
 		String mimeType = "ORIGINAL".equals(quality) ? version.mimeType() : "image/png";
 		auditLogService.record("image.preview", "IMAGE", id, Map.of("quality", quality));
-		return new ObjectFile(version.bucket(), key, mimeType, image.originalFilename());
+		return applyWatermark(new ObjectFile(version.bucket(), key, mimeType, image.originalFilename()));
 	}
 
 	@Transactional
@@ -357,6 +424,13 @@ class ImageService {
 		image.downloaded();
 		ImageVersion version = currentVersion(image);
 		auditLogService.record("image.download", "IMAGE", id, Map.of());
+		return applyWatermark(new ObjectFile(version.bucket(), version.originalObjectKey(), version.mimeType(), version.originalFilename()));
+	}
+
+	@Transactional
+	ObjectFile editSource(String id) {
+		ImageAsset image = getImage(id);
+		ImageVersion version = currentVersion(image);
 		return new ObjectFile(version.bucket(), version.originalObjectKey(), version.mimeType(), version.originalFilename());
 	}
 
@@ -368,10 +442,10 @@ class ImageService {
 		try (ZipOutputStream zip = new ZipOutputStream(output)) {
 			for (ImageAsset image : selectedImages) {
 				ImageVersion version = currentVersion(image);
-				byte[] content = storage.read(version.bucket(), version.originalObjectKey());
-				ZipEntry entry = new ZipEntry(uniqueZipFilename(version.originalFilename(), usedNames));
+				DownloadContent download = downloadContent(version);
+				ZipEntry entry = new ZipEntry(uniqueZipFilename(download.filename(), usedNames));
 				zip.putNextEntry(entry);
-				zip.write(content);
+				zip.write(download.content());
 				zip.closeEntry();
 				images.incrementDownloadCount(image.id());
 				image.downloaded();
@@ -386,6 +460,9 @@ class ImageService {
 	}
 
 	byte[] read(ObjectFile file) {
+		if (file.content() != null) {
+			return file.content();
+		}
 		return storage.read(file.bucket(), file.objectKey());
 	}
 
@@ -477,6 +554,16 @@ class ImageService {
 				.sum();
 		if (acceptedSize + fileSize > limits.maxBatchSizeBytes()) {
 			throw new IllegalArgumentException("本次上传总大小超过批量上传上限 " + limits.maxBatchSizeMb() + " MB");
+		}
+	}
+
+	private void validateEditFile(MultipartFile file) {
+		if (file == null || file.isEmpty()) {
+			throw new IllegalArgumentException("请选择编辑后的图片文件");
+		}
+		UploadLimitSettings limits = uploadLimitService.current();
+		if (file.getSize() > limits.maxFileSizeBytes()) {
+			throw new IllegalArgumentException("文件大小超过单文件上限 " + limits.maxFileSizeMb() + " MB");
 		}
 	}
 
@@ -669,6 +756,32 @@ class ImageService {
 				.orElseThrow(() -> new IllegalArgumentException("图片版本不存在"));
 	}
 
+	private ImageVersion getImageVersion(String imageId, String versionId) {
+		return Optional.ofNullable(versions.selectByImageIdAndId(imageId, versionId))
+				.orElseThrow(() -> new IllegalArgumentException("图片版本不存在"));
+	}
+
+	private void deleteVersionObjectsAndRecord(ImageVersion version) {
+		storage.delete(storedImage(version));
+		versions.deleteVersionById(version.id());
+	}
+
+	private StoredImage storedImage(ImageVersion version) {
+		return new StoredImage(version.originalFilename(), version.sha256(), version.mimeType(), version.sizeBytes(),
+				version.width(), version.height(), version.bucket(), version.originalObjectKey(), version.thumbnailObjectKey(),
+				version.highPreviewObjectKey(), version.standardPreviewObjectKey());
+	}
+
+	private int maxRetainedImageVersions() {
+		try {
+			return Math.max(1, Integer.parseInt(settings.get(ImageVersionSettings.MAX_RETAINED,
+					String.valueOf(ImageVersionSettings.DEFAULT_MAX_RETAINED))));
+		}
+		catch (NumberFormatException ex) {
+			return ImageVersionSettings.DEFAULT_MAX_RETAINED;
+		}
+	}
+
 	private Category findCategory(String id) {
 		if (id == null || id.isBlank()) {
 			return null;
@@ -757,6 +870,49 @@ class ImageService {
 		}
 		usedNames.put(candidate, 1);
 		return candidate;
+	}
+
+	private ObjectFile applyWatermark(ObjectFile file) {
+		if (!watermarkEnabled()) {
+			return file;
+		}
+		ImageStorageService.WatermarkedImage watermarked = storage.watermark(storage.read(file.bucket(), file.objectKey()),
+				watermarkText());
+		if (!"image/png".equals(watermarked.mimeType())) {
+			return file;
+		}
+		return new ObjectFile(null, null, watermarked.mimeType(), watermarkedFilename(file.filename()), watermarked.bytes());
+	}
+
+	private DownloadContent downloadContent(ImageVersion version) {
+		if (!watermarkEnabled()) {
+			return new DownloadContent(version.originalFilename(), storage.read(version.bucket(), version.originalObjectKey()));
+		}
+		ImageStorageService.WatermarkedImage watermarked = storage.watermark(
+				storage.read(version.bucket(), version.originalObjectKey()), watermarkText());
+		if (!"image/png".equals(watermarked.mimeType())) {
+			return new DownloadContent(version.originalFilename(), watermarked.bytes());
+		}
+		return new DownloadContent(watermarkedFilename(version.originalFilename()), watermarked.bytes());
+	}
+
+	private boolean watermarkEnabled() {
+		return Boolean.parseBoolean(settings.get(WatermarkSettings.ENABLED, "true"));
+	}
+
+	private String watermarkText() {
+		return settings.get(WatermarkSettings.TEXT, WatermarkSettings.DEFAULT_TEXT);
+	}
+
+	private static String watermarkedFilename(String filename) {
+		String cleaned = filename == null || filename.isBlank() ? "image" : filename.replace("\\", "/");
+		int slash = cleaned.lastIndexOf('/');
+		if (slash >= 0) {
+			cleaned = cleaned.substring(slash + 1);
+		}
+		int dot = cleaned.lastIndexOf('.');
+		String base = dot > 0 ? cleaned.substring(0, dot) : cleaned;
+		return (base.isBlank() ? "image" : base) + "-watermarked.png";
 	}
 
 	private static String blankToNull(String value) {
@@ -876,10 +1032,61 @@ class ImageService {
 		return orphanObjects.size();
 	}
 
-	record ObjectFile(String bucket, String objectKey, String mimeType, String filename) {
+	@Transactional
+	int cleanupExcessImageVersions() {
+		int maxRetained = maxRetainedImageVersions();
+		int deleted = 0;
+		for (String imageId : versions.selectImageIdsExceedingRetainedLimit(maxRetained)) {
+			deleted += cleanupExcessVersions(imageId, true);
+		}
+		if (deleted > 0) {
+			auditLogService.record("image.version.retention.cleanup", "IMAGE", "versions",
+					Map.of("deleted", deleted, "maxRetained", maxRetained));
+		}
+		return deleted;
+	}
+
+	private int cleanupExcessVersions(String imageId, boolean scheduled) {
+		int maxRetained = maxRetainedImageVersions();
+		List<ImageVersion> imageVersions = Optional.ofNullable(versions.selectByImageIdOrdered(imageId)).orElse(List.of());
+		if (imageVersions.size() <= maxRetained) {
+			return 0;
+		}
+		String currentId = Optional.ofNullable(images.selectById(imageId))
+				.map(ImageAsset::currentVersionId)
+				.orElseGet(() -> imageVersions.stream()
+						.filter(ImageVersion::currentFlag)
+						.findFirst()
+						.map(ImageVersion::id)
+						.orElse(null));
+		int remaining = imageVersions.size();
+		int deleted = 0;
+		for (int index = imageVersions.size() - 1; index >= 0 && remaining > maxRetained; index--) {
+			ImageVersion version = imageVersions.get(index);
+			if (version.id().equals(currentId)) {
+				continue;
+			}
+			deleteVersionObjectsAndRecord(version);
+			remaining--;
+			deleted++;
+		}
+		if (deleted > 0 && !scheduled) {
+			auditLogService.record("image.version.retention.cleanup", "IMAGE", imageId,
+					Map.of("deleted", deleted, "maxRetained", maxRetained));
+		}
+		return deleted;
+	}
+
+	record ObjectFile(String bucket, String objectKey, String mimeType, String filename, byte[] content) {
+		ObjectFile(String bucket, String objectKey, String mimeType, String filename) {
+			this(bucket, objectKey, mimeType, filename, null);
+		}
 	}
 
 	record BatchDownloadFile(String filename, byte[] content) {
+	}
+
+	private record DownloadContent(String filename, byte[] content) {
 	}
 
 	record Statistics(long imageTotal, long todayUploaded, long viewCount, long downloadCount, long storageBytes,

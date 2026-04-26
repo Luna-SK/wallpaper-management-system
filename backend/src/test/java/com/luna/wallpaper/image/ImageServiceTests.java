@@ -9,12 +9,15 @@ import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
-import java.util.ArrayList;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
+import java.util.ArrayList;
 import java.util.List;
+import java.util.Optional;
 
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.mockito.ArgumentCaptor;
 import org.springframework.mock.web.MockMultipartFile;
 import org.springframework.test.util.ReflectionTestUtils;
 
@@ -46,6 +49,12 @@ class ImageServiceTests {
 	private final ImageService service = new ImageService(images, versions,
 			batches, batchItems, imageTags, uploadBatchTags, categories, tagGroups, tags, storage,
 			settings, uploadLimitService, auditLogService);
+
+	@BeforeEach
+	void setUp() {
+		when(settings.get("watermark.enabled", "true")).thenAnswer(invocation -> invocation.getArgument(1));
+		when(settings.get("watermark.text", "仅供授权使用")).thenAnswer(invocation -> invocation.getArgument(1));
+	}
 
 	@Test
 	void statisticsIncludesTrendDistributionAndRankings() {
@@ -177,6 +186,159 @@ class ImageServiceTests {
 		assertThat(response.items().get(1).status()).isEqualTo("FAILED");
 		assertThat(response.items().get(1).errorMessage()).contains("本次上传总大小超过批量上传上限 2 MB");
 		verify(storage, never()).store(any(), anyString());
+	}
+
+	@Test
+	void editImageStoresNewVersionAndUpdatesCurrentMetadata() {
+		ImageAsset image = image("image-edit", "待编辑", 0, 0);
+		StoredImage original = new StoredImage(image.originalFilename(), image.sha256(), image.mimeType(), image.sizeBytes(),
+				image.width(), image.height(), "bucket", "original-key", "thumb-key", "high-key", "standard-key");
+		ImageVersion current = new ImageVersion(image.id(), 1, "UPLOAD", original);
+		StoredImage edited = new StoredImage("待编辑-edited.png", "edited-sha", "image/png", 2048, 80, 120,
+				"bucket", "edited-original-key", "edited-thumb-key", "edited-high-key", "edited-standard-key");
+		when(images.selectById(image.id())).thenReturn(image);
+		when(imageTags.selectByImageIds(List.of(image.id()))).thenReturn(List.of());
+		when(versions.findLatestByImageId(image.id())).thenReturn(Optional.of(current));
+		when(uploadLimitService.current()).thenReturn(new UploadLimitSettings(10, 100, 50, 500));
+		when(storage.store(any(), anyString())).thenReturn(edited);
+		ArgumentCaptor<ImageVersion> insertedVersion = ArgumentCaptor.forClass(ImageVersion.class);
+
+		MockMultipartFile file = new MockMultipartFile("file", "edited.png", "image/png", new byte[1024]);
+		var response = service.editImage(image.id(), file, "{\"rotation\":90}");
+
+		assertThat(response.originalFilename()).isEqualTo("待编辑-edited.png");
+		assertThat(response.mimeType()).isEqualTo("image/png");
+		assertThat(response.width()).isEqualTo(80);
+		assertThat(response.height()).isEqualTo(120);
+		verify(versions).clearCurrentFlag(image.id());
+		verify(versions).insert(insertedVersion.capture());
+		assertThat(insertedVersion.getValue().sourceVersionId()).isEqualTo(current.id());
+		verify(images).updateById(image);
+		verify(auditLogService).record("image.edit.image", "IMAGE", image.id(), java.util.Map.of(
+				"sourceVersionId", current.id(),
+				"versionId", insertedVersion.getValue().id(),
+				"operations", "{\"rotation\":90}"));
+	}
+
+	@Test
+	void restoreVersionSwitchesCurrentVersionAndUpdatesImageMetadata() {
+		ImageAsset image = image("image-restore-version", "当前图", 0, 0);
+		StoredImage currentStored = new StoredImage("current.png", "current-sha", "image/png", 2048, 200, 100,
+				"bucket", "current-original", "current-thumb", "current-high", "current-standard");
+		StoredImage previousStored = new StoredImage("previous.jpg", "previous-sha", "image/jpeg", 1024, 80, 60,
+				"bucket", "previous-original", "previous-thumb", "previous-high", "previous-standard");
+		ImageVersion current = new ImageVersion(image.id(), 2, "EDIT", currentStored);
+		ImageVersion previous = new ImageVersion(image.id(), 1, "UPLOAD", previousStored);
+		image.replaceCurrentVersion(current);
+		when(images.selectById(image.id())).thenReturn(image);
+		when(imageTags.selectByImageIds(List.of(image.id()))).thenReturn(List.of());
+		when(versions.selectById(current.id())).thenReturn(current);
+		when(versions.selectByImageIdAndId(image.id(), previous.id())).thenReturn(previous);
+
+		var response = service.restoreVersion(image.id(), previous.id());
+
+		assertThat(response.originalFilename()).isEqualTo("previous.jpg");
+		assertThat(response.mimeType()).isEqualTo("image/jpeg");
+		assertThat(response.width()).isEqualTo(80);
+		assertThat(response.height()).isEqualTo(60);
+		verify(versions).clearCurrentFlag(image.id());
+		verify(versions).markCurrent(previous.id());
+		verify(images).updateById(image);
+		verify(auditLogService).record("image.version.restore", "IMAGE", image.id(),
+				java.util.Map.of("versionId", previous.id(), "versionNo", 1));
+	}
+
+	@Test
+	void deleteVersionRejectsCurrentVersion() {
+		ImageAsset image = image("image-current-version", "当前版本", 0, 0);
+		StoredImage stored = new StoredImage("current.png", "current-sha", "image/png", 2048, 200, 100,
+				"bucket", "current-original", "current-thumb", "current-high", "current-standard");
+		ImageVersion current = new ImageVersion(image.id(), 1, "UPLOAD", stored);
+		image.replaceCurrentVersion(current);
+		when(images.selectById(image.id())).thenReturn(image);
+		when(imageTags.selectByImageIds(List.of(image.id()))).thenReturn(List.of());
+		when(versions.selectById(current.id())).thenReturn(current);
+
+		org.assertj.core.api.Assertions.assertThatThrownBy(() -> service.deleteVersion(image.id(), current.id()))
+				.isInstanceOf(IllegalArgumentException.class)
+				.hasMessageContaining("当前版本不能删除");
+
+		verify(storage, never()).delete(any());
+		verify(versions, never()).deleteVersionById(anyString());
+	}
+
+	@Test
+	void deleteVersionRemovesNonCurrentVersionObjectsAndRecord() {
+		ImageAsset image = image("image-delete-version", "删除版本", 0, 0);
+		StoredImage currentStored = new StoredImage("current.png", "current-sha", "image/png", 2048, 200, 100,
+				"bucket", "current-original", "current-thumb", "current-high", "current-standard");
+		StoredImage previousStored = new StoredImage("previous.jpg", "previous-sha", "image/jpeg", 1024, 80, 60,
+				"bucket", "previous-original", "previous-thumb", "previous-high", "previous-standard");
+		ImageVersion current = new ImageVersion(image.id(), 2, "EDIT", currentStored);
+		ImageVersion previous = new ImageVersion(image.id(), 1, "UPLOAD", previousStored);
+		image.replaceCurrentVersion(current);
+		when(images.selectById(image.id())).thenReturn(image);
+		when(imageTags.selectByImageIds(List.of(image.id()))).thenReturn(List.of());
+		when(versions.selectById(current.id())).thenReturn(current);
+		when(versions.selectByImageIdAndId(image.id(), previous.id())).thenReturn(previous);
+
+		service.deleteVersion(image.id(), previous.id());
+
+		verify(storage).delete(previousStored);
+		verify(versions).deleteVersionById(previous.id());
+		verify(auditLogService).record("image.version.delete", "IMAGE", image.id(),
+				java.util.Map.of("versionId", previous.id(), "versionNo", 1));
+	}
+
+	@Test
+	void cleanupExcessImageVersionsKeepsCurrentAndDeletesOldestNonCurrent() {
+		ImageAsset image = image("image-version-retention", "版本保留", 0, 0);
+		StoredImage v1Stored = new StoredImage("v1.jpg", "v1-sha", "image/jpeg", 101, 10, 10,
+				"bucket", "v1-original", "v1-thumb", "v1-high", "v1-standard");
+		StoredImage v2Stored = new StoredImage("v2.jpg", "v2-sha", "image/jpeg", 102, 20, 20,
+				"bucket", "v2-original", "v2-thumb", "v2-high", "v2-standard");
+		StoredImage v3Stored = new StoredImage("v3.jpg", "v3-sha", "image/jpeg", 103, 30, 30,
+				"bucket", "v3-original", "v3-thumb", "v3-high", "v3-standard");
+		ImageVersion v1 = new ImageVersion(image.id(), 1, "UPLOAD", v1Stored);
+		ImageVersion v2 = new ImageVersion(image.id(), 2, "EDIT", v2Stored);
+		ImageVersion v3 = new ImageVersion(image.id(), 3, "EDIT", v3Stored);
+		image.replaceCurrentVersion(v1);
+		when(settings.get("image.version.max_retained", "5")).thenReturn("2");
+		when(versions.selectImageIdsExceedingRetainedLimit(2)).thenReturn(List.of(image.id()));
+		when(versions.selectByImageIdOrdered(image.id())).thenReturn(List.of(v3, v2, v1));
+		when(images.selectById(image.id())).thenReturn(image);
+
+		int deleted = service.cleanupExcessImageVersions();
+
+		assertThat(deleted).isEqualTo(1);
+		verify(storage).delete(v2Stored);
+		verify(versions).deleteVersionById(v2.id());
+		verify(storage, never()).delete(v1Stored);
+	}
+
+	@Test
+	void previewAppliesWatermarkWhenEnabled() {
+		ImageAsset image = image("image-watermark", "水印图", 0, 0);
+		StoredImage original = new StoredImage(image.originalFilename(), image.sha256(), image.mimeType(), image.sizeBytes(),
+				image.width(), image.height(), "bucket", "original-key", "thumb-key", "high-key", "standard-key");
+		ImageVersion current = new ImageVersion(image.id(), 1, "UPLOAD", original);
+		byte[] source = new byte[] { 1, 2, 3 };
+		byte[] watermarked = new byte[] { 4, 5, 6 };
+		when(images.selectById(image.id())).thenReturn(image);
+		when(imageTags.selectByImageIds(List.of(image.id()))).thenReturn(List.of());
+		when(versions.findLatestByImageId(image.id())).thenReturn(Optional.of(current));
+		when(settings.get("preview.quality", "ORIGINAL")).thenReturn("ORIGINAL");
+		when(settings.get("watermark.enabled", "true")).thenReturn("true");
+		when(settings.get("watermark.text", "仅供授权使用")).thenReturn("内部版权");
+		when(storage.read("bucket", "original-key")).thenReturn(source);
+		when(storage.watermark(source, "内部版权"))
+				.thenReturn(new ImageStorageService.WatermarkedImage(watermarked, "image/png"));
+
+		ImageService.ObjectFile file = service.preview(image.id());
+
+		assertThat(file.mimeType()).isEqualTo("image/png");
+		assertThat(file.filename()).isEqualTo("水印图-watermarked.png");
+		assertThat(service.read(file)).containsExactly(watermarked);
 	}
 
 	@Test

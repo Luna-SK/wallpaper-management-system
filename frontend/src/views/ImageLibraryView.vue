@@ -2,7 +2,7 @@
 import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import type { TableInstance, UploadFile, UploadFiles, UploadUserFile } from 'element-plus'
-import { ArrowLeft, ArrowRight, Delete, Download, RefreshLeft, Search, UploadFilled } from '@element-plus/icons-vue'
+import { ArrowLeft, ArrowRight, Crop, Delete, Download, EditPen, RefreshLeft, RefreshRight, Search, UploadFilled, ZoomIn } from '@element-plus/icons-vue'
 import { isAxiosError } from 'axios'
 import {
   batchDisableImages,
@@ -11,20 +11,26 @@ import {
   cancelUploadSession,
   confirmUploadSession,
   createUploadSession,
+  deleteImageVersion,
   deleteImage,
+  editImageContent,
   downloadImage,
   downloadImagesZip,
   getImage,
   getImages,
+  getImageVersions,
+  imageEditSourceUrl,
   imageBlobUrl,
   purgeImage,
   purgeDeletedImages,
   retryUploadSessionItem,
+  restoreImageVersion,
   restoreImage,
   updateImage,
   uploadSessionItem,
   type ImageStatus,
   type ImageRecord,
+  type ImageVersionRecord,
   type UploadBatch,
   type UploadBatchItemStatus,
   type UploadBatchItem,
@@ -33,6 +39,38 @@ import {
 import { getCategories, getTags, type Category, type Tag } from '../api/taxonomy'
 import { useAuthStore } from '../stores/auth'
 import { useDialogEnterSubmit } from '../utils/dialogEnterSubmit'
+
+type EditorMode = 'crop' | 'pan'
+type EditorCropHandle = 'n' | 's' | 'e' | 'w' | 'nw' | 'ne' | 'sw' | 'se'
+type EditorDragType = 'pan' | 'draw' | 'move' | EditorCropHandle
+
+interface EditorPoint {
+  x: number
+  y: number
+}
+
+interface EditorCropSnapshot {
+  x: number
+  y: number
+  width: number
+  height: number
+}
+
+interface EditorDragState {
+  type: EditorDragType
+  pointerId: number
+  startCanvas: EditorPoint
+  startImage: EditorPoint
+  startCrop: EditorCropSnapshot
+  startOffsetX: number
+  startOffsetY: number
+}
+
+const EDITOR_MIN_VIEW_ZOOM = 0.25
+const EDITOR_MAX_VIEW_ZOOM = 4
+const EDITOR_VIEW_PADDING = 48
+const EDITOR_HANDLE_SIZE = 9
+const EDITOR_MIN_CROP_SIZE = 8
 
 const auth = useAuthStore()
 const loading = ref(false)
@@ -65,6 +103,31 @@ const editForm = reactive<{ title: string; status: ImageStatus; categoryId: stri
   status: 'ACTIVE',
   categoryId: '',
   tagIds: [],
+})
+const editSaving = ref(false)
+const editImageLoading = ref(false)
+const editCanvasRef = ref<HTMLCanvasElement>()
+const editSourceImage = ref<HTMLImageElement | null>(null)
+const editSourceUrl = ref('')
+const imageVersions = ref<ImageVersionRecord[]>([])
+const imageVersionsLoading = ref(false)
+const imageVersionActionId = ref('')
+const editorDrag = ref<EditorDragState | null>(null)
+const editorHoverHandle = ref<EditorDragType | null>(null)
+const imageEditor = reactive({
+  naturalWidth: 0,
+  naturalHeight: 0,
+  cropX: 0,
+  cropY: 0,
+  cropWidth: 0,
+  cropHeight: 0,
+  rotation: 0,
+  outputScale: 100,
+  viewZoom: 1,
+  viewOffsetX: 0,
+  viewOffsetY: 0,
+  mode: 'crop' as EditorMode,
+  dirty: false,
 })
 const uploadVisible = ref(false)
 const uploadLoading = ref(false)
@@ -99,6 +162,25 @@ const canEdit = computed(() => auth.hasPermission('image:edit'))
 const canDelete = computed(() => auth.hasPermission('image:delete'))
 const currentPreview = computed(() => previewIndex.value >= 0 ? rows.value[previewIndex.value] ?? null : null)
 const currentPreviewTagGroups = computed(() => groupTagsByGroup(currentPreview.value?.tags ?? []))
+const imageEditorReady = computed(() => Boolean(editSourceImage.value && imageEditor.cropWidth > 0 && imageEditor.cropHeight > 0))
+const imageEditorCursor = computed(() => {
+  if (!imageEditorReady.value) return 'default'
+  if (editorDrag.value?.type === 'pan') return 'grabbing'
+  if (imageEditor.mode === 'pan') return 'grab'
+  return cursorForEditorHandle(editorDrag.value?.type ?? editorHoverHandle.value)
+})
+const editorOriginalSizeText = computed(() => imageEditor.naturalWidth > 0 ? `${imageEditor.naturalWidth} × ${imageEditor.naturalHeight}` : '-')
+const editorCropSizeText = computed(() => imageEditorReady.value ? `${imageEditor.cropWidth} × ${imageEditor.cropHeight}` : '-')
+const editorCropOriginText = computed(() => imageEditorReady.value ? `X ${imageEditor.cropX}，Y ${imageEditor.cropY}` : '-')
+const editorOutputSizeText = computed(() => {
+  if (!imageEditorReady.value) return '-'
+  const scale = imageEditor.outputScale / 100
+  const width = Math.max(1, Math.round(imageEditor.cropWidth * scale))
+  const height = Math.max(1, Math.round(imageEditor.cropHeight * scale))
+  const normalizedRotation = normalizedEditorRotation()
+  return normalizedRotation === 90 || normalizedRotation === 270 ? `${height} × ${width}` : `${width} × ${height}`
+})
+const currentVersion = computed(() => imageVersions.value.find((version) => version.current) ?? null)
 const canPreviewPrevious = computed(() => previewIndex.value > 0)
 const canPreviewNext = computed(() => previewIndex.value >= 0 && previewIndex.value < rows.value.length - 1)
 const selectedSingleUploadFile = computed(() => uploadFileList.value[0] ?? null)
@@ -250,6 +332,37 @@ function revokePreviewUrl() {
     URL.revokeObjectURL(previewUrl.value)
     previewUrl.value = ''
   }
+}
+
+function revokeEditSourceUrl() {
+  if (editSourceUrl.value) {
+    URL.revokeObjectURL(editSourceUrl.value)
+    editSourceUrl.value = ''
+  }
+}
+
+function resetImageEditor() {
+  revokeEditSourceUrl()
+  editSourceImage.value = null
+  imageEditor.naturalWidth = 0
+  imageEditor.naturalHeight = 0
+  imageEditor.cropX = 0
+  imageEditor.cropY = 0
+  imageEditor.cropWidth = 0
+  imageEditor.cropHeight = 0
+  imageEditor.rotation = 0
+  imageEditor.outputScale = 100
+  imageEditor.viewZoom = 1
+  imageEditor.viewOffsetX = 0
+  imageEditor.viewOffsetY = 0
+  imageEditor.mode = 'crop'
+  imageEditor.dirty = false
+  imageVersions.value = []
+  imageVersionsLoading.value = false
+  imageVersionActionId.value = ''
+  editorDrag.value = null
+  editorHoverHandle.value = null
+  drawEditorPreview()
 }
 
 function uploadFileSize(file: UploadUserFile) {
@@ -787,6 +900,525 @@ async function previewNext() {
   }
 }
 
+function clampEditorCrop() {
+  const maxWidth = imageEditor.naturalWidth
+  const maxHeight = imageEditor.naturalHeight
+  if (maxWidth <= 0 || maxHeight <= 0) {
+    imageEditor.cropX = 0
+    imageEditor.cropY = 0
+    imageEditor.cropWidth = 0
+    imageEditor.cropHeight = 0
+    return
+  }
+  imageEditor.cropX = Math.max(0, Math.min(Math.round(imageEditor.cropX), Math.max(0, maxWidth - 1)))
+  imageEditor.cropY = Math.max(0, Math.min(Math.round(imageEditor.cropY), Math.max(0, maxHeight - 1)))
+  imageEditor.cropWidth = Math.max(1, Math.min(Math.round(imageEditor.cropWidth), maxWidth - imageEditor.cropX))
+  imageEditor.cropHeight = Math.max(1, Math.min(Math.round(imageEditor.cropHeight), maxHeight - imageEditor.cropY))
+  imageEditor.outputScale = Math.max(10, Math.min(Math.round(imageEditor.outputScale), 100))
+}
+
+function normalizedEditorRotation() {
+  return ((imageEditor.rotation % 360) + 360) % 360
+}
+
+function getEditorCanvasPoint(event: PointerEvent | WheelEvent): EditorPoint {
+  const canvas = editCanvasRef.value
+  if (!canvas) return { x: 0, y: 0 }
+  const rect = canvas.getBoundingClientRect()
+  return {
+    x: ((event.clientX - rect.left) * canvas.width) / rect.width,
+    y: ((event.clientY - rect.top) * canvas.height) / rect.height,
+  }
+}
+
+function getEditorFitScale() {
+  const canvas = editCanvasRef.value
+  if (!canvas || imageEditor.naturalWidth <= 0 || imageEditor.naturalHeight <= 0) return 1
+  return Math.min(
+    (canvas.width - EDITOR_VIEW_PADDING) / imageEditor.naturalWidth,
+    (canvas.height - EDITOR_VIEW_PADDING) / imageEditor.naturalHeight,
+  )
+}
+
+function getEditorImageScale() {
+  return getEditorFitScale() * imageEditor.viewZoom
+}
+
+function getEditorImageRect() {
+  const canvas = editCanvasRef.value
+  const scale = getEditorImageScale()
+  const width = imageEditor.naturalWidth * scale
+  const height = imageEditor.naturalHeight * scale
+  return {
+    x: (canvas ? (canvas.width - width) / 2 : 0) + imageEditor.viewOffsetX,
+    y: (canvas ? (canvas.height - height) / 2 : 0) + imageEditor.viewOffsetY,
+    width,
+    height,
+    scale,
+  }
+}
+
+function canvasToEditorImage(point: EditorPoint) {
+  const rect = getEditorImageRect()
+  return {
+    x: Math.max(0, Math.min(imageEditor.naturalWidth, (point.x - rect.x) / rect.scale)),
+    y: Math.max(0, Math.min(imageEditor.naturalHeight, (point.y - rect.y) / rect.scale)),
+  }
+}
+
+function editorImageToCanvas(point: EditorPoint) {
+  const rect = getEditorImageRect()
+  return {
+    x: rect.x + point.x * rect.scale,
+    y: rect.y + point.y * rect.scale,
+  }
+}
+
+function getEditorCropSnapshot(): EditorCropSnapshot {
+  return {
+    x: imageEditor.cropX,
+    y: imageEditor.cropY,
+    width: imageEditor.cropWidth,
+    height: imageEditor.cropHeight,
+  }
+}
+
+function cropSnapshotToCanvasRect(crop = getEditorCropSnapshot()) {
+  const topLeft = editorImageToCanvas({ x: crop.x, y: crop.y })
+  const bottomRight = editorImageToCanvas({ x: crop.x + crop.width, y: crop.y + crop.height })
+  return {
+    x: topLeft.x,
+    y: topLeft.y,
+    width: bottomRight.x - topLeft.x,
+    height: bottomRight.y - topLeft.y,
+  }
+}
+
+function fitEditorView() {
+  imageEditor.viewZoom = 1
+  imageEditor.viewOffsetX = 0
+  imageEditor.viewOffsetY = 0
+}
+
+function cursorForEditorHandle(handle: EditorDragType | null) {
+  if (!handle) return imageEditor.mode === 'crop' ? 'crosshair' : 'grab'
+  if (handle === 'move') return 'move'
+  if (handle === 'pan') return 'grabbing'
+  if (handle === 'draw') return 'crosshair'
+  if (handle === 'n' || handle === 's') return 'ns-resize'
+  if (handle === 'e' || handle === 'w') return 'ew-resize'
+  if (handle === 'nw' || handle === 'se') return 'nwse-resize'
+  return 'nesw-resize'
+}
+
+function hitTestEditorCrop(point: EditorPoint): EditorDragType | null {
+  if (!imageEditorReady.value) return null
+  const rect = cropSnapshotToCanvasRect()
+  const handles: Array<{ type: EditorCropHandle; x: number; y: number }> = [
+    { type: 'nw', x: rect.x, y: rect.y },
+    { type: 'n', x: rect.x + rect.width / 2, y: rect.y },
+    { type: 'ne', x: rect.x + rect.width, y: rect.y },
+    { type: 'e', x: rect.x + rect.width, y: rect.y + rect.height / 2 },
+    { type: 'se', x: rect.x + rect.width, y: rect.y + rect.height },
+    { type: 's', x: rect.x + rect.width / 2, y: rect.y + rect.height },
+    { type: 'sw', x: rect.x, y: rect.y + rect.height },
+    { type: 'w', x: rect.x, y: rect.y + rect.height / 2 },
+  ]
+  for (const handle of handles) {
+    if (Math.abs(point.x - handle.x) <= EDITOR_HANDLE_SIZE && Math.abs(point.y - handle.y) <= EDITOR_HANDLE_SIZE) {
+      return handle.type
+    }
+  }
+  const inside = point.x >= rect.x && point.x <= rect.x + rect.width && point.y >= rect.y && point.y <= rect.y + rect.height
+  return inside ? 'move' : null
+}
+
+function applyEditorCropFromEdges(left: number, top: number, right: number, bottom: number) {
+  const minSize = Math.min(EDITOR_MIN_CROP_SIZE, imageEditor.naturalWidth, imageEditor.naturalHeight)
+  left = Math.max(0, Math.min(left, imageEditor.naturalWidth - minSize))
+  top = Math.max(0, Math.min(top, imageEditor.naturalHeight - minSize))
+  right = Math.max(left + minSize, Math.min(right, imageEditor.naturalWidth))
+  bottom = Math.max(top + minSize, Math.min(bottom, imageEditor.naturalHeight))
+  imageEditor.cropX = Math.round(left)
+  imageEditor.cropY = Math.round(top)
+  imageEditor.cropWidth = Math.max(1, Math.round(right - left))
+  imageEditor.cropHeight = Math.max(1, Math.round(bottom - top))
+  clampEditorCrop()
+}
+
+function drawEditorCropOverlay(context: CanvasRenderingContext2D, canvas: HTMLCanvasElement) {
+  const cropRect = cropSnapshotToCanvasRect()
+  context.save()
+  context.fillStyle = 'rgb(15 23 42 / 48%)'
+  context.beginPath()
+  context.rect(0, 0, canvas.width, canvas.height)
+  context.rect(cropRect.x, cropRect.y, cropRect.width, cropRect.height)
+  context.fill('evenodd')
+  context.strokeStyle = '#2563eb'
+  context.lineWidth = 2
+  context.strokeRect(cropRect.x, cropRect.y, cropRect.width, cropRect.height)
+  context.strokeStyle = 'rgb(255 255 255 / 75%)'
+  context.lineWidth = 1
+  context.setLineDash([6, 5])
+  context.beginPath()
+  context.moveTo(cropRect.x + cropRect.width / 3, cropRect.y)
+  context.lineTo(cropRect.x + cropRect.width / 3, cropRect.y + cropRect.height)
+  context.moveTo(cropRect.x + (cropRect.width * 2) / 3, cropRect.y)
+  context.lineTo(cropRect.x + (cropRect.width * 2) / 3, cropRect.y + cropRect.height)
+  context.moveTo(cropRect.x, cropRect.y + cropRect.height / 3)
+  context.lineTo(cropRect.x + cropRect.width, cropRect.y + cropRect.height / 3)
+  context.moveTo(cropRect.x, cropRect.y + (cropRect.height * 2) / 3)
+  context.lineTo(cropRect.x + cropRect.width, cropRect.y + (cropRect.height * 2) / 3)
+  context.stroke()
+  context.setLineDash([])
+  const handles = [
+    [cropRect.x, cropRect.y],
+    [cropRect.x + cropRect.width / 2, cropRect.y],
+    [cropRect.x + cropRect.width, cropRect.y],
+    [cropRect.x + cropRect.width, cropRect.y + cropRect.height / 2],
+    [cropRect.x + cropRect.width, cropRect.y + cropRect.height],
+    [cropRect.x + cropRect.width / 2, cropRect.y + cropRect.height],
+    [cropRect.x, cropRect.y + cropRect.height],
+    [cropRect.x, cropRect.y + cropRect.height / 2],
+  ]
+  context.fillStyle = '#ffffff'
+  context.strokeStyle = '#2563eb'
+  for (const [x, y] of handles) {
+    context.beginPath()
+    context.rect(x - 4, y - 4, 8, 8)
+    context.fill()
+    context.stroke()
+  }
+  context.restore()
+}
+
+function buildEditedCanvas() {
+  const source = editSourceImage.value
+  if (!source || imageEditor.cropWidth <= 0 || imageEditor.cropHeight <= 0) {
+    return null
+  }
+  clampEditorCrop()
+  const scale = imageEditor.outputScale / 100
+  const cropWidth = imageEditor.cropWidth
+  const cropHeight = imageEditor.cropHeight
+  const scaledWidth = Math.max(1, Math.round(cropWidth * scale))
+  const scaledHeight = Math.max(1, Math.round(cropHeight * scale))
+  const normalizedRotation = normalizedEditorRotation()
+  const rotated = normalizedRotation === 90 || normalizedRotation === 270
+  const canvas = document.createElement('canvas')
+  canvas.width = rotated ? scaledHeight : scaledWidth
+  canvas.height = rotated ? scaledWidth : scaledHeight
+  const context = canvas.getContext('2d')
+  if (!context) return null
+  context.imageSmoothingEnabled = true
+  context.imageSmoothingQuality = 'high'
+  context.translate(canvas.width / 2, canvas.height / 2)
+  context.rotate((normalizedRotation * Math.PI) / 180)
+  context.drawImage(
+    source,
+    imageEditor.cropX,
+    imageEditor.cropY,
+    cropWidth,
+    cropHeight,
+    -scaledWidth / 2,
+    -scaledHeight / 2,
+    scaledWidth,
+    scaledHeight,
+  )
+  return canvas
+}
+
+function drawEditorPreview() {
+  const canvas = editCanvasRef.value
+  if (!canvas) return
+  const context = canvas.getContext('2d')
+  if (!context) return
+  context.clearRect(0, 0, canvas.width, canvas.height)
+  context.fillStyle = '#f8fafc'
+  context.fillRect(0, 0, canvas.width, canvas.height)
+  const source = editSourceImage.value
+  if (!source || imageEditor.naturalWidth <= 0 || imageEditor.naturalHeight <= 0) {
+    context.fillStyle = '#f1f5f9'
+    context.fillRect(0, 0, canvas.width, canvas.height)
+    context.fillStyle = '#64748b'
+    context.textAlign = 'center'
+    context.fillText('图片加载中', canvas.width / 2, canvas.height / 2)
+    return
+  }
+  const rect = getEditorImageRect()
+  context.imageSmoothingEnabled = true
+  context.imageSmoothingQuality = 'high'
+  context.drawImage(source, rect.x, rect.y, rect.width, rect.height)
+  drawEditorCropOverlay(context, canvas)
+}
+
+function markEditorDirty() {
+  imageEditor.dirty = true
+  drawEditorPreview()
+}
+
+function resetEditorCrop() {
+  imageEditor.cropX = 0
+  imageEditor.cropY = 0
+  imageEditor.cropWidth = imageEditor.naturalWidth
+  imageEditor.cropHeight = imageEditor.naturalHeight
+  imageEditor.rotation = 0
+  imageEditor.outputScale = 100
+  fitEditorView()
+  imageEditor.dirty = false
+  drawEditorPreview()
+}
+
+function rotateEditor(delta: number) {
+  imageEditor.rotation = ((imageEditor.rotation + delta) % 360 + 360) % 360
+  markEditorDirty()
+}
+
+function setEditorMode(mode: EditorMode) {
+  imageEditor.mode = mode
+  editorDrag.value = null
+  editorHoverHandle.value = null
+  drawEditorPreview()
+}
+
+function handleEditorModeChange(mode: string | number | boolean | undefined) {
+  if (mode === 'crop' || mode === 'pan') {
+    setEditorMode(mode)
+  }
+}
+
+function handleEditorWheel(event: WheelEvent) {
+  if (!imageEditorReady.value) return
+  const point = getEditorCanvasPoint(event)
+  const oldRect = getEditorImageRect()
+  const anchor = {
+    x: (point.x - oldRect.x) / oldRect.scale,
+    y: (point.y - oldRect.y) / oldRect.scale,
+  }
+  const nextZoom = Math.max(
+    EDITOR_MIN_VIEW_ZOOM,
+    Math.min(EDITOR_MAX_VIEW_ZOOM, imageEditor.viewZoom * (event.deltaY < 0 ? 1.12 : 0.88)),
+  )
+  imageEditor.viewZoom = Number(nextZoom.toFixed(3))
+  const nextRect = getEditorImageRect()
+  imageEditor.viewOffsetX += point.x - (nextRect.x + anchor.x * nextRect.scale)
+  imageEditor.viewOffsetY += point.y - (nextRect.y + anchor.y * nextRect.scale)
+  drawEditorPreview()
+}
+
+function handleEditorPointerDown(event: PointerEvent) {
+  if (!imageEditorReady.value || event.button !== 0) return
+  const canvas = editCanvasRef.value
+  if (!canvas) return
+  canvas.setPointerCapture(event.pointerId)
+  const point = getEditorCanvasPoint(event)
+  const imagePoint = canvasToEditorImage(point)
+  const hit = imageEditor.mode === 'crop' ? hitTestEditorCrop(point) : null
+  editorDrag.value = {
+    type: imageEditor.mode === 'pan' ? 'pan' : hit ?? 'draw',
+    pointerId: event.pointerId,
+    startCanvas: point,
+    startImage: imagePoint,
+    startCrop: getEditorCropSnapshot(),
+    startOffsetX: imageEditor.viewOffsetX,
+    startOffsetY: imageEditor.viewOffsetY,
+  }
+  if (editorDrag.value.type === 'draw') {
+    applyEditorCropFromEdges(imagePoint.x, imagePoint.y, imagePoint.x + EDITOR_MIN_CROP_SIZE, imagePoint.y + EDITOR_MIN_CROP_SIZE)
+    imageEditor.dirty = true
+    drawEditorPreview()
+  }
+}
+
+function handleEditorPointerMove(event: PointerEvent) {
+  if (!imageEditorReady.value) return
+  const point = getEditorCanvasPoint(event)
+  const drag = editorDrag.value
+  if (!drag) {
+    editorHoverHandle.value = imageEditor.mode === 'crop' ? hitTestEditorCrop(point) : null
+    return
+  }
+  if (drag.pointerId !== event.pointerId) return
+  if (drag.type === 'pan') {
+    imageEditor.viewOffsetX = drag.startOffsetX + point.x - drag.startCanvas.x
+    imageEditor.viewOffsetY = drag.startOffsetY + point.y - drag.startCanvas.y
+    drawEditorPreview()
+    return
+  }
+  const scale = getEditorImageScale()
+  const currentImage = canvasToEditorImage(point)
+  if (drag.type === 'draw') {
+    applyEditorCropFromEdges(
+      Math.min(drag.startImage.x, currentImage.x),
+      Math.min(drag.startImage.y, currentImage.y),
+      Math.max(drag.startImage.x, currentImage.x),
+      Math.max(drag.startImage.y, currentImage.y),
+    )
+  } else if (drag.type === 'move') {
+    const deltaX = (point.x - drag.startCanvas.x) / scale
+    const deltaY = (point.y - drag.startCanvas.y) / scale
+    imageEditor.cropX = Math.round(Math.max(0, Math.min(imageEditor.naturalWidth - drag.startCrop.width, drag.startCrop.x + deltaX)))
+    imageEditor.cropY = Math.round(Math.max(0, Math.min(imageEditor.naturalHeight - drag.startCrop.height, drag.startCrop.y + deltaY)))
+  } else {
+    let left = drag.startCrop.x
+    let top = drag.startCrop.y
+    let right = drag.startCrop.x + drag.startCrop.width
+    let bottom = drag.startCrop.y + drag.startCrop.height
+    if (drag.type.includes('w')) left = currentImage.x
+    if (drag.type.includes('e')) right = currentImage.x
+    if (drag.type.includes('n')) top = currentImage.y
+    if (drag.type.includes('s')) bottom = currentImage.y
+    if (right < left) [left, right] = [right, left]
+    if (bottom < top) [top, bottom] = [bottom, top]
+    applyEditorCropFromEdges(left, top, right, bottom)
+  }
+  imageEditor.dirty = true
+  drawEditorPreview()
+}
+
+function handleEditorPointerUp(event: PointerEvent) {
+  const drag = editorDrag.value
+  if (!drag || drag.pointerId !== event.pointerId) return
+  const canvas = editCanvasRef.value
+  if (canvas?.hasPointerCapture(event.pointerId)) {
+    canvas.releasePointerCapture(event.pointerId)
+  }
+  editorDrag.value = null
+  editorHoverHandle.value = imageEditor.mode === 'crop' ? hitTestEditorCrop(getEditorCanvasPoint(event)) : null
+}
+
+function handleEditorPointerLeave() {
+  if (!editorDrag.value) {
+    editorHoverHandle.value = null
+  }
+}
+
+function editedImageFileName(row: ImageRecord) {
+  const filename = row.originalFilename || row.title || 'image'
+  const dot = filename.lastIndexOf('.')
+  const base = dot > 0 ? filename.slice(0, dot) : filename
+  return `${base || 'image'}-edited.png`
+}
+
+function canvasToBlob(canvas: HTMLCanvasElement) {
+  return new Promise<Blob>((resolve, reject) => {
+    canvas.toBlob((blob) => {
+      if (blob) {
+        resolve(blob)
+      } else {
+        reject(new Error('图片编辑结果生成失败'))
+      }
+    }, 'image/png')
+  })
+}
+
+async function loadEditSource(row: ImageRecord) {
+  editImageLoading.value = true
+  resetImageEditor()
+  try {
+    const url = await imageEditSourceUrl(row.id)
+    editSourceUrl.value = url
+    const image = new Image()
+    image.src = url
+    await image.decode()
+    editSourceImage.value = image
+    imageEditor.naturalWidth = image.naturalWidth
+    imageEditor.naturalHeight = image.naturalHeight
+    resetEditorCrop()
+  } catch (error) {
+    if (isAxiosError(error) && error.response?.status === 404) {
+      ElMessage.error('后端编辑源接口不可用，请重启后端服务后重试')
+    } else if (isAxiosError(error) && error.response?.status === 403) {
+      ElMessage.error('当前用户没有图片编辑权限')
+    } else {
+      ElMessage.error(errorMessage(error, '图片编辑源加载失败'))
+    }
+  } finally {
+    editImageLoading.value = false
+  }
+}
+
+async function loadImageVersions(id: string) {
+  imageVersionsLoading.value = true
+  try {
+    imageVersions.value = await getImageVersions(id)
+  } catch (error) {
+    if (isAxiosError(error) && error.response?.status === 404) {
+      ElMessage.error('后端版本接口不可用，请重启后端服务后重试')
+    } else if (isAxiosError(error) && error.response?.status === 403) {
+      ElMessage.error('当前用户没有图片版本查看权限')
+    } else {
+      ElMessage.error(errorMessage(error, '图片版本加载失败'))
+    }
+  } finally {
+    imageVersionsLoading.value = false
+  }
+}
+
+function versionOperationLabel(operationType: string) {
+  if (operationType === 'UPLOAD') return '上传'
+  if (operationType === 'EDIT') return '编辑'
+  return operationType || '-'
+}
+
+function versionDimensions(version: ImageVersionRecord) {
+  if (version.width && version.height) return `${version.width} × ${version.height}`
+  return '未知尺寸'
+}
+
+async function restoreVersion(version: ImageVersionRecord) {
+  if (!editing.value || !ensureOperationAllowed(canEdit.value) || version.current) return
+  try {
+    await ElMessageBox.confirm(`确定恢复到版本 V${version.versionNo}？当前版本会保留在历史记录中。`, '恢复图片版本', {
+      type: 'warning',
+      confirmButtonText: '确认恢复',
+      cancelButtonText: '取消',
+    })
+  } catch {
+    return
+  }
+  imageVersionActionId.value = version.id
+  try {
+    const saved = await restoreImageVersion(editing.value.id, version.id)
+    editing.value = replaceImageRecord(saved)
+    revokeThumbnailUrl(saved.id)
+    if (previewImageId.value === saved.id) {
+      await refreshImageRecordQuietly(saved.id)
+    }
+    await nextTick()
+    await loadEditSource(saved)
+    await loadImageVersions(saved.id)
+    ElMessage.success('图片版本已恢复')
+  } catch (error) {
+    ElMessage.error(errorMessage(error, '图片版本恢复失败'))
+  } finally {
+    imageVersionActionId.value = ''
+  }
+}
+
+async function removeVersion(version: ImageVersionRecord) {
+  if (!editing.value || !ensureOperationAllowed(canDelete.value) || version.current) return
+  try {
+    await ElMessageBox.confirm(`确定删除版本 V${version.versionNo}？该版本对象会从存储中清理。`, '删除图片版本', {
+      type: 'warning',
+      confirmButtonText: '确认删除',
+      cancelButtonText: '取消',
+    })
+  } catch {
+    return
+  }
+  imageVersionActionId.value = version.id
+  try {
+    await deleteImageVersion(editing.value.id, version.id)
+    await loadImageVersions(editing.value.id)
+    ElMessage.success('图片版本已删除')
+  } catch (error) {
+    ElMessage.error(errorMessage(error, '图片版本删除失败'))
+  } finally {
+    imageVersionActionId.value = ''
+  }
+}
+
 function handlePreviewKeydown(event: KeyboardEvent) {
   if (!previewVisible.value || previewLoading.value) return
   if (event.key === 'ArrowLeft' && canPreviewPrevious.value) {
@@ -808,6 +1440,9 @@ async function openEdit(row: ImageRecord) {
   editForm.categoryId = row.category?.id ?? ''
   editForm.tagIds = row.tags.map((tag) => tag.id)
   tags.value = await getTags()
+  await nextTick()
+  await loadEditSource(row)
+  await loadImageVersions(row.id)
 }
 
 async function onEditCategoryChange() {
@@ -819,20 +1454,65 @@ async function onEditCategoryChange() {
 async function saveEdit() {
   if (!editing.value) return
   if (!ensureOperationAllowed(canEdit.value)) return
+  if (editSaving.value) return
   try {
-    await updateImage(editing.value.id, {
+    await ElMessageBox.confirm(
+      imageEditor.dirty
+        ? '本次保存会将图像编辑结果写入新版本，原始对象会继续保留。确定保存吗？'
+        : '确定保存当前图片信息吗？',
+      imageEditor.dirty ? '保存图片新版本' : '保存图片信息',
+      {
+        type: imageEditor.dirty ? 'warning' : 'info',
+        confirmButtonText: '确认保存',
+        cancelButtonText: '取消',
+      },
+    )
+  } catch {
+    return
+  }
+  editSaving.value = true
+  try {
+    let saved = await updateImage(editing.value.id, {
       title: editForm.title,
       status: editForm.status,
       categoryId: editForm.categoryId || null,
       tagIds: editForm.tagIds,
     })
+    if (imageEditor.dirty) {
+      const editedCanvas = buildEditedCanvas()
+      if (!editedCanvas) {
+        throw new Error('图片编辑结果生成失败')
+      }
+      const blob = await canvasToBlob(editedCanvas)
+      const file = new File([blob], editedImageFileName(saved), { type: 'image/png' })
+      saved = await editImageContent(saved.id, file, JSON.stringify({
+        crop: {
+          x: imageEditor.cropX,
+          y: imageEditor.cropY,
+          width: imageEditor.cropWidth,
+          height: imageEditor.cropHeight,
+        },
+        rotation: imageEditor.rotation,
+        scale: imageEditor.outputScale,
+      }))
+      revokeThumbnailUrl(saved.id)
+    }
     ElMessage.success('图片信息已保存')
     editing.value = null
     editVisible.value = false
+    resetImageEditor()
     await loadImages()
   } catch (error) {
     ElMessage.error(errorMessage(error, '图片信息保存失败'))
+  } finally {
+    editSaving.value = false
   }
+}
+
+function closeEditDialog() {
+  editVisible.value = false
+  editing.value = null
+  resetImageEditor()
 }
 
 async function remove(row: ImageRecord) {
@@ -1012,7 +1692,7 @@ function isUploadConfirmDisabled() {
 }
 
 useDialogEnterSubmit(uploadVisible, confirmUploadDialog, { disabled: isUploadConfirmDisabled })
-useDialogEnterSubmit(editVisible, saveEdit)
+useDialogEnterSubmit(editVisible, saveEdit, { disabled: () => editSaving.value })
 
 onMounted(async () => {
   window.addEventListener('keydown', handlePreviewKeydown)
@@ -1024,6 +1704,7 @@ onBeforeUnmount(() => {
   window.removeEventListener('keydown', handlePreviewKeydown)
   revokeAllThumbnailUrls()
   revokePreviewUrl()
+  resetImageEditor()
   revokeSingleUploadPreview()
   revokeAllBatchUploadPreviews()
 })
@@ -1287,29 +1968,25 @@ onBeforeUnmount(() => {
       </div>
     </div>
 
-    <el-dialog v-model="previewVisible" :title="currentPreview?.title ?? '图片预览'" width="72%" @closed="closePreview">
+    <el-dialog v-model="previewVisible" :title="currentPreview?.title ?? '图片预览'" width="72%" top="5vh" @closed="closePreview">
       <div class="preview-shell" v-loading="previewLoading">
         <el-button
           class="preview-nav"
-          type="primary"
-          :icon="ArrowLeft"
           :disabled="!canPreviewPrevious || previewLoading"
           aria-label="上一张"
           @click="previewPrevious"
         >
-          上一张
+          <el-icon><ArrowLeft /></el-icon>
         </el-button>
         <img v-if="previewUrl" class="preview-image" :src="previewUrl" alt="图片预览" />
         <el-empty v-else description="暂无预览" />
         <el-button
           class="preview-nav"
-          type="primary"
-          :icon="ArrowRight"
           :disabled="!canPreviewNext || previewLoading"
           aria-label="下一张"
           @click="previewNext"
         >
-          下一张
+          <el-icon><ArrowRight /></el-icon>
         </el-button>
       </div>
       <div v-if="currentPreview" class="preview-meta">
@@ -1496,33 +2173,138 @@ onBeforeUnmount(() => {
       </template>
     </el-dialog>
 
-    <el-dialog v-if="canEdit" v-model="editVisible" title="编辑图片信息" width="520px">
-      <el-form label-width="88px">
-        <el-form-item label="标题">
-          <el-input v-model="editForm.title" />
-        </el-form-item>
-        <el-form-item label="状态">
-          <el-select v-model="editForm.status">
-            <el-option label="启用" value="ACTIVE" />
-            <el-option label="停用" value="DISABLED" />
-          </el-select>
-        </el-form-item>
-        <el-form-item label="分类">
-          <el-select v-model="editForm.categoryId" clearable placeholder="选择分类" @change="onEditCategoryChange">
-            <el-option v-for="category in categoryOptions" :key="category.id" :label="category.name" :value="category.id" />
-          </el-select>
-        </el-form-item>
-        <el-form-item label="标签">
-          <el-select v-model="editForm.tagIds" class="full-tag-select" multiple filterable clearable placeholder="搜索并选择标签">
-            <el-option-group v-for="group in tagOptionGroups" :key="group.key" :label="group.label">
-              <el-option v-for="tag in group.tags" :key="tag.id" :label="tag.name" :value="tag.id" />
-            </el-option-group>
-          </el-select>
-        </el-form-item>
-      </el-form>
+    <el-dialog v-if="canEdit" v-model="editVisible" title="编辑图片信息" width="920px" @closed="resetImageEditor">
+      <div class="edit-dialog-layout">
+        <div class="image-editor-panel" v-loading="editImageLoading">
+          <div class="image-editor-head">
+            <div>
+              <h3>图像编辑</h3>
+              <p>滚轮缩放视图，移动模式拖动画布；裁剪模式拖出或调整选区。</p>
+            </div>
+            <el-button :icon="RefreshLeft" :disabled="!imageEditorReady" @click="resetEditorCrop">重置</el-button>
+          </div>
+          <canvas
+            ref="editCanvasRef"
+            class="image-edit-canvas"
+            width="620"
+            height="360"
+            :style="{ cursor: imageEditorCursor }"
+            @wheel.prevent="handleEditorWheel"
+            @pointerdown="handleEditorPointerDown"
+            @pointermove="handleEditorPointerMove"
+            @pointerup="handleEditorPointerUp"
+            @pointercancel="handleEditorPointerUp"
+            @pointerleave="handleEditorPointerLeave"
+          />
+          <div class="image-editor-tools">
+            <el-radio-group v-model="imageEditor.mode" :disabled="!imageEditorReady" @change="handleEditorModeChange">
+              <el-radio-button value="crop">裁剪</el-radio-button>
+              <el-radio-button value="pan">移动</el-radio-button>
+            </el-radio-group>
+            <el-button-group>
+              <el-button :icon="RefreshLeft" :disabled="!imageEditorReady" @click="rotateEditor(-90)">左转</el-button>
+              <el-button :icon="RefreshRight" :disabled="!imageEditorReady" @click="rotateEditor(90)">右转</el-button>
+            </el-button-group>
+            <div class="image-editor-scale">
+              <el-icon><ZoomIn /></el-icon>
+              <span class="image-editor-scale-label">输出比例</span>
+              <el-slider
+                v-model="imageEditor.outputScale"
+                :min="10"
+                :max="100"
+                :step="5"
+                :disabled="!imageEditorReady"
+                @input="markEditorDirty"
+              />
+              <span class="image-editor-scale-value">{{ imageEditor.outputScale }}%</span>
+            </div>
+          </div>
+          <div class="image-editor-info-grid">
+            <div>
+              <span>原图尺寸</span>
+              <strong>{{ editorOriginalSizeText }}</strong>
+            </div>
+            <div>
+              <span>裁剪选区</span>
+              <strong>{{ editorCropSizeText }}</strong>
+            </div>
+            <div>
+              <span>选区起点</span>
+              <strong>{{ editorCropOriginText }}</strong>
+            </div>
+            <div>
+              <span>输出尺寸</span>
+              <strong>{{ editorOutputSizeText }}</strong>
+            </div>
+          </div>
+          <div class="image-editor-status">
+            <el-icon><Crop /></el-icon>
+            <span>视图 {{ Math.round(imageEditor.viewZoom * 100) }}%</span>
+            <span v-if="imageEditor.dirty">待保存为新版本</span>
+            <span v-else>未修改图像</span>
+          </div>
+        </div>
+
+        <div class="image-edit-side">
+          <el-form class="image-meta-form" label-width="72px">
+            <div class="image-meta-form-head">
+              <el-icon><EditPen /></el-icon>
+              <span>元信息</span>
+            </div>
+            <el-form-item label="标题">
+              <el-input v-model="editForm.title" />
+            </el-form-item>
+            <el-form-item label="状态">
+              <el-select v-model="editForm.status">
+                <el-option label="启用" value="ACTIVE" />
+                <el-option label="停用" value="DISABLED" />
+              </el-select>
+            </el-form-item>
+            <el-form-item label="分类">
+              <el-select v-model="editForm.categoryId" clearable placeholder="选择分类" @change="onEditCategoryChange">
+                <el-option v-for="category in categoryOptions" :key="category.id" :label="category.name" :value="category.id" />
+              </el-select>
+            </el-form-item>
+            <el-form-item label="标签">
+              <el-select v-model="editForm.tagIds" class="full-tag-select" multiple filterable clearable placeholder="搜索并选择标签">
+                <el-option-group v-for="group in tagOptionGroups" :key="group.key" :label="group.label">
+                  <el-option v-for="tag in group.tags" :key="tag.id" :label="tag.name" :value="tag.id" />
+                </el-option-group>
+              </el-select>
+            </el-form-item>
+          </el-form>
+
+          <div class="image-version-panel" v-loading="imageVersionsLoading">
+            <div class="image-version-head">
+              <strong>版本记录</strong>
+              <span v-if="currentVersion">当前 V{{ currentVersion.versionNo }}</span>
+            </div>
+            <el-empty v-if="!imageVersionsLoading && imageVersions.length === 0" description="暂无版本" :image-size="48" />
+            <div v-else class="image-version-list">
+              <div v-for="version in imageVersions" :key="version.id" class="image-version-item" :class="{ 'is-current': version.current }">
+                <div class="image-version-main">
+                  <div class="image-version-title">
+                    <strong>V{{ version.versionNo }}</strong>
+                    <el-tag v-if="version.current" size="small" type="success" effect="light">当前</el-tag>
+                    <el-tag v-else size="small" effect="plain">{{ versionOperationLabel(version.operationType) }}</el-tag>
+                  </div>
+                  <span>{{ versionDimensions(version) }} · {{ formatBytes(version.sizeBytes) }}</span>
+                  <span>{{ formatDateTime(version.createdAt) }}</span>
+                </div>
+                <div class="image-version-actions">
+                  <el-button link type="primary" :disabled="version.current || !canEdit" :loading="imageVersionActionId === version.id" @click="restoreVersion(version)">恢复</el-button>
+                  <el-button link type="danger" :disabled="version.current || !canDelete" :loading="imageVersionActionId === version.id" @click="removeVersion(version)">删除</el-button>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
       <template #footer>
-        <el-button @click="editVisible = false">取消</el-button>
-        <el-button type="primary" @click="saveEdit">保存</el-button>
+        <el-button :disabled="editSaving" @click="closeEditDialog">取消</el-button>
+        <el-button type="primary" :loading="editSaving" @click="saveEdit">
+          {{ imageEditor.dirty ? '保存信息与新版本' : '保存信息' }}
+        </el-button>
       </template>
     </el-dialog>
   </section>
@@ -1907,30 +2689,51 @@ onBeforeUnmount(() => {
 .preview-image {
   display: block;
   margin: 0 auto;
-  max-height: 72vh;
+  max-height: min(64vh, calc(100vh - 300px));
   max-width: 100%;
   object-fit: contain;
 }
 
 .preview-shell {
-  align-items: center;
+  align-items: stretch;
   display: grid;
-  gap: 18px;
-  grid-template-columns: 96px minmax(0, 1fr) 96px;
+  gap: 10px;
+  grid-template-columns: 42px minmax(0, 1fr) 42px;
   min-height: 280px;
 }
 
 .preview-nav {
-  border-radius: 999px;
-  box-shadow: 0 12px 28px rgb(37 99 235 / 22%);
-  font-weight: 600;
-  height: 46px;
+  align-self: stretch;
+  background: #f8fafc;
+  border-color: #e2e8f0;
+  border-radius: 10px;
+  color: #64748b;
+  display: inline-flex;
+  flex-direction: column;
+  gap: 10px;
+  height: 100%;
   justify-self: center;
-  min-width: 92px;
+  min-height: 280px;
+  min-width: 0;
+  padding: 0;
+  transition: background-color 0.16s ease, border-color 0.16s ease, color 0.16s ease;
+  width: 100%;
+}
+
+.preview-nav :deep(.el-icon) {
+  font-size: 20px;
+}
+
+.preview-nav:not(.is-disabled):hover,
+.preview-nav:not(.is-disabled):focus-visible {
+  background: #eff6ff;
+  border-color: #bfdbfe;
+  color: #2563eb;
 }
 
 .preview-nav.is-disabled {
   box-shadow: none;
+  opacity: 0.46;
 }
 
 .preview-meta {
@@ -1975,6 +2778,206 @@ onBeforeUnmount(() => {
   font-size: 12px;
   line-height: 22px;
   margin-right: 2px;
+}
+
+.edit-dialog-layout {
+  display: grid;
+  gap: 18px;
+  grid-template-columns: minmax(0, 1fr) 290px;
+}
+
+.image-editor-panel {
+  display: grid;
+  gap: 12px;
+  min-width: 0;
+}
+
+.image-editor-head {
+  align-items: flex-start;
+  display: flex;
+  gap: 12px;
+  justify-content: space-between;
+}
+
+.image-editor-head h3 {
+  color: #1f2937;
+  font-size: 16px;
+  margin: 0 0 4px;
+}
+
+.image-editor-head p,
+.image-editor-status {
+  color: #64748b;
+  font-size: 13px;
+  margin: 0;
+}
+
+.image-edit-canvas {
+  background: #f8fafc;
+  border: 1px solid #dbe4ef;
+  border-radius: 8px;
+  height: auto;
+  max-width: 100%;
+  touch-action: none;
+  user-select: none;
+  width: 100%;
+}
+
+.image-editor-tools {
+  align-items: center;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 14px;
+}
+
+.image-editor-scale {
+  align-items: center;
+  display: grid;
+  flex: 1;
+  gap: 8px;
+  grid-template-columns: 18px 56px minmax(140px, 1fr) 46px;
+  min-width: 280px;
+}
+
+.image-editor-scale-label {
+  color: #64748b;
+  font-size: 13px;
+  white-space: nowrap;
+}
+
+.image-editor-scale-value {
+  color: #475569;
+  font-size: 13px;
+  text-align: right;
+}
+
+.image-editor-info-grid {
+  display: grid;
+  gap: 10px;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.image-editor-info-grid div {
+  background: #f8fafc;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+  padding: 9px 10px;
+}
+
+.image-editor-info-grid span {
+  color: #64748b;
+  font-size: 12px;
+}
+
+.image-editor-info-grid strong {
+  color: #1f2937;
+  font-size: 13px;
+  font-weight: 600;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.image-editor-status {
+  align-items: center;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.image-edit-side {
+	border-left: 1px solid #e2e8f0;
+	display: grid;
+	gap: 18px;
+	min-width: 0;
+	padding-left: 18px;
+}
+
+.image-meta-form {
+	min-width: 0;
+}
+
+.image-meta-form-head {
+	align-items: center;
+	color: #334155;
+  display: flex;
+  font-weight: 600;
+  gap: 6px;
+	margin-bottom: 16px;
+}
+
+.image-version-panel {
+	border-top: 1px solid #e2e8f0;
+	display: grid;
+	gap: 10px;
+	min-height: 120px;
+	padding-top: 16px;
+}
+
+.image-version-head {
+	align-items: center;
+	display: flex;
+	gap: 8px;
+	justify-content: space-between;
+}
+
+.image-version-head strong {
+	color: #334155;
+	font-size: 14px;
+}
+
+.image-version-head span,
+.image-version-main span {
+	color: #64748b;
+	font-size: 12px;
+}
+
+.image-version-list {
+	display: grid;
+	gap: 8px;
+	max-height: 260px;
+	overflow: auto;
+	padding-right: 2px;
+}
+
+.image-version-item {
+	background: #f8fafc;
+	border: 1px solid #e2e8f0;
+	border-radius: 8px;
+	display: grid;
+	gap: 8px;
+	padding: 10px;
+}
+
+.image-version-item.is-current {
+	background: #f0fdf4;
+	border-color: #bbf7d0;
+}
+
+.image-version-main {
+	display: grid;
+	gap: 4px;
+	min-width: 0;
+}
+
+.image-version-title {
+	align-items: center;
+	display: flex;
+	gap: 6px;
+	justify-content: space-between;
+}
+
+.image-version-title strong {
+	color: #1f2937;
+	font-size: 13px;
+}
+
+.image-version-actions {
+	display: flex;
+	gap: 8px;
+	justify-content: flex-end;
 }
 
 .pagination-row {
@@ -2264,6 +3267,30 @@ onBeforeUnmount(() => {
   }
 
   .preview-detail-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .preview-shell {
+    gap: 8px;
+    grid-template-columns: 36px minmax(0, 1fr) 36px;
+  }
+
+  .preview-nav {
+    min-height: 240px;
+  }
+
+  .edit-dialog-layout {
+    grid-template-columns: 1fr;
+  }
+
+  .image-edit-side {
+    border-left: 0;
+    border-top: 1px solid #e2e8f0;
+    padding-left: 0;
+    padding-top: 16px;
+  }
+
+  .image-editor-info-grid {
     grid-template-columns: 1fr;
   }
 }

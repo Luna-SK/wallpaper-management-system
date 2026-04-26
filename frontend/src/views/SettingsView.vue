@@ -18,6 +18,8 @@ const settings = reactive({
   softDeleteRetentionDays: 180,
   softDeleteCleanupEnabled: false,
   softDeleteCleanupCron: '0 0 3 * * SUN',
+  watermarkEnabled: true,
+  watermarkText: '仅供授权使用',
   auditArchiveEnabled: true,
   auditRetentionDays: 180,
   auditArchiveCron: '0 30 2 * * *',
@@ -60,6 +62,8 @@ function applySystemSettings(system: SystemSettings) {
   settings.softDeleteRetentionDays = system.softDeleteRetentionDays
   settings.softDeleteCleanupEnabled = system.softDeleteCleanupEnabled
   settings.softDeleteCleanupCron = system.softDeleteCleanupCron
+  settings.watermarkEnabled = system.watermarkEnabled
+  settings.watermarkText = system.watermarkText
   syncUploadLimitRange()
 }
 
@@ -99,6 +103,8 @@ async function saveSettings() {
         softDeleteRetentionDays: settings.softDeleteRetentionDays,
         softDeleteCleanupEnabled: settings.softDeleteCleanupEnabled,
         softDeleteCleanupCron: settings.softDeleteCleanupCron,
+        watermarkEnabled: settings.watermarkEnabled,
+        watermarkText: settings.watermarkText,
       }),
     ])
     applySystemSettings(system)
@@ -167,6 +173,22 @@ onMounted(loadSettings)
                 <p>示例：`0 0 3 * * SUN` 每周日 03:00；`0 0 3 * * *` 每天 03:00；`0 0 * * * *` 每小时一次。</p>
               </div>
             </div>
+          </el-form-item>
+        </div>
+
+        <div class="form-section">
+          <h2>水印版权保护</h2>
+          <p class="section-copy">启用后，图片预览、单图下载和批量下载会输出带文字水印的图片。</p>
+          <el-form-item label="启用水印">
+            <el-switch v-model="settings.watermarkEnabled" active-text="启用" inactive-text="停用" />
+          </el-form-item>
+          <el-form-item label="水印文字" required>
+            <el-input
+              v-model="settings.watermarkText"
+              maxlength="64"
+              show-word-limit
+              placeholder="例如：仅供授权使用"
+            />
           </el-form-item>
         </div>
 

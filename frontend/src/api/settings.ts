@@ -9,6 +9,8 @@ export interface SystemSettings {
   softDeleteRetentionDays: number
   softDeleteCleanupEnabled: boolean
   softDeleteCleanupCron: string
+  watermarkEnabled: boolean
+  watermarkText: string
 }
 
 export type SystemSettingsUpdate = Omit<SystemSettings, 'maxFileHardLimitMb' | 'maxBatchHardLimitMb'>

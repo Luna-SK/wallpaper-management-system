@@ -20,8 +20,10 @@ class UploadSessionCleanupScheduler {
 	void cleanupUploadStorage() {
 		int expiredSessions = imageService.expireUnconfirmedUploadSessions();
 		int orphanObjects = imageService.cleanupOrphanImageObjects();
-		if (expiredSessions > 0 || orphanObjects > 0) {
-			log.info("cleaned upload storage, expiredSessions={}, orphanObjects={}", expiredSessions, orphanObjects);
+		int imageVersions = imageService.cleanupExcessImageVersions();
+		if (expiredSessions > 0 || orphanObjects > 0 || imageVersions > 0) {
+			log.info("cleaned upload storage, expiredSessions={}, orphanObjects={}, imageVersions={}",
+					expiredSessions, orphanObjects, imageVersions);
 		}
 	}
 }
