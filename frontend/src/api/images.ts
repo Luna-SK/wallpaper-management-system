@@ -109,6 +109,11 @@ export async function getImages(params: { keyword?: string; categoryId?: string;
   return response.data
 }
 
+export async function getImage(id: string) {
+  const response = await http.get<ImageRecord>(`/images/${id}`)
+  return response.data
+}
+
 export async function updateImage(id: string, payload: { title: string; status: ImageStatus; categoryId: string | null; tagIds: string[] }) {
   const response = await http.patch<ImageRecord>(`/images/${id}`, payload)
   return response.data

@@ -14,6 +14,7 @@ import {
   deleteImage,
   downloadImage,
   downloadImagesZip,
+  getImage,
   getImages,
   imageBlobUrl,
   purgeImage,
@@ -84,6 +85,8 @@ const terminalUploadBatchStatuses: UploadBatchStatus[] = ['CONFIRMED', 'CANCELLE
 const categoryOptions = computed(() => categories.value.filter((category) => category.enabled))
 const tagOptions = computed(() => tags.value.filter((tag) => tag.enabled))
 const uploadTagOptions = computed(() => uploadTags.value.filter((tag) => tag.enabled))
+const tagOptionGroups = computed(() => groupTagsByGroup(tagOptions.value))
+const uploadTagOptionGroups = computed(() => groupTagsByGroup(uploadTagOptions.value))
 const selectedRowIds = computed(() => selectedRows.value.map((row) => row.id))
 const selectedRowIdSet = computed(() => new Set(selectedRowIds.value))
 const selectedRowsOnPageCount = computed(() => rows.value.filter((row) => selectedRowIdSet.value.has(row.id)).length)
@@ -95,6 +98,7 @@ const canUpload = computed(() => auth.hasPermission('image:upload'))
 const canEdit = computed(() => auth.hasPermission('image:edit'))
 const canDelete = computed(() => auth.hasPermission('image:delete'))
 const currentPreview = computed(() => previewIndex.value >= 0 ? rows.value[previewIndex.value] ?? null : null)
+const currentPreviewTagGroups = computed(() => groupTagsByGroup(currentPreview.value?.tags ?? []))
 const canPreviewPrevious = computed(() => previewIndex.value > 0)
 const canPreviewNext = computed(() => previewIndex.value >= 0 && previewIndex.value < rows.value.length - 1)
 const selectedSingleUploadFile = computed(() => uploadFileList.value[0] ?? null)
@@ -150,6 +154,16 @@ function formatBytes(value: number) {
   return `${(value / 1024 / 1024).toFixed(1)} MB`
 }
 
+function formatDateTime(value: string | null) {
+  if (!value) return '-'
+  return value.replace('T', ' ').slice(0, 19)
+}
+
+function formatDimensions(row: ImageRecord) {
+  if (row.width && row.height) return `${row.width} × ${row.height}`
+  return '未知'
+}
+
 function statusLabel(status: ImageStatus | 'DISABLED') {
   if (status === 'DELETED') return '已停用'
   if (status === 'DISABLED') return '停用'
@@ -166,8 +180,37 @@ function categoryText(row: ImageRecord) {
   return row.category?.name ?? '-'
 }
 
-function tagOptionLabel(tag: Tag) {
-  return tag.groupName ? `${tag.groupName} / ${tag.name}` : tag.name
+function groupTagsByGroup<T extends { id: string; groupId: string; groupName: string | null; name: string }>(source: T[]) {
+  const groups = new Map<string, { key: string; label: string; tags: T[] }>()
+  source.forEach((tag) => {
+    const key = tag.groupId || '__ungrouped__'
+    const label = tag.groupName?.trim() || '未分组'
+    if (!groups.has(key)) {
+      groups.set(key, { key, label, tags: [] })
+    }
+    groups.get(key)?.tags.push(tag)
+  })
+  return [...groups.values()]
+}
+
+function replaceImageRecord(record: ImageRecord) {
+  const index = rows.value.findIndex((row) => row.id === record.id)
+  if (index !== -1) {
+    rows.value[index] = record
+  }
+  return record
+}
+
+async function refreshImageRecord(id: string) {
+  return replaceImageRecord(await getImage(id))
+}
+
+async function refreshImageRecordQuietly(id: string) {
+  try {
+    await refreshImageRecord(id)
+  } catch {
+    ElMessage.warning('图片计数刷新失败，请稍后刷新列表')
+  }
 }
 
 function visibleGridTags(row: ImageRecord) {
@@ -712,6 +755,7 @@ async function showPreviewAt(index: number) {
     previewImageId.value = row.id
     previewUrl.value = url
     previewVisible.value = true
+    await refreshImageRecordQuietly(row.id)
   } catch (error) {
     ElMessage.error(errorMessage(error, '图片预览加载失败'))
   } finally {
@@ -938,6 +982,7 @@ async function download(row: ImageRecord) {
   if (!ensureOperationAllowed(canView.value)) return
   try {
     await downloadImage(row.id, row.originalFilename)
+    await refreshImageRecordQuietly(row.id)
   } catch (error) {
     ElMessage.error(errorMessage(error, '图片下载失败'))
   }
@@ -953,6 +998,7 @@ async function batchDownloadSelected() {
   batchDownloadLoading.value = true
   try {
     await downloadImagesZip(ids)
+    await loadImages()
     ElMessage.success('批量下载已开始')
   } catch (error) {
     ElMessage.error(errorMessage(error, '批量下载失败'))
@@ -1007,7 +1053,9 @@ onBeforeUnmount(() => {
             <el-option v-for="category in categoryOptions" :key="category.id" :label="category.name" :value="category.id" />
           </el-select>
           <el-select v-model="selectedTagId" placeholder="标签" clearable>
-            <el-option v-for="tag in tagOptions" :key="tag.id" :label="tagOptionLabel(tag)" :value="tag.id" />
+            <el-option-group v-for="group in tagOptionGroups" :key="group.key" :label="group.label">
+              <el-option v-for="tag in group.tags" :key="tag.id" :label="tag.name" :value="tag.id" />
+            </el-option-group>
           </el-select>
           <div class="filter-actions">
             <el-button @click="applyFilters">筛选</el-button>
@@ -1110,6 +1158,7 @@ onBeforeUnmount(() => {
                 <el-tag :type="statusTagType(row.status)" effect="light">{{ statusLabel(row.status) }}</el-tag>
               </div>
               <span class="image-grid-file" :title="row.originalFilename">{{ row.originalFilename }} · {{ formatBytes(row.sizeBytes) }}</span>
+              <span class="image-grid-counts">浏览 {{ row.viewCount }} · 下载 {{ row.downloadCount }}</span>
               <div class="image-grid-taxonomy">
                 <div class="image-grid-taxonomy-row">
                   <span class="image-grid-taxonomy-label">分类</span>
@@ -1201,6 +1250,14 @@ onBeforeUnmount(() => {
             <el-tag :type="statusTagType(row.status)" effect="light">{{ statusLabel(row.status) }}</el-tag>
           </template>
         </el-table-column>
+        <el-table-column label="数据" width="130">
+          <template #default="{ row }">
+            <div class="image-counts-cell">
+              <span>浏览 {{ row.viewCount }}</span>
+              <span>下载 {{ row.downloadCount }}</span>
+            </div>
+          </template>
+        </el-table-column>
         <el-table-column v-if="!showingDeletedImages || canDelete" label="操作" width="210" fixed="right">
           <template #default="{ row }">
             <template v-if="!showingDeletedImages">
@@ -1261,14 +1318,47 @@ onBeforeUnmount(() => {
       </div>
       <div v-if="currentPreview" class="preview-details">
         <div class="preview-detail-row">
+          <span class="preview-detail-label">文件名</span>
+          <span class="preview-detail-text" :title="currentPreview.originalFilename">{{ currentPreview.originalFilename }}</span>
+        </div>
+        <div class="preview-detail-row">
           <span class="preview-detail-label">分类</span>
           <span class="preview-detail-text">{{ currentPreview.category?.name ?? '未分类' }}</span>
         </div>
         <div class="preview-detail-row">
           <span class="preview-detail-label">标签</span>
           <div class="preview-detail-tags">
-            <el-tag v-for="tag in currentPreview.tags" :key="tag.id" size="small" effect="light">{{ tag.name }}</el-tag>
+            <template v-for="group in currentPreviewTagGroups" :key="group.key">
+              <span class="preview-detail-tag-group">{{ group.label }}</span>
+              <el-tag v-for="tag in group.tags" :key="tag.id" size="small" effect="light">{{ tag.name }}</el-tag>
+            </template>
             <span v-if="currentPreview.tags.length === 0" class="taxonomy-empty">暂无标签</span>
+          </div>
+        </div>
+        <div class="preview-detail-grid">
+          <div class="preview-detail-row">
+            <span class="preview-detail-label">尺寸</span>
+            <span class="preview-detail-text">{{ formatDimensions(currentPreview) }}</span>
+          </div>
+          <div class="preview-detail-row">
+            <span class="preview-detail-label">大小</span>
+            <span class="preview-detail-text">{{ formatBytes(currentPreview.sizeBytes) }}</span>
+          </div>
+          <div class="preview-detail-row">
+            <span class="preview-detail-label">类型</span>
+            <span class="preview-detail-text">{{ currentPreview.mimeType }}</span>
+          </div>
+          <div class="preview-detail-row">
+            <span class="preview-detail-label">上传</span>
+            <span class="preview-detail-text">{{ formatDateTime(currentPreview.createdAt) }}</span>
+          </div>
+          <div class="preview-detail-row">
+            <span class="preview-detail-label">访问</span>
+            <span class="preview-detail-text">{{ currentPreview.viewCount }}</span>
+          </div>
+          <div class="preview-detail-row">
+            <span class="preview-detail-label">下载</span>
+            <span class="preview-detail-text">{{ currentPreview.downloadCount }}</span>
           </div>
         </div>
       </div>
@@ -1367,7 +1457,9 @@ onBeforeUnmount(() => {
             placeholder="搜索并选择至少一个标签"
             :disabled="uploadLocked"
           >
-            <el-option v-for="tag in uploadTagOptions" :key="tag.id" :label="tagOptionLabel(tag)" :value="tag.id" />
+            <el-option-group v-for="group in uploadTagOptionGroups" :key="group.key" :label="group.label">
+              <el-option v-for="tag in group.tags" :key="tag.id" :label="tag.name" :value="tag.id" />
+            </el-option-group>
           </el-select>
         </el-form-item>
       </el-form>
@@ -1422,7 +1514,9 @@ onBeforeUnmount(() => {
         </el-form-item>
         <el-form-item label="标签">
           <el-select v-model="editForm.tagIds" class="full-tag-select" multiple filterable clearable placeholder="搜索并选择标签">
-            <el-option v-for="tag in tagOptions" :key="tag.id" :label="tagOptionLabel(tag)" :value="tag.id" />
+            <el-option-group v-for="group in tagOptionGroups" :key="group.key" :label="group.label">
+              <el-option v-for="tag in group.tags" :key="tag.id" :label="tag.name" :value="tag.id" />
+            </el-option-group>
           </el-select>
         </el-form-item>
       </el-form>
@@ -1610,7 +1704,8 @@ onBeforeUnmount(() => {
 }
 
 .image-grid-title strong,
-.image-grid-file {
+.image-grid-file,
+.image-grid-counts {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -1628,6 +1723,12 @@ onBeforeUnmount(() => {
 
 .image-grid-file {
   color: #64748b;
+  font-size: 12px;
+  min-width: 0;
+}
+
+.image-grid-counts {
+  color: #475569;
   font-size: 12px;
   min-width: 0;
 }
@@ -1795,6 +1896,14 @@ onBeforeUnmount(() => {
   margin: 0 6px 6px 0;
 }
 
+.image-counts-cell {
+  color: #475569;
+  display: grid;
+  font-size: 12px;
+  gap: 3px;
+  line-height: 1.35;
+}
+
 .preview-image {
   display: block;
   margin: 0 auto;
@@ -1844,14 +1953,28 @@ onBeforeUnmount(() => {
   align-items: flex-start;
   display: grid;
   gap: 10px;
-  grid-template-columns: 42px minmax(0, 1fr);
+  grid-template-columns: 48px minmax(0, 1fr);
+}
+
+.preview-detail-grid {
+  display: grid;
+  gap: 10px 18px;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
 }
 
 .preview-detail-tags {
+  align-items: center;
   display: flex;
   flex-wrap: wrap;
   gap: 6px;
   min-width: 0;
+}
+
+.preview-detail-tag-group {
+  color: #64748b;
+  font-size: 12px;
+  line-height: 22px;
+  margin-right: 2px;
 }
 
 .pagination-row {
@@ -2138,6 +2261,10 @@ onBeforeUnmount(() => {
 
   .image-grid {
     grid-template-columns: repeat(auto-fill, minmax(156px, 1fr));
+  }
+
+  .preview-detail-grid {
+    grid-template-columns: 1fr;
   }
 }
 </style>
