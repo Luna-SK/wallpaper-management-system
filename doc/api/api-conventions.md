@@ -40,10 +40,16 @@
 - `PATCH /api/users/{id}`
 - `PUT /api/users/{id}/roles`
 - `PUT /api/users/{id}/password`
+- `POST /api/users/{id}/disable`
+- `POST /api/users/{id}/enable`
+- `DELETE /api/users/{id}/purge`
 - `GET /api/roles`
 - `POST /api/roles`
 - `PATCH /api/roles/{id}`
 - `PUT /api/roles/{id}/permissions`
+- `POST /api/roles/{id}/disable`
+- `POST /api/roles/{id}/enable`
+- `DELETE /api/roles/{id}/purge`
 - `GET /api/permissions`
 - `POST /api/image-upload-sessions`
 - `POST /api/image-upload-sessions/{id}/items`
@@ -96,9 +102,13 @@
 
 认证使用短期 JWT access token 和服务端 refresh session。`POST /api/auth/login` 返回 `accessToken`、`refreshToken`、过期时间、当前用户资料、角色和权限编码；后续请求使用 `Authorization: Bearer <accessToken>`。
 
-`POST /api/auth/refresh` 使用 refresh token 轮换新的 token 对；`POST /api/auth/logout` 撤销当前 session。用户可通过 `PATCH /api/auth/profile` 修改个人资料，通过 `PATCH /api/auth/password` 修改自己的密码。管理员通过 `PUT /api/users/{id}/password` 重置用户密码，重置后该用户已有 session 会被撤销。
+`POST /api/auth/register` 公开注册启用用户，默认分配 `VIEWER` 角色并返回 token 对。`POST /api/auth/refresh` 使用 refresh token 轮换新的 token 对；`POST /api/auth/logout` 撤销当前 session。用户可通过 `PATCH /api/auth/profile` 修改个人资料，通过 `PATCH /api/auth/password` 修改自己的密码。管理员通过 `PUT /api/users/{id}/password` 重置用户密码，重置后该用户已有 session 会被撤销。
 
 权限来自当前启用用户、启用角色和角色权限关系，请求鉴权时动态加载；角色权限调整后无需用户重新登录即可在下一次请求生效。开发令牌旁路默认关闭，仅在显式配置 `APP_SECURITY_DEVELOPMENT_TOKEN_ENABLED=true` 时启用。
+
+用户生命周期接口使用 `user:manage` 权限：停用用户会设置 `DISABLED` 并撤销该用户 session，启用用户恢复为 `ACTIVE`，彻底删除仅允许已停用用户，且禁止删除当前登录用户和内置种子账号 `admin`、`manager`、`editor`、`viewer`。
+
+角色生命周期接口使用 `role:manage` 权限：停用角色后不再参与后续请求的动态权限加载，启用角色恢复授权能力，彻底删除仅允许已停用角色，且禁止删除内置种子角色 `SYSTEM_ADMIN`、`DATA_MANAGER`、`TAG_EDITOR`、`VIEWER`。若角色仍被用户引用，返回 `409 REFERENCE_EXISTS`，响应 `data` 包含 `targetType`、`targetId` 和 `userCount`。
 
 ## System Settings
 
