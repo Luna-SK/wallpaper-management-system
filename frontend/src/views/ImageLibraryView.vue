@@ -1122,19 +1122,22 @@ onBeforeUnmount(() => {
                     >
                       <template #reference>
                         <el-tag class="image-grid-chip image-grid-more-chip" size="small" effect="plain">
-                          …
+                          +{{ hiddenGridTagCount(row) }}
                         </el-tag>
                       </template>
-                      <div class="image-grid-hidden-tags" :aria-label="`剩余 ${hiddenGridTagCount(row)} 个标签`">
-                        <el-tag
-                          v-for="tag in hiddenGridTags(row)"
-                          :key="tag.id"
-                          class="image-grid-hidden-tag"
-                          size="small"
-                          effect="light"
-                        >
-                          {{ tag.name }}
-                        </el-tag>
+                      <div class="image-grid-hidden-tags-panel" :aria-label="`剩余 ${hiddenGridTagCount(row)} 个标签`">
+                        <div class="image-grid-hidden-tags-title">剩余 {{ hiddenGridTagCount(row) }} 个标签</div>
+                        <div class="image-grid-hidden-tags">
+                          <el-tag
+                            v-for="tag in hiddenGridTags(row)"
+                            :key="tag.id"
+                            class="image-grid-hidden-tag"
+                            size="small"
+                            effect="light"
+                          >
+                            {{ tag.name }}
+                          </el-tag>
+                        </div>
                       </div>
                     </el-popover>
                     <span v-if="row.tags.length === 0" class="taxonomy-empty">暂无标签</span>
@@ -1669,6 +1672,17 @@ onBeforeUnmount(() => {
 .image-grid-more-chip {
   min-width: 28px;
   text-align: center;
+}
+
+.image-grid-hidden-tags-panel {
+  display: grid;
+  gap: 8px;
+}
+
+.image-grid-hidden-tags-title {
+  color: #64748b;
+  font-size: 12px;
+  line-height: 1;
 }
 
 .image-grid-hidden-tags {
