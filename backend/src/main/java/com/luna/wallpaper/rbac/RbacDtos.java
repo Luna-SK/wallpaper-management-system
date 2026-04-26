@@ -52,4 +52,7 @@ public final class RbacDtos {
 					permission.action());
 		}
 	}
+
+	public record RbacReferenceImpact(String targetType, String targetId, int userCount) {
+	}
 }

@@ -67,6 +67,14 @@ public class AppUser {
 		this.status = status;
 	}
 
+	void activate() {
+		this.status = UserStatus.ACTIVE;
+	}
+
+	void disable() {
+		this.status = UserStatus.DISABLED;
+	}
+
 	void changePasswordHash(String passwordHash) {
 		this.passwordHash = passwordHash;
 	}

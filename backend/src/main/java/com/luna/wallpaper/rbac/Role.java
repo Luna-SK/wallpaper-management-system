@@ -56,6 +56,14 @@ public class Role {
 		this.enabled = enabled;
 	}
 
+	void enable() {
+		this.enabled = true;
+	}
+
+	void disable() {
+		this.enabled = false;
+	}
+
 	void replacePermissions(Set<Permission> permissions) {
 		this.permissions.clear();
 		this.permissions.addAll(permissions);

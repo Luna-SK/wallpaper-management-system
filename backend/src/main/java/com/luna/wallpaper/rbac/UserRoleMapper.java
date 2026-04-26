@@ -25,6 +25,9 @@ public interface UserRoleMapper {
 	@Select("select role_id, count(*) user_count from user_roles group by role_id")
 	List<RoleUserCount> countUsersByRole();
 
+	@Select("select count(*) from user_roles where role_id = #{roleId}")
+	int countByRoleId(@Param("roleId") String roleId);
+
 	@Delete("delete from user_roles where user_id = #{userId}")
 	int deleteByUserId(@Param("userId") String userId);
 

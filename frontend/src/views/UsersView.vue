@@ -1,27 +1,47 @@
 <script setup lang="ts">
 import { computed, onMounted, reactive, ref } from 'vue'
-import { ElMessage } from 'element-plus'
+import { ElMessage, ElMessageBox } from 'element-plus'
 import { Plus, Search } from '@element-plus/icons-vue'
 import { isAxiosError } from 'axios'
 import {
+  disableRole,
+  disableUser,
+  enableRole,
+  enableUser,
   getPermissions,
   getRoles,
   getUsers,
+  purgeRole,
+  purgeUser,
   resetUserPassword,
   saveRole,
   saveUser,
   updateRolePermissions,
   updateUserRoles,
   type Permission,
+  type RbacReferenceImpact,
   type Role,
   type User,
   type UserStatus,
 } from '../api/users'
+import { useAuthStore } from '../stores/auth'
 import { useDialogEnterSubmit } from '../utils/dialogEnterSubmit'
 
+interface ApiErrorBody {
+  code?: string
+  message?: string
+  data?: RbacReferenceImpact
+}
+
+type UserStatusFilter = 'ALL' | UserStatus
+type RoleStatusFilter = 'ALL' | 'ENABLED' | 'DISABLED'
+
+const auth = useAuthStore()
 const loading = ref(false)
 const userKeyword = ref('')
 const roleKeyword = ref('')
+const userStatusFilter = ref<UserStatusFilter>('ALL')
+const roleStatusFilter = ref<RoleStatusFilter>('ALL')
 const users = ref<User[]>([])
 const roles = ref<Role[]>([])
 const permissions = ref<Permission[]>([])
@@ -43,15 +63,26 @@ const roleForm = reactive({ id: '', code: '', name: '', enabled: true })
 const resetPasswordForm = reactive({ userId: '', username: '', newPassword: '' })
 const selectedRoleIds = ref<string[]>([])
 const selectedPermissionIds = ref<string[]>([])
+const canManageUsers = computed(() => auth.hasPermission('user:manage'))
+const canManageRoles = computed(() => auth.hasPermission('role:manage'))
 
 const filteredUsers = computed(() => {
   const query = userKeyword.value.trim()
-  return users.value.filter((user) => !query || [user.username, user.displayName, user.roles.map((role) => role.name).join(',')].join(' ').includes(query))
+  return users.value.filter((user) => {
+    const matchesStatus = userStatusFilter.value === 'ALL' || user.status === userStatusFilter.value
+    const matchesKeyword = !query || [user.username, user.displayName, user.roles.map((role) => role.name).join(',')].join(' ').includes(query)
+    return matchesStatus && matchesKeyword
+  })
 })
 
 const filteredRoles = computed(() => {
   const query = roleKeyword.value.trim()
-  return roles.value.filter((role) => !query || `${role.code} ${role.name}`.includes(query))
+  return roles.value.filter((role) => {
+    const matchesStatus = roleStatusFilter.value === 'ALL'
+      || (roleStatusFilter.value === 'ENABLED' ? role.enabled : !role.enabled)
+    const matchesKeyword = !query || `${role.code} ${role.name}`.includes(query)
+    return matchesStatus && matchesKeyword
+  })
 })
 
 const resourceLabels: Record<string, string> = {
@@ -97,16 +128,35 @@ function permissionSummaryGroups(role: Role) {
 }
 
 function errorMessage(error: unknown, fallback: string) {
-  if (isAxiosError<{ message?: string }>(error)) {
+  if (isAxiosError<ApiErrorBody>(error)) {
     return error.response?.data?.message ?? fallback
   }
   return fallback
 }
 
+function referenceImpact(error: unknown) {
+  if (isAxiosError<ApiErrorBody>(error) && error.response?.status === 409 && error.response.data?.code === 'REFERENCE_EXISTS') {
+    return error.response.data.data ?? null
+  }
+  return null
+}
+
+function ensurePermission(allowed: boolean) {
+  if (!allowed) {
+    ElMessage.warning('当前用户没有此操作权限')
+    return false
+  }
+  return true
+}
+
 async function refresh() {
   loading.value = true
   try {
-    const [userRows, roleRows, permissionRows] = await Promise.all([getUsers(), getRoles(), getPermissions()])
+    const [userRows, roleRows, permissionRows] = await Promise.all([
+      canManageUsers.value ? getUsers() : Promise.resolve([]),
+      canManageUsers.value || canManageRoles.value ? getRoles() : Promise.resolve([]),
+      canManageUsers.value || canManageRoles.value ? getPermissions() : Promise.resolve([]),
+    ])
     users.value = userRows
     roles.value = roleRows
     permissions.value = permissionRows
@@ -118,6 +168,7 @@ async function refresh() {
 }
 
 function openUser(row?: User) {
+  if (!ensurePermission(canManageUsers.value)) return
   userForm.id = row?.id ?? ''
   userForm.username = row?.username ?? ''
   userForm.displayName = row?.displayName ?? ''
@@ -129,6 +180,7 @@ function openUser(row?: User) {
 }
 
 async function submitUser() {
+  if (!ensurePermission(canManageUsers.value)) return
   try {
     await saveUser(userForm)
     ElMessage.success('用户已保存')
@@ -140,6 +192,7 @@ async function submitUser() {
 }
 
 function openResetPassword(row: User) {
+  if (!ensurePermission(canManageUsers.value)) return
   resetPasswordForm.userId = row.id
   resetPasswordForm.username = row.username
   resetPasswordForm.newPassword = ''
@@ -147,6 +200,7 @@ function openResetPassword(row: User) {
 }
 
 async function submitResetPassword() {
+  if (!ensurePermission(canManageUsers.value)) return
   try {
     await resetUserPassword(resetPasswordForm.userId, resetPasswordForm.newPassword)
     ElMessage.success('密码已重置')
@@ -157,6 +211,7 @@ async function submitResetPassword() {
 }
 
 function openAssignRoles(row: User) {
+  if (!ensurePermission(canManageUsers.value)) return
   userForm.id = row.id
   userForm.username = row.username
   selectedRoleIds.value = row.roles.map((role) => role.id)
@@ -164,6 +219,7 @@ function openAssignRoles(row: User) {
 }
 
 async function submitUserRoles() {
+  if (!ensurePermission(canManageUsers.value)) return
   try {
     await updateUserRoles(userForm.id, selectedRoleIds.value)
     ElMessage.success('角色已分配')
@@ -174,7 +230,52 @@ async function submitUserRoles() {
   }
 }
 
+async function toggleUser(row: User) {
+  if (!ensurePermission(canManageUsers.value)) return
+  const disabling = row.status === 'ACTIVE'
+  if (disabling) {
+    try {
+      await ElMessageBox.confirm(`确定停用用户“${row.username}”？停用后该用户无法登录，现有会话也会失效。`, '停用用户', {
+        type: 'warning',
+      })
+    } catch {
+      return
+    }
+  }
+  try {
+    if (disabling) {
+      await disableUser(row.id)
+    } else {
+      await enableUser(row.id)
+    }
+    ElMessage.success(disabling ? '用户已停用' : '用户已启用')
+    await refresh()
+  } catch (error) {
+    ElMessage.error(errorMessage(error, disabling ? '用户停用失败' : '用户启用失败'))
+  }
+}
+
+async function purgeUserRow(row: User) {
+  if (!ensurePermission(canManageUsers.value)) return
+  try {
+    await ElMessageBox.confirm(`彻底删除用户“${row.username}”？此操作不可恢复。`, '彻底删除用户', {
+      confirmButtonText: '彻底删除',
+      type: 'warning',
+    })
+  } catch {
+    return
+  }
+  try {
+    await purgeUser(row.id)
+    ElMessage.success('用户已彻底删除')
+    await refresh()
+  } catch (error) {
+    ElMessage.error(errorMessage(error, '用户彻底删除失败'))
+  }
+}
+
 function openRole(row?: Role) {
+  if (!ensurePermission(canManageRoles.value)) return
   roleForm.id = row?.id ?? ''
   roleForm.code = row?.code ?? ''
   roleForm.name = row?.name ?? ''
@@ -183,6 +284,7 @@ function openRole(row?: Role) {
 }
 
 async function submitRole() {
+  if (!ensurePermission(canManageRoles.value)) return
   try {
     await saveRole(roleForm)
     ElMessage.success('角色已保存')
@@ -194,6 +296,7 @@ async function submitRole() {
 }
 
 function openRolePermissions(row: Role) {
+  if (!ensurePermission(canManageRoles.value)) return
   roleForm.id = row.id
   roleForm.name = row.name
   selectedPermissionIds.value = row.permissions.map((permission) => permission.id)
@@ -201,6 +304,7 @@ function openRolePermissions(row: Role) {
 }
 
 async function submitRolePermissions() {
+  if (!ensurePermission(canManageRoles.value)) return
   try {
     await updateRolePermissions(roleForm.id, selectedPermissionIds.value)
     ElMessage.success('权限已保存')
@@ -212,12 +316,51 @@ async function submitRolePermissions() {
 }
 
 async function toggleRole(row: Role) {
+  if (!ensurePermission(canManageRoles.value)) return
+  const disabling = row.enabled
+  if (disabling) {
+    try {
+      await ElMessageBox.confirm(`确定停用角色“${row.name}”？停用后拥有该角色的用户将立即失去对应权限。`, '停用角色', {
+        type: 'warning',
+      })
+    } catch {
+      return
+    }
+  }
   try {
-    await saveRole({ ...row, enabled: !row.enabled })
-    ElMessage.success(row.enabled ? '角色已停用' : '角色已启用')
+    if (disabling) {
+      await disableRole(row.id)
+    } else {
+      await enableRole(row.id)
+    }
+    ElMessage.success(disabling ? '角色已停用' : '角色已启用')
     await refresh()
   } catch (error) {
-    ElMessage.error(errorMessage(error, '角色状态更新失败'))
+    ElMessage.error(errorMessage(error, disabling ? '角色停用失败' : '角色启用失败'))
+  }
+}
+
+async function purgeRoleRow(row: Role) {
+  if (!ensurePermission(canManageRoles.value)) return
+  try {
+    await ElMessageBox.confirm(`彻底删除角色“${row.name}”？此操作不可恢复。`, '彻底删除角色', {
+      confirmButtonText: '彻底删除',
+      type: 'warning',
+    })
+  } catch {
+    return
+  }
+  try {
+    await purgeRole(row.id)
+    ElMessage.success('角色已彻底删除')
+    await refresh()
+  } catch (error) {
+    const impact = referenceImpact(error)
+    if (impact) {
+      ElMessage.warning(`角色仍有 ${impact.userCount} 个用户引用，请先取消分配`)
+      return
+    }
+    ElMessage.error(errorMessage(error, '角色彻底删除失败'))
   }
 }
 
@@ -240,8 +383,13 @@ onMounted(refresh)
 
     <div v-loading="loading" class="surface surface-pad">
       <el-tabs>
-        <el-tab-pane label="用户">
+        <el-tab-pane v-if="canManageUsers" label="用户">
           <div class="toolbar-row">
+            <el-radio-group v-model="userStatusFilter">
+              <el-radio-button label="ALL">全部</el-radio-button>
+              <el-radio-button label="ACTIVE">启用</el-radio-button>
+              <el-radio-button label="DISABLED">停用</el-radio-button>
+            </el-radio-group>
             <el-input v-model="userKeyword" placeholder="搜索用户名、姓名或角色" :prefix-icon="Search" style="max-width: 320px" />
             <el-button type="primary" :icon="Plus" @click="openUser()">新增用户</el-button>
           </div>
@@ -259,18 +407,27 @@ onMounted(refresh)
                 <el-tag :type="row.status === 'ACTIVE' ? 'success' : 'info'">{{ row.status === 'ACTIVE' ? '启用' : '停用' }}</el-tag>
               </template>
             </el-table-column>
-            <el-table-column label="操作" width="260" fixed="right">
+            <el-table-column label="操作" width="380" fixed="right">
               <template #default="{ row }">
                 <el-button link type="primary" @click="openUser(row)">编辑</el-button>
                 <el-button link type="primary" @click="openAssignRoles(row)">分配角色</el-button>
                 <el-button link type="primary" @click="openResetPassword(row)">重置密码</el-button>
+                <el-button link :type="row.status === 'ACTIVE' ? 'warning' : 'success'" @click="toggleUser(row)">
+                  {{ row.status === 'ACTIVE' ? '停用' : '启用' }}
+                </el-button>
+                <el-button v-if="row.status === 'DISABLED'" link type="danger" @click="purgeUserRow(row)">彻底删除</el-button>
               </template>
             </el-table-column>
           </el-table>
         </el-tab-pane>
 
-        <el-tab-pane label="角色">
+        <el-tab-pane v-if="canManageRoles" label="角色">
           <div class="toolbar-row">
+            <el-radio-group v-model="roleStatusFilter">
+              <el-radio-button label="ALL">全部</el-radio-button>
+              <el-radio-button label="ENABLED">启用</el-radio-button>
+              <el-radio-button label="DISABLED">停用</el-radio-button>
+            </el-radio-group>
             <el-input v-model="roleKeyword" placeholder="搜索角色编码或名称" :prefix-icon="Search" style="max-width: 320px" />
             <el-button type="primary" :icon="Plus" @click="openRole()">新增角色</el-button>
           </div>
@@ -290,17 +447,18 @@ onMounted(refresh)
               </template>
             </el-table-column>
             <el-table-column prop="userCount" label="用户数" width="100" />
-            <el-table-column label="操作" width="230" fixed="right">
+            <el-table-column label="操作" width="280" fixed="right">
               <template #default="{ row }">
                 <el-button link type="primary" @click="openRole(row)">编辑</el-button>
                 <el-button link type="primary" @click="openRolePermissions(row)">配置权限</el-button>
-                <el-button link type="primary" @click="toggleRole(row)">{{ row.enabled ? '停用' : '启用' }}</el-button>
+                <el-button link :type="row.enabled ? 'warning' : 'success'" @click="toggleRole(row)">{{ row.enabled ? '停用' : '启用' }}</el-button>
+                <el-button v-if="!row.enabled" link type="danger" @click="purgeRoleRow(row)">彻底删除</el-button>
               </template>
             </el-table-column>
           </el-table>
         </el-tab-pane>
 
-        <el-tab-pane label="权限">
+        <el-tab-pane v-if="canManageRoles" label="权限">
           <el-table :data="permissions" stripe>
             <el-table-column prop="code" label="权限编码" width="180" />
             <el-table-column prop="name" label="权限名称" width="160" />
@@ -309,6 +467,7 @@ onMounted(refresh)
           </el-table>
         </el-tab-pane>
       </el-tabs>
+      <el-empty v-if="!canManageUsers && !canManageRoles" description="当前用户没有用户或角色管理权限" />
     </div>
 
     <el-dialog v-model="userDialogVisible" title="用户" width="480px">
@@ -318,9 +477,6 @@ onMounted(refresh)
         <el-form-item v-if="!userForm.id" label="初始密码"><el-input v-model="userForm.initialPassword" type="password" show-password /></el-form-item>
         <el-form-item label="邮箱"><el-input v-model="userForm.email" /></el-form-item>
         <el-form-item label="电话"><el-input v-model="userForm.phone" /></el-form-item>
-        <el-form-item label="状态">
-          <el-select v-model="userForm.status"><el-option label="启用" value="ACTIVE" /><el-option label="停用" value="DISABLED" /></el-select>
-        </el-form-item>
       </el-form>
       <template #footer><el-button @click="userDialogVisible = false">取消</el-button><el-button type="primary" @click="submitUser">保存</el-button></template>
     </el-dialog>
@@ -346,7 +502,6 @@ onMounted(refresh)
       <el-form label-width="86px">
         <el-form-item label="角色编码"><el-input v-model="roleForm.code" /></el-form-item>
         <el-form-item label="角色名称"><el-input v-model="roleForm.name" /></el-form-item>
-        <el-form-item label="状态"><el-switch v-model="roleForm.enabled" active-text="启用" inactive-text="停用" /></el-form-item>
       </el-form>
       <template #footer><el-button @click="roleDialogVisible = false">取消</el-button><el-button type="primary" @click="submitRole">保存</el-button></template>
     </el-dialog>

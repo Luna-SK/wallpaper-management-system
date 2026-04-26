@@ -1,5 +1,6 @@
 package com.luna.wallpaper.rbac;
 
+import org.apache.ibatis.annotations.Delete;
 import org.apache.ibatis.annotations.Param;
 import org.apache.ibatis.annotations.Select;
 import org.apache.ibatis.annotations.Update;
@@ -30,4 +31,7 @@ public interface AuthRefreshTokenMapper extends BaseMapper<AuthRefreshToken> {
 			  and revoked_at is null
 			""")
 	int revokeOtherSessions(@Param("userId") String userId, @Param("sessionId") String sessionId);
+
+	@Delete("delete from auth_refresh_tokens where user_id = #{userId}")
+	int deleteByUserId(@Param("userId") String userId);
 }

@@ -4,7 +4,9 @@ import java.util.List;
 
 import jakarta.validation.Valid;
 
+import org.springframework.security.core.Authentication;
 import org.springframework.security.access.prepost.PreAuthorize;
+import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PatchMapping;
 import org.springframework.web.bind.annotation.PathVariable;
@@ -63,6 +65,24 @@ class RbacController {
 		service.resetUserPassword(id, request);
 	}
 
+	@PostMapping("/users/{id}/disable")
+	@PreAuthorize("hasAuthority('user:manage')")
+	UserResponse disableUser(@PathVariable String id) {
+		return service.disableUser(id);
+	}
+
+	@PostMapping("/users/{id}/enable")
+	@PreAuthorize("hasAuthority('user:manage')")
+	UserResponse enableUser(@PathVariable String id) {
+		return service.enableUser(id);
+	}
+
+	@DeleteMapping("/users/{id}/purge")
+	@PreAuthorize("hasAuthority('user:manage')")
+	void purgeUser(@PathVariable String id, Authentication authentication) {
+		service.purgeUser(id, authentication);
+	}
+
 	@GetMapping("/roles")
 	@PreAuthorize("hasAnyAuthority('user:manage','role:manage')")
 	List<RoleResponse> roles() {
@@ -85,6 +105,24 @@ class RbacController {
 	@PreAuthorize("hasAuthority('role:manage')")
 	RoleResponse updateRolePermissions(@PathVariable String id, @RequestBody RolePermissionsRequest request) {
 		return service.updateRolePermissions(id, request);
+	}
+
+	@PostMapping("/roles/{id}/disable")
+	@PreAuthorize("hasAuthority('role:manage')")
+	RoleResponse disableRole(@PathVariable String id) {
+		return service.disableRole(id);
+	}
+
+	@PostMapping("/roles/{id}/enable")
+	@PreAuthorize("hasAuthority('role:manage')")
+	RoleResponse enableRole(@PathVariable String id) {
+		return service.enableRole(id);
+	}
+
+	@DeleteMapping("/roles/{id}/purge")
+	@PreAuthorize("hasAuthority('role:manage')")
+	void purgeRole(@PathVariable String id) {
+		service.purgeRole(id);
 	}
 
 	@GetMapping("/permissions")

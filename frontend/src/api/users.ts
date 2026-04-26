@@ -29,6 +29,12 @@ export interface User {
   roles: Array<{ id: string; code: string; name: string }>
 }
 
+export interface RbacReferenceImpact {
+  targetType: string
+  targetId: string
+  userCount: number
+}
+
 export async function getUsers() {
   const response = await http.get<User[]>('/users')
   return response.data
@@ -51,6 +57,20 @@ export async function resetUserPassword(userId: string, newPassword: string) {
   await http.put(`/users/${userId}/password`, { newPassword })
 }
 
+export async function disableUser(userId: string) {
+  const response = await http.post<User>(`/users/${userId}/disable`)
+  return response.data
+}
+
+export async function enableUser(userId: string) {
+  const response = await http.post<User>(`/users/${userId}/enable`)
+  return response.data
+}
+
+export async function purgeUser(userId: string) {
+  await http.delete(`/users/${userId}/purge`)
+}
+
 export async function updateUserRoles(userId: string, roleIds: string[]) {
   const response = await http.put<User>(`/users/${userId}/roles`, { roleIds })
   return response.data
@@ -69,6 +89,20 @@ export async function saveRole(payload: Partial<Role> & { code: string; name: st
   }
   const response = payload.id ? await http.patch<Role>(`/roles/${payload.id}`, body) : await http.post<Role>('/roles', body)
   return response.data
+}
+
+export async function disableRole(roleId: string) {
+  const response = await http.post<Role>(`/roles/${roleId}/disable`)
+  return response.data
+}
+
+export async function enableRole(roleId: string) {
+  const response = await http.post<Role>(`/roles/${roleId}/enable`)
+  return response.data
+}
+
+export async function purgeRole(roleId: string) {
+  await http.delete(`/roles/${roleId}/purge`)
 }
 
 export async function updateRolePermissions(roleId: string, permissionIds: string[]) {

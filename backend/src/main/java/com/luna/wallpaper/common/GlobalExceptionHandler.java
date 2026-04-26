@@ -10,6 +10,8 @@ import org.springframework.web.bind.annotation.RestControllerAdvice;
 
 import com.luna.wallpaper.taxonomy.TaxonomyReferenceException;
 import com.luna.wallpaper.taxonomy.TaxonomyDtos.ReferenceImpact;
+import com.luna.wallpaper.rbac.RbacDtos.RbacReferenceImpact;
+import com.luna.wallpaper.rbac.RbacReferenceException;
 
 import jakarta.validation.ConstraintViolationException;
 
@@ -23,6 +25,12 @@ class GlobalExceptionHandler {
 
 	@ExceptionHandler(TaxonomyReferenceException.class)
 	ResponseEntity<ApiResponse<ReferenceImpact>> handleTaxonomyReference(TaxonomyReferenceException exception) {
+		return ResponseEntity.status(HttpStatus.CONFLICT)
+				.body(new ApiResponse<>("REFERENCE_EXISTS", exception.getMessage(), exception.impact(), null));
+	}
+
+	@ExceptionHandler(RbacReferenceException.class)
+	ResponseEntity<ApiResponse<RbacReferenceImpact>> handleRbacReference(RbacReferenceException exception) {
 		return ResponseEntity.status(HttpStatus.CONFLICT)
 				.body(new ApiResponse<>("REFERENCE_EXISTS", exception.getMessage(), exception.impact(), null));
 	}
