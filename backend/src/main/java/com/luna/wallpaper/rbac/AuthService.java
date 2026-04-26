@@ -77,7 +77,7 @@ public class AuthService {
 	public AuthResponse login(LoginRequest request, HttpServletRequest servletRequest) {
 		AppUser user = users.findByUsername(normalizeUsername(request.username()))
 				.orElseThrow(() -> new BadCredentialsException("用户名或密码错误"));
-		if (!"ACTIVE".equals(user.status())) {
+		if (!user.status().isActive()) {
 			throw new DisabledException("用户已停用");
 		}
 		if (!passwordEncoder.matches(request.password(), user.passwordHash())) {
@@ -85,7 +85,7 @@ public class AuthService {
 		}
 		UserAccess access = loadUserAccess(user);
 		TokenBundle tokens = createSessionAndTokens(user, servletRequest);
-		auditLogService.record("auth.login", "USER", user.id(), "{}");
+		auditLogService.record("auth.login", "USER", user.id(), Map.of());
 		return response(access, tokens);
 	}
 
@@ -105,7 +105,7 @@ public class AuthService {
 		user.replaceRoles(new LinkedHashSet<>(List.of(viewer)));
 		UserAccess access = loadUserAccess(user);
 		TokenBundle tokens = createSessionAndTokens(user, servletRequest);
-		auditLogService.record("auth.register", "USER", user.id(), "{\"username\":\"" + escape(user.username()) + "\"}");
+		auditLogService.record("auth.register", "USER", user.id(), Map.of("username", user.username()));
 		return response(access, tokens);
 	}
 
@@ -119,7 +119,7 @@ public class AuthService {
 		AppUser user = requireActiveUser(session.userId());
 		UserAccess access = loadUserAccess(user);
 		TokenBundle tokens = rotateSessionAndTokens(session, user, servletRequest);
-		auditLogService.record("auth.refresh", "USER", user.id(), "{\"sessionId\":\"" + session.id() + "\"}");
+		auditLogService.record("auth.refresh", "USER", user.id(), Map.of("sessionId", session.id()));
 		return response(access, tokens);
 	}
 
@@ -127,7 +127,7 @@ public class AuthService {
 	public void logout(Authentication authentication) {
 		AuthenticatedUser current = currentUser(authentication);
 		refreshTokens.revokeById(current.sessionId());
-		auditLogService.record("auth.logout", "USER", current.id(), "{\"sessionId\":\"" + current.sessionId() + "\"}");
+		auditLogService.record("auth.logout", "USER", current.id(), Map.of("sessionId", current.sessionId()));
 	}
 
 	@Transactional(readOnly = true)
@@ -142,7 +142,7 @@ public class AuthService {
 		AppUser user = requireActiveUser(current.id());
 		user.update(request.displayName().trim(), request.email(), request.phone(), user.status());
 		users.updateById(user);
-		auditLogService.record("auth.profile.update", "USER", user.id(), "{}");
+		auditLogService.record("auth.profile.update", "USER", user.id(), Map.of());
 		return userResponse(loadUserAccess(user));
 	}
 
@@ -157,8 +157,7 @@ public class AuthService {
 		user.changePasswordHash(passwordEncoder.encode(request.newPassword()));
 		users.updateById(user);
 		refreshTokens.revokeOtherSessions(user.id(), current.sessionId());
-		auditLogService.record("auth.password.change", "USER", user.id(),
-				"{\"revokedOtherSessions\":true}");
+		auditLogService.record("auth.password.change", "USER", user.id(), Map.of("revokedOtherSessions", true));
 	}
 
 	@Transactional
@@ -169,7 +168,7 @@ public class AuthService {
 		user.changePasswordHash(passwordEncoder.encode(newPassword));
 		users.updateById(user);
 		refreshTokens.revokeByUserId(user.id());
-		auditLogService.record("user.password.reset", "USER", user.id(), "{\"revokedSessions\":true}");
+		auditLogService.record("user.password.reset", "USER", user.id(), Map.of("revokedSessions", true));
 	}
 
 	@Transactional(readOnly = true)
@@ -276,7 +275,7 @@ public class AuthService {
 	private AppUser requireActiveUser(String id) {
 		AppUser user = Optional.ofNullable(users.selectById(id))
 				.orElseThrow(() -> new BadCredentialsException("登录已失效，请重新登录"));
-		if (!"ACTIVE".equals(user.status())) {
+		if (!user.status().isActive()) {
 			throw new DisabledException("用户已停用");
 		}
 		return user;
@@ -330,10 +329,6 @@ public class AuthService {
 	private static String userAgent(HttpServletRequest request) {
 		String value = request.getHeader("User-Agent");
 		return value == null || value.length() <= 512 ? value : value.substring(0, 512);
-	}
-
-	private static String escape(String value) {
-		return value == null ? "" : value.replace("\\", "\\\\").replace("\"", "\\\"");
 	}
 
 	private record UserAccess(AppUser user, List<Role> roles, List<Permission> permissions) {

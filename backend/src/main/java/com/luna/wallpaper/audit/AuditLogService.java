@@ -4,25 +4,46 @@ import java.nio.charset.StandardCharsets;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.util.List;
+import java.util.Map;
 
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.security.core.context.SecurityContextHolder;
 
 import com.luna.wallpaper.rbac.AuthenticatedUser;
+import tools.jackson.databind.ObjectMapper;
 
 @Service
 public class AuditLogService {
 
 	private final AuditLogMapper mapper;
+	private final ObjectMapper objectMapper;
 
-	AuditLogService(AuditLogMapper mapper) {
+	@Autowired
+	AuditLogService(AuditLogMapper mapper, ObjectMapper objectMapper) {
 		this.mapper = mapper;
+		this.objectMapper = objectMapper;
 	}
 
 	@Transactional
 	public void record(String action, String targetType, String targetId, String detailJson) {
 		mapper.insert(new AuditLog(currentActorId(), action, targetType, targetId, detailJson));
+	}
+
+	@Transactional
+	public void record(String action, String targetType, String targetId, Object detail) {
+		mapper.insert(new AuditLog(currentActorId(), action, targetType, targetId, toJson(detail)));
+	}
+
+	private String toJson(Object detail) {
+		Object safeDetail = detail == null ? Map.of() : detail;
+		try {
+			return objectMapper.writeValueAsString(safeDetail);
+		}
+		catch (Exception ex) {
+			throw new IllegalStateException("审计日志详情序列化失败", ex);
+		}
 	}
 
 	@Transactional(readOnly = true)

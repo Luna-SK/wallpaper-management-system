@@ -37,7 +37,7 @@ class ImageAsset {
 
 	private String sourcePath;
 
-	private String status = "ACTIVE";
+	private ImageStatus status = ImageStatus.ACTIVE;
 
 	private long viewCount;
 
@@ -89,7 +89,7 @@ class ImageAsset {
 	long sizeBytes() { return sizeBytes; }
 	Integer width() { return width; }
 	Integer height() { return height; }
-	String status() { return status; }
+	ImageStatus status() { return status; }
 	long viewCount() { return viewCount; }
 	long downloadCount() { return downloadCount; }
 	String currentVersionId() { return currentVersionId; }
@@ -110,18 +110,18 @@ class ImageAsset {
 		this.tags.addAll(tags);
 	}
 
-	void updateMetadata(String title, String status) {
+	void updateMetadata(String title, ImageStatus status) {
 		this.title = title;
 		this.status = status;
 	}
 
 	void markDeleted() {
-		this.status = "DELETED";
+		this.status = ImageStatus.DELETED;
 		this.deletedAt = LocalDateTime.now();
 	}
 
 	void restore() {
-		this.status = "ACTIVE";
+		this.status = ImageStatus.ACTIVE;
 		this.deletedAt = null;
 	}
 

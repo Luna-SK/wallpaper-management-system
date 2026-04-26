@@ -35,7 +35,7 @@ public interface UploadBatchItemMapper extends BaseMapper<UploadBatchItem> {
 			</foreach>
 			</script>
 			""")
-	List<UploadBatchItem> selectByStatuses(@Param("statuses") Collection<String> statuses);
+	List<UploadBatchItem> selectByStatuses(@Param("statuses") Collection<UploadBatchItemStatus> statuses);
 
 	@Select("""
 			<script>
@@ -60,5 +60,5 @@ public interface UploadBatchItemMapper extends BaseMapper<UploadBatchItem> {
 			</foreach>
 			</script>
 			""")
-	List<String> selectReferencedObjectKeysByStatuses(@Param("statuses") Collection<String> statuses);
+	List<String> selectReferencedObjectKeysByStatuses(@Param("statuses") Collection<UploadBatchItemStatus> statuses);
 }

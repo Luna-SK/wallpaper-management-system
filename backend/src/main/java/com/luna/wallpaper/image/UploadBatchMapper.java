@@ -22,6 +22,6 @@ public interface UploadBatchMapper extends BaseMapper<UploadBatch> {
 			and expires_at &lt; #{expiresAt}
 			</script>
 			""")
-	List<UploadBatch> selectExpired(@Param("statuses") Collection<String> statuses,
+	List<UploadBatch> selectExpired(@Param("statuses") Collection<UploadBatchStatus> statuses,
 			@Param("expiresAt") LocalDateTime expiresAt);
 }

@@ -64,7 +64,7 @@ class RbacService {
 				passwordEncoder.encode(request.initialPassword()));
 		user.update(user.displayName(), user.email(), user.phone(), normalizeStatus(request.status()));
 		users.insert(user);
-		auditLogService.record("user.create", "USER", user.id(), "{\"username\":\"" + user.username() + "\"}");
+		auditLogService.record("user.create", "USER", user.id(), Map.of("username", user.username()));
 		return UserResponse.from(user);
 	}
 
@@ -73,7 +73,7 @@ class RbacService {
 		AppUser user = getUser(id);
 		user.update(request.displayName().trim(), request.email(), request.phone(), normalizeStatus(request.status()));
 		users.updateById(user);
-		auditLogService.record("user.update", "USER", id, "{\"status\":\"" + user.status() + "\"}");
+		auditLogService.record("user.update", "USER", id, Map.of("status", user.status().name()));
 		return UserResponse.from(user);
 	}
 
@@ -86,7 +86,7 @@ class RbacService {
 			userRoles.insertBatch(id, selected.stream().map(Role::id).toList());
 		}
 		user.replaceRoles(selected);
-		auditLogService.record("user.roles.update", "USER", id, "{\"roleCount\":" + selected.size() + "}");
+		auditLogService.record("user.roles.update", "USER", id, Map.of("roleCount", selected.size()));
 		return UserResponse.from(user);
 	}
 
@@ -97,7 +97,7 @@ class RbacService {
 		user.changePasswordHash(passwordEncoder.encode(request.newPassword()));
 		users.updateById(user);
 		refreshTokens.revokeByUserId(id);
-		auditLogService.record("user.password.reset", "USER", id, "{\"revokedSessions\":true}");
+		auditLogService.record("user.password.reset", "USER", id, Map.of("revokedSessions", true));
 	}
 
 	@Transactional(readOnly = true)
@@ -120,7 +120,7 @@ class RbacService {
 		Role role = new Role(code, request.name().trim());
 		role.update(code, role.name(), request.enabled() == null || request.enabled());
 		roles.insert(role);
-		auditLogService.record("role.create", "ROLE", role.id(), "{\"code\":\"" + role.code() + "\"}");
+		auditLogService.record("role.create", "ROLE", role.id(), Map.of("code", role.code()));
 		return RoleResponse.from(role, 0);
 	}
 
@@ -133,7 +133,7 @@ class RbacService {
 		}
 		role.update(code, request.name().trim(), request.enabled() == null || request.enabled());
 		roles.updateById(role);
-		auditLogService.record("role.update", "ROLE", id, "{\"enabled\":" + role.enabled() + "}");
+		auditLogService.record("role.update", "ROLE", id, Map.of("enabled", role.enabled()));
 		return RoleResponse.from(role, 0);
 	}
 
@@ -147,7 +147,7 @@ class RbacService {
 			rolePermissions.insertBatch(id, selected.stream().map(Permission::id).toList());
 		}
 		role.replacePermissions(selected);
-		auditLogService.record("role.permissions.update", "ROLE", id, "{\"permissionCount\":" + selected.size() + "}");
+		auditLogService.record("role.permissions.update", "ROLE", id, Map.of("permissionCount", selected.size()));
 		return RoleResponse.from(role, 0);
 	}
 
@@ -216,8 +216,8 @@ class RbacService {
 		return code.trim().toUpperCase().replace(' ', '_');
 	}
 
-	private static String normalizeStatus(String status) {
-		return status == null || status.isBlank() ? "ACTIVE" : status.trim().toUpperCase();
+	private static UserStatus normalizeStatus(String status) {
+		return UserStatus.parseOrDefault(status, UserStatus.ACTIVE);
 	}
 
 	private static void requirePassword(String password) {

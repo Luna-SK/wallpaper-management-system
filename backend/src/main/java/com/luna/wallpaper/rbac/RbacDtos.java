@@ -21,8 +21,8 @@ public final class RbacDtos {
 	public record UserResponse(String id, String username, String displayName, String email, String phone, String status,
 			List<RoleBrief> roles) {
 		static UserResponse from(AppUser user) {
-			return new UserResponse(user.id(), user.username(), user.displayName(), user.email(), user.phone(), user.status(),
-					user.roles().stream().map(RoleBrief::from).toList());
+			return new UserResponse(user.id(), user.username(), user.displayName(), user.email(), user.phone(),
+					user.status().name(), user.roles().stream().map(RoleBrief::from).toList());
 		}
 	}
 

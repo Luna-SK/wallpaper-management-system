@@ -37,7 +37,7 @@ public final class AuthDtos {
 			String status, List<RoleBrief> roles, List<PermissionResponse> permissions) {
 		static AuthUserResponse from(AppUser user, List<Permission> permissions) {
 			return new AuthUserResponse(user.id(), user.username(), user.displayName(), user.email(), user.phone(),
-					user.status(), user.roles().stream().map(RoleBrief::from).toList(),
+					user.status().name(), user.roles().stream().map(RoleBrief::from).toList(),
 					permissions.stream().map(PermissionResponse::from).toList());
 		}
 	}

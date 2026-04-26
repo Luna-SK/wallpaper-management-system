@@ -1,4 +1,5 @@
 import { http } from './http'
+import type { UserStatus } from './users'
 
 interface ApiResponse<T> {
   code: string
@@ -27,7 +28,7 @@ export interface AuthUser {
   displayName: string
   email: string | null
   phone: string | null
-  status: string
+  status: UserStatus
   roles: RoleBrief[]
   permissions: Permission[]
 }

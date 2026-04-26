@@ -1,5 +1,7 @@
 package com.luna.wallpaper.settings;
 
+import java.util.Map;
+
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.scheduling.support.CronExpression;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -61,7 +63,7 @@ class SystemSettingsController {
 		settings.put(SoftDeleteCleanupSettings.RETENTION_DAYS, String.valueOf(retention));
 		settings.put(SoftDeleteCleanupSettings.CLEANUP_ENABLED, String.valueOf(Boolean.TRUE.equals(request.softDeleteCleanupEnabled())));
 		settings.put(SoftDeleteCleanupSettings.CLEANUP_CRON, cleanupCron);
-		auditLogService.record("settings.update", "SYSTEM_SETTINGS", "system", "{\"previewQuality\":\"" + quality + "\"}");
+		auditLogService.record("settings.update", "SYSTEM_SETTINGS", "system", Map.of("previewQuality", quality));
 		return get();
 	}
 

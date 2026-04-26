@@ -27,7 +27,7 @@ public class AppUser {
 
 	private String passwordHash;
 
-	private String status = "ACTIVE";
+	private UserStatus status = UserStatus.ACTIVE;
 
 	@TableField(exist = false)
 	private Set<Role> roles = new LinkedHashSet<>();
@@ -48,7 +48,7 @@ public class AppUser {
 		this.email = email;
 		this.phone = phone;
 		this.passwordHash = passwordHash;
-		this.status = "ACTIVE";
+		this.status = UserStatus.ACTIVE;
 	}
 
 	String id() { return id; }
@@ -57,10 +57,10 @@ public class AppUser {
 	String email() { return email; }
 	String phone() { return phone; }
 	String passwordHash() { return passwordHash; }
-	String status() { return status; }
+	UserStatus status() { return status; }
 	Set<Role> roles() { return roles; }
 
-	void update(String displayName, String email, String phone, String status) {
+	void update(String displayName, String email, String phone, UserStatus status) {
 		this.displayName = displayName;
 		this.email = email;
 		this.phone = phone;

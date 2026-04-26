@@ -43,7 +43,7 @@ class UploadBatchItem {
 
 	private String standardPreviewObjectKey;
 
-	private String status = "PROCESSING";
+	private UploadBatchItemStatus status = UploadBatchItemStatus.PROCESSING;
 
 	private int progressPercent;
 
@@ -72,7 +72,7 @@ class UploadBatchItem {
 	String candidateImageId() { return candidateImageId; }
 	String originalFilename() { return originalFilename; }
 	String sha256() { return sha256; }
-	String status() { return status; }
+	UploadBatchItemStatus status() { return status; }
 	int progressPercent() { return progressPercent; }
 	int retryCount() { return retryCount; }
 	String errorMessage() { return errorMessage; }
@@ -101,7 +101,7 @@ class UploadBatchItem {
 		this.thumbnailObjectKey = stored.thumbnailObjectKey();
 		this.highPreviewObjectKey = stored.highPreviewObjectKey();
 		this.standardPreviewObjectKey = stored.standardPreviewObjectKey();
-		this.status = "STAGED";
+		this.status = UploadBatchItemStatus.STAGED;
 		this.progressPercent = 100;
 		this.errorMessage = null;
 	}
@@ -113,13 +113,13 @@ class UploadBatchItem {
 	void duplicated(String imageId, String sha256) {
 		this.imageId = imageId;
 		this.sha256 = sha256 == null ? "" : sha256;
-		this.status = "DUPLICATE";
+		this.status = UploadBatchItemStatus.DUPLICATE;
 		this.progressPercent = 100;
 		this.errorMessage = "图片内容重复，已关联既有图片";
 	}
 
 	void failed(String message) {
-		this.status = "FAILED";
+		this.status = UploadBatchItemStatus.FAILED;
 		this.progressPercent = 100;
 		this.errorMessage = message;
 	}
@@ -134,7 +134,7 @@ class UploadBatchItem {
 		this.originalFilename = originalFilename;
 		this.sha256 = "";
 		this.sizeBytes = null;
-		this.status = "PROCESSING";
+		this.status = UploadBatchItemStatus.PROCESSING;
 		this.progressPercent = 0;
 		this.errorMessage = null;
 		clearStoredObjects();
@@ -142,13 +142,13 @@ class UploadBatchItem {
 
 	void confirmed(String imageId) {
 		this.imageId = imageId;
-		this.status = "CONFIRMED";
+		this.status = UploadBatchItemStatus.CONFIRMED;
 		this.progressPercent = 100;
 		this.errorMessage = null;
 	}
 
 	void cancelled() {
-		this.status = "CANCELLED";
+		this.status = UploadBatchItemStatus.CANCELLED;
 		this.progressPercent = 100;
 		clearStoredObjects();
 	}

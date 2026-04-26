@@ -11,6 +11,7 @@ import {
   getAuditRetention,
   type AuditLog,
   type AuditArchiveRun,
+  type AuditArchiveRunStatus,
 } from '../api/audit'
 
 const loading = ref(false)
@@ -92,7 +93,7 @@ function triggerLabel(triggerType: string) {
   return triggerType
 }
 
-function statusLabel(status: string) {
+function statusLabel(status: AuditArchiveRunStatus) {
   if (status === 'SUCCESS') {
     return '成功'
   }

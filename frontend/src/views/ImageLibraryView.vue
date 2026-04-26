@@ -22,9 +22,12 @@ import {
   restoreImage,
   updateImage,
   uploadSessionItem,
+  type ImageStatus,
   type ImageRecord,
   type UploadBatch,
+  type UploadBatchItemStatus,
   type UploadBatchItem,
+  type UploadBatchStatus,
 } from '../api/images'
 import { getCategories, getTags, type Category, type Tag } from '../api/taxonomy'
 import { useAuthStore } from '../stores/auth'
@@ -35,7 +38,7 @@ const loading = ref(false)
 const keyword = ref('')
 const selectedCategoryId = ref('')
 const selectedTagId = ref('')
-const imageScope = ref<'ACTIVE' | 'DELETED'>('ACTIVE')
+const imageScope = ref<ImageStatus>('ACTIVE')
 const displayMode = ref<'grid' | 'list'>('grid')
 const rows = ref<ImageRecord[]>([])
 const imageTableRef = ref<TableInstance>()
@@ -56,7 +59,12 @@ const previewImageId = ref('')
 const previewUrl = ref('')
 const editing = ref<ImageRecord | null>(null)
 const editVisible = ref(false)
-const editForm = reactive({ title: '', status: 'ACTIVE', categoryId: '', tagIds: [] as string[] })
+const editForm = reactive<{ title: string; status: ImageStatus; categoryId: string; tagIds: string[] }>({
+  title: '',
+  status: 'ACTIVE',
+  categoryId: '',
+  tagIds: [],
+})
 const uploadVisible = ref(false)
 const uploadLoading = ref(false)
 const uploadConfirming = ref(false)
@@ -70,6 +78,8 @@ const uploadSession = ref<UploadBatch | null>(null)
 const uploadAbortController = ref<AbortController | null>(null)
 const uploadItemFiles = reactive<Record<string, File>>({})
 const uploadForm = reactive({ categoryId: '', tagIds: [] as string[] })
+const confirmableUploadItemStatuses: UploadBatchItemStatus[] = ['STAGED', 'DUPLICATE']
+const terminalUploadBatchStatuses: UploadBatchStatus[] = ['CONFIRMED', 'CANCELLED', 'EXPIRED']
 
 const categoryOptions = computed(() => categories.value.filter((category) => category.enabled))
 const tagOptions = computed(() => tags.value.filter((tag) => tag.enabled))
@@ -88,7 +98,7 @@ const currentPreview = computed(() => previewIndex.value >= 0 ? rows.value[previ
 const canPreviewPrevious = computed(() => previewIndex.value > 0)
 const canPreviewNext = computed(() => previewIndex.value >= 0 && previewIndex.value < rows.value.length - 1)
 const selectedSingleUploadFile = computed(() => uploadFileList.value[0] ?? null)
-const uploadHasStagedItems = computed(() => Boolean(uploadSession.value?.items.some((item) => item.status === 'STAGED' || item.status === 'DUPLICATE')))
+const uploadHasStagedItems = computed(() => Boolean(uploadSession.value?.items.some((item) => confirmableUploadItemStatuses.includes(item.status))))
 const uploadHasFailedItems = computed(() => Boolean(uploadSession.value?.items.some((item) => item.status === 'FAILED')))
 const uploadCanConfirmSession = computed(() => Boolean(uploadSession.value && uploadHasStagedItems.value && !uploadHasFailedItems.value))
 const uploadLocked = computed(() => Boolean(uploadSession.value) || uploadLoading.value || uploadConfirming.value || uploadCancelling.value)
@@ -140,13 +150,13 @@ function formatBytes(value: number) {
   return `${(value / 1024 / 1024).toFixed(1)} MB`
 }
 
-function statusLabel(status: string) {
+function statusLabel(status: ImageStatus | 'DISABLED') {
   if (status === 'DELETED') return '已停用'
   if (status === 'DISABLED') return '停用'
   return '启用'
 }
 
-function statusTagType(status: string) {
+function statusTagType(status: ImageStatus | 'DISABLED') {
   if (status === 'DELETED') return 'info'
   if (status === 'DISABLED') return 'warning'
   return 'success'
@@ -625,7 +635,7 @@ async function confirmUploadDialog() {
 }
 
 async function cancelUploadDialog(showMessage = true) {
-  const cancellableSession = uploadSession.value && !['CONFIRMED', 'CANCELLED', 'EXPIRED'].includes(uploadSession.value.status)
+  const cancellableSession = uploadSession.value && !terminalUploadBatchStatuses.includes(uploadSession.value.status)
   if (cancellableSession) {
     uploadCancelling.value = true
   }

@@ -83,7 +83,7 @@ class ImageService {
 	@Transactional(readOnly = true)
 	ImagePageResponse list(String keyword, String categoryId, String tagId, String status, int page, int size) {
 		String query = keyword == null || keyword.isBlank() ? null : keyword.trim();
-		String statusFilter = status == null || status.isBlank() ? null : status.trim().toUpperCase();
+		ImageStatus statusFilter = ImageStatus.parseOrNull(status);
 		int safePage = Math.max(1, page);
 		int safeSize = Math.min(Math.max(1, size), 100);
 		long total = images.countSearch(query, blankToNull(categoryId), blankToNull(tagId), statusFilter);
@@ -128,7 +128,7 @@ class ImageService {
 		batches.insert(batch);
 		replaceUploadBatchTags(batch);
 		auditLogService.record("image.upload.session.create", "UPLOAD_BATCH", batch.id(),
-				"{\"mode\":\"" + mode + "\",\"total\":" + totalCount + "}");
+				Map.of("mode", mode, "total", totalCount));
 		return UploadBatchResponse.from(batch, List.of());
 	}
 
@@ -166,7 +166,7 @@ class ImageService {
 				.orElseThrow(() -> new IllegalArgumentException("上传文件不存在"));
 		item.retryFailed("请重新选择原文件上传，系统不会保存失败文件的临时内容");
 		batchItems.updateById(item);
-		auditLogService.record("image.batch.item.retry", "UPLOAD_BATCH_ITEM", item.id(), "{}");
+		auditLogService.record("image.batch.item.retry", "UPLOAD_BATCH_ITEM", item.id(), Map.of());
 		return UploadBatchResponse.from(batch, batchItems.selectByBatchIdOrdered(batch.id()));
 	}
 
@@ -179,7 +179,7 @@ class ImageService {
 		if (!item.batchId().equals(batch.id())) {
 			throw new IllegalArgumentException("上传文件不属于当前会话");
 		}
-		if (!"FAILED".equals(item.status())) {
+		if (!item.status().isRetryable()) {
 			throw new IllegalArgumentException("只有失败文件可以重试");
 		}
 		item.retrying(filename(file));
@@ -187,33 +187,33 @@ class ImageService {
 				.filter(existing -> !existing.id().equals(item.id()))
 				.toList();
 		stageItem(batch, item, file, existingItems);
-		auditLogService.record("image.upload.session.item.retry", "UPLOAD_BATCH_ITEM", item.id(), "{}");
+		auditLogService.record("image.upload.session.item.retry", "UPLOAD_BATCH_ITEM", item.id(), Map.of());
 		return uploadSession(batch.id());
 	}
 
 	@Transactional
 	UploadBatchResponse confirmUploadSession(String id) {
 		UploadBatch batch = getUploadSession(id);
-		if ("CONFIRMED".equals(batch.status())) {
+		if (batch.status().isConfirmed()) {
 			return uploadSession(id);
 		}
-		if ("CANCELLED".equals(batch.status()) || "EXPIRED".equals(batch.status())) {
+		if (batch.status().isClosedWithoutConfirm()) {
 			throw new IllegalArgumentException("上传会话已取消，不能确认入库");
 		}
 		UploadTaxonomy uploadTaxonomy = validateUploadTaxonomy(batch.categoryId(), batch.tagIds());
 		List<UploadBatchItem> items = batchItems.selectByBatchIdOrdered(id);
-		if (items.stream().noneMatch(item -> "STAGED".equals(item.status()) || "DUPLICATE".equals(item.status()))) {
+		if (items.stream().noneMatch(item -> item.status().isConfirmable())) {
 			throw new IllegalArgumentException("没有可确认入库的上传文件");
 		}
 		for (UploadBatchItem item : items) {
-			if ("STAGED".equals(item.status())) {
-				var existing = images.findBySha256AndStatusNot(item.sha256(), "DELETED");
-					if (existing.isPresent()) {
-						storage.deleteQuietly(item.storedImage());
-						item.duplicated(existing.get().id());
-						batchItems.updateById(item);
-						continue;
-					}
+			if (item.status() == UploadBatchItemStatus.STAGED) {
+				var existing = images.findBySha256AndStatusNot(item.sha256(), ImageStatus.DELETED);
+				if (existing.isPresent()) {
+					storage.deleteQuietly(item.storedImage());
+					item.duplicated(existing.get().id());
+					batchItems.updateById(item);
+					continue;
+				}
 				ImageAsset image = createImage(item.candidateImageId(), item.storedImage(), uploadTaxonomy);
 				item.confirmed(image.id());
 				batchItems.updateById(item);
@@ -222,14 +222,14 @@ class ImageService {
 		refreshUploadBatch(batch);
 		batch.markConfirmed();
 		batches.updateById(batch);
-		auditLogService.record("image.upload.session.confirm", "UPLOAD_BATCH", batch.id(), "{\"total\":" + items.size() + "}");
+		auditLogService.record("image.upload.session.confirm", "UPLOAD_BATCH", batch.id(), Map.of("total", items.size()));
 		return UploadBatchResponse.from(batch, batchItems.selectByBatchIdOrdered(batch.id()));
 	}
 
 	@Transactional
 	UploadBatchResponse cancelUploadSession(String id) {
 		UploadBatch batch = getUploadSession(id);
-		if ("CONFIRMED".equals(batch.status())) {
+		if (batch.status().isConfirmed()) {
 			return uploadSession(id);
 		}
 		cancelUploadSession(batch, false);
@@ -240,14 +240,16 @@ class ImageService {
 	ImageResponse update(String id, ImageUpdateRequest request) {
 		ImageAsset image = getImage(id);
 		String title = request.title() == null || request.title().isBlank() ? image.title() : request.title().trim();
-		String status = request.status() == null || request.status().isBlank() ? image.status() : request.status().trim();
+		ImageStatus status = request.status() == null || request.status().isBlank()
+				? image.status()
+				: ImageStatus.parse(request.status());
 		Category category = findCategory(request.categoryId());
 		Set<Tag> selectedTags = findTags(request.tagIds());
 		image.updateMetadata(title, status);
 		image.replaceTaxonomy(category, selectedTags);
 		images.updateById(image);
 		replaceImageTags(image);
-		auditLogService.record("image.update", "IMAGE", image.id(), "{\"title\":\"" + escape(title) + "\"}");
+		auditLogService.record("image.update", "IMAGE", image.id(), Map.of("title", title, "status", status.name()));
 		return ImageResponse.from(image);
 	}
 
@@ -256,7 +258,7 @@ class ImageService {
 		ImageAsset image = getImage(id);
 		image.markDeleted();
 		images.updateById(image);
-		auditLogService.record("image.delete", "IMAGE", id, "{}");
+		auditLogService.record("image.delete", "IMAGE", id, Map.of());
 	}
 
 	@Transactional
@@ -264,7 +266,7 @@ class ImageService {
 		for (ImageAsset image : getBatchImages(request)) {
 			image.markDeleted();
 			images.updateById(image);
-			auditLogService.record("image.delete", "IMAGE", image.id(), "{\"batch\":true}");
+			auditLogService.record("image.delete", "IMAGE", image.id(), Map.of("batch", true));
 		}
 	}
 
@@ -273,7 +275,7 @@ class ImageService {
 		ImageAsset image = getDeletedImage(id);
 		image.restore();
 		images.updateById(image);
-		auditLogService.record("image.restore", "IMAGE", id, "{}");
+		auditLogService.record("image.restore", "IMAGE", id, Map.of());
 	}
 
 	@Transactional
@@ -281,7 +283,7 @@ class ImageService {
 		for (ImageAsset image : getDeletedBatchImages(request)) {
 			image.restore();
 			images.updateById(image);
-			auditLogService.record("image.restore", "IMAGE", image.id(), "{\"batch\":true}");
+			auditLogService.record("image.restore", "IMAGE", image.id(), Map.of("batch", true));
 		}
 	}
 
@@ -299,7 +301,7 @@ class ImageService {
 
 	@Transactional
 	int purgeDeleted() {
-		List<ImageAsset> deletedImages = images.selectByStatus("DELETED");
+		List<ImageAsset> deletedImages = images.selectByStatus(ImageStatus.DELETED);
 		for (ImageAsset image : deletedImages) {
 			purgeImage(image, true);
 		}
@@ -313,13 +315,13 @@ class ImageService {
 		}
 		int retentionDays = softDeleteRetentionDays();
 		LocalDateTime cutoff = LocalDateTime.now().minusDays(retentionDays);
-		List<ImageAsset> expiredImages = images.selectByStatusAndDeletedAtBefore("DELETED", cutoff);
+		List<ImageAsset> expiredImages = images.selectByStatusAndDeletedAtBefore(ImageStatus.DELETED, cutoff);
 		for (ImageAsset image : expiredImages) {
-			purgeImage(image, false, "{\"autoCleanup\":true,\"retentionDays\":" + retentionDays + "}");
+			purgeImage(image, false, Map.of("autoCleanup", true, "retentionDays", retentionDays));
 		}
 		if (!expiredImages.isEmpty()) {
-			auditLogService.record("image.purge.retention.cleanup", "IMAGE", "DELETED",
-					"{\"deleted\":" + expiredImages.size() + ",\"retentionDays\":" + retentionDays + "}");
+			auditLogService.record("image.purge.retention.cleanup", "IMAGE", ImageStatus.DELETED.name(),
+					Map.of("deleted", expiredImages.size(), "retentionDays", retentionDays));
 		}
 		return expiredImages.size();
 	}
@@ -344,7 +346,7 @@ class ImageService {
 			default -> version.originalObjectKey();
 		};
 		String mimeType = "ORIGINAL".equals(quality) ? version.mimeType() : "image/png";
-		auditLogService.record("image.preview", "IMAGE", id, "{\"quality\":\"" + quality + "\"}");
+		auditLogService.record("image.preview", "IMAGE", id, Map.of("quality", quality));
 		return new ObjectFile(version.bucket(), key, mimeType, image.originalFilename());
 	}
 
@@ -354,7 +356,7 @@ class ImageService {
 		images.incrementDownloadCount(id);
 		image.downloaded();
 		ImageVersion version = currentVersion(image);
-		auditLogService.record("image.download", "IMAGE", id, "{}");
+		auditLogService.record("image.download", "IMAGE", id, Map.of());
 		return new ObjectFile(version.bucket(), version.originalObjectKey(), version.mimeType(), version.originalFilename());
 	}
 
@@ -369,11 +371,11 @@ class ImageService {
 				byte[] content = storage.read(version.bucket(), version.originalObjectKey());
 				ZipEntry entry = new ZipEntry(uniqueZipFilename(version.originalFilename(), usedNames));
 				zip.putNextEntry(entry);
-					zip.write(content);
-					zip.closeEntry();
-					images.incrementDownloadCount(image.id());
-					image.downloaded();
-				auditLogService.record("image.download", "IMAGE", image.id(), "{\"batch\":true}");
+				zip.write(content);
+				zip.closeEntry();
+				images.incrementDownloadCount(image.id());
+				image.downloaded();
+				auditLogService.record("image.download", "IMAGE", image.id(), Map.of("batch", true));
 			}
 		}
 		catch (IOException ex) {
@@ -391,7 +393,8 @@ class ImageService {
 	Statistics statistics() {
 		LocalDate today = LocalDate.now();
 		LocalDate trendStart = today.minusDays(29);
-		return new Statistics(images.countByStatusNot("DELETED"), images.countByCreatedAtAfterAndStatusNot(today.atStartOfDay(), "DELETED"),
+		return new Statistics(images.countByStatusNot(ImageStatus.DELETED),
+				images.countByCreatedAtAfterAndStatusNot(today.atStartOfDay(), ImageStatus.DELETED),
 				images.totalViews(), images.totalDownloads(), images.totalStorageBytes(), uploadTrend(trendStart, today),
 				categoryDistribution(), topImagesByViews(), topImagesByDownloads());
 	}
@@ -418,12 +421,12 @@ class ImageService {
 	}
 
 	private List<ImageRankingItem> topImagesByViews() {
-		return images.selectTopViewed("DELETED", 5)
+		return images.selectTopViewed(ImageStatus.DELETED, 5)
 				.stream().map(ImageRankingItem::from).toList();
 	}
 
 	private List<ImageRankingItem> topImagesByDownloads() {
-		return images.selectTopDownloaded("DELETED", 5)
+		return images.selectTopDownloaded(ImageStatus.DELETED, 5)
 				.stream().map(ImageRankingItem::from).toList();
 	}
 
@@ -433,13 +436,13 @@ class ImageService {
 			item.receivedSize(file.getSize());
 			validateUploadSize(file, existingItems);
 			String sha256 = sha256(file);
-			var existingImage = images.findBySha256AndStatusNot(sha256, "DELETED");
+			var existingImage = images.findBySha256AndStatusNot(sha256, ImageStatus.DELETED);
 			if (existingImage.isPresent()) {
 				item.duplicated(existingImage.get().id(), sha256);
 				batchItems.updateById(item);
 			}
 			else if (existingItems.stream().anyMatch(existing -> sha256.equals(existing.sha256())
-					&& ("STAGED".equals(existing.status()) || "DUPLICATE".equals(existing.status())))) {
+					&& existing.status().isConfirmable())) {
 				item.duplicated(null, sha256);
 				batchItems.updateById(item);
 			}
@@ -487,7 +490,7 @@ class ImageService {
 		versions.insert(version);
 		image.setCurrentVersionId(version.id());
 		images.updateById(image);
-		auditLogService.record("image.upload", "IMAGE", image.id(), "{\"filename\":\"" + escape(stored.originalFilename()) + "\"}");
+		auditLogService.record("image.upload", "IMAGE", image.id(), Map.of("filename", stored.originalFilename()));
 		return image;
 	}
 
@@ -503,7 +506,7 @@ class ImageService {
 			throw new IllegalArgumentException("请选择至少一张图片");
 		}
 		Map<String, ImageAsset> found = images.selectImagesByIds(ids).stream()
-				.filter(image -> !"DELETED".equals(image.status()))
+				.filter(image -> image.status().isRetained())
 				.collect(java.util.stream.Collectors.toMap(ImageAsset::id, image -> image));
 		List<String> missing = ids.stream().filter(id -> !found.containsKey(id)).toList();
 		if (!missing.isEmpty()) {
@@ -524,7 +527,7 @@ class ImageService {
 			throw new IllegalArgumentException("请选择至少一张图片");
 		}
 		Map<String, ImageAsset> found = images.selectImagesByIds(ids).stream()
-				.filter(image -> "DELETED".equals(image.status()))
+				.filter(image -> image.status().isDeleted())
 				.collect(java.util.stream.Collectors.toMap(ImageAsset::id, image -> image));
 		List<String> missing = ids.stream().filter(id -> !found.containsKey(id)).toList();
 		if (!missing.isEmpty()) {
@@ -534,10 +537,10 @@ class ImageService {
 	}
 
 	private void purgeImage(ImageAsset image, boolean batch) {
-		purgeImage(image, batch, batch ? "{\"batch\":true}" : "{}");
+		purgeImage(image, batch, batch ? Map.of("batch", true) : Map.of());
 	}
 
-	private void purgeImage(ImageAsset image, boolean batch, String auditDetail) {
+	private void purgeImage(ImageAsset image, boolean batch, Object auditDetail) {
 		List<ImageVersion> imageVersions = versions.selectByImageIdOrdered(image.id());
 		for (ImageVersion version : imageVersions) {
 			storage.delete(new StoredImage(version.originalFilename(), "", version.mimeType(), 0L, null, null,
@@ -567,9 +570,9 @@ class ImageService {
 
 	private void refreshUploadBatch(UploadBatch batch) {
 		List<UploadBatchItem> items = batchItems.selectByBatchIdOrdered(batch.id());
-		int success = (int) items.stream().filter(item -> "STAGED".equals(item.status()) || "CONFIRMED".equals(item.status())).count();
-		int failed = (int) items.stream().filter(item -> "FAILED".equals(item.status())).count();
-		int duplicate = (int) items.stream().filter(item -> "DUPLICATE".equals(item.status())).count();
+		int success = (int) items.stream().filter(item -> item.status().countsAsSuccess()).count();
+		int failed = (int) items.stream().filter(item -> item.status().countsAsFailure()).count();
+		int duplicate = (int) items.stream().filter(item -> item.status().countsAsDuplicate()).count();
 		int processed = success + failed + duplicate;
 		batch.refreshCounts(success, failed, duplicate, processed);
 		batches.updateById(batch);
@@ -597,18 +600,18 @@ class ImageService {
 				batchItems.updateById(item);
 				continue;
 			}
-			if (!"DUPLICATE".equals(item.status()) && !"FAILED".equals(item.status())) {
+			if (item.status().canBecomeCancelledWithoutStoredObjects()) {
 				item.cancelled();
 				batchItems.updateById(item);
 			}
 		}
 		if (expired) {
 			batch.markExpired();
-			auditLogService.record("image.upload.session.expire", "UPLOAD_BATCH", batch.id(), "{}");
+			auditLogService.record("image.upload.session.expire", "UPLOAD_BATCH", batch.id(), Map.of());
 		}
 		else {
 			batch.markCancelled();
-			auditLogService.record("image.upload.session.cancel", "UPLOAD_BATCH", batch.id(), "{}");
+			auditLogService.record("image.upload.session.cancel", "UPLOAD_BATCH", batch.id(), Map.of());
 		}
 		batches.updateById(batch);
 	}
@@ -640,14 +643,14 @@ class ImageService {
 	private ImageAsset getImage(String id) {
 		return Optional.ofNullable(images.selectById(id))
 				.map(this::loadImageRelations)
-				.filter(image -> !"DELETED".equals(image.status()))
+				.filter(image -> image.status().isRetained())
 				.orElseThrow(() -> new IllegalArgumentException("图片不存在"));
 	}
 
 	private ImageAsset getDeletedImage(String id) {
 		return Optional.ofNullable(images.selectById(id))
 				.map(this::loadImageRelations)
-				.filter(image -> "DELETED".equals(image.status()))
+				.filter(image -> image.status().isDeleted())
 				.orElseThrow(() -> new IllegalArgumentException("图片不存在或未停用"));
 	}
 
@@ -760,10 +763,6 @@ class ImageService {
 		return value == null || value.isBlank() ? null : value;
 	}
 
-	private static String escape(String value) {
-		return value.replace("\\", "\\\\").replace("\"", "\\\"");
-	}
-
 	private List<ImageAsset> loadImages(List<String> imageIds) {
 		if (imageIds.isEmpty()) {
 			return List.of();
@@ -847,8 +846,7 @@ class ImageService {
 
 	@Transactional
 	int expireUnconfirmedUploadSessions() {
-		List<UploadBatch> expired = batches.selectExpired(
-				List.of("CREATED", "STAGING", "STAGED", "PARTIAL_FAILED"), LocalDateTime.now());
+		List<UploadBatch> expired = batches.selectExpired(UploadBatchStatus.expirableStatuses(), LocalDateTime.now());
 		for (UploadBatch batch : expired) {
 			loadUploadBatchTags(batch);
 			cancelUploadSession(batch, true);
@@ -861,7 +859,8 @@ class ImageService {
 		Instant cutoff = Instant.now().minusSeconds(24 * 60 * 60);
 		Set<String> referencedKeys = new HashSet<>();
 		referencedKeys.addAll(versions.selectReferencedObjectKeys());
-		referencedKeys.addAll(batchItems.selectReferencedObjectKeysByStatuses(List.of("PROCESSING", "STAGED")));
+		referencedKeys.addAll(batchItems.selectReferencedObjectKeysByStatuses(
+				UploadBatchItemStatus.referencedObjectStatuses()));
 		referencedKeys.remove(null);
 		List<ImageStorageService.StoredObject> orphanObjects = storage.listImageObjects().stream()
 				.filter(object -> object.lastModified() == null || object.lastModified().isBefore(cutoff))
@@ -872,7 +871,7 @@ class ImageService {
 		}
 		if (!orphanObjects.isEmpty()) {
 			auditLogService.record("image.storage.orphan.cleanup", "STORAGE", "images",
-					"{\"deleted\":" + orphanObjects.size() + "}");
+					Map.of("deleted", orphanObjects.size()));
 		}
 		return orphanObjects.size();
 	}

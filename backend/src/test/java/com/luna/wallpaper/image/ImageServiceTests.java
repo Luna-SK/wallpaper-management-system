@@ -53,8 +53,8 @@ class ImageServiceTests {
 		LocalDate trendStart = today.minusDays(29);
 		ImageAsset viewed = image("image-1", "热门预览", 12, 4);
 		ImageAsset downloaded = image("image-2", "热门下载", 5, 9);
-		when(images.countByStatusNot("DELETED")).thenReturn(42L);
-		when(images.countByCreatedAtAfterAndStatusNot(today.atStartOfDay(), "DELETED")).thenReturn(3L);
+		when(images.countByStatusNot(ImageStatus.DELETED)).thenReturn(42L);
+		when(images.countByCreatedAtAfterAndStatusNot(today.atStartOfDay(), ImageStatus.DELETED)).thenReturn(3L);
 		when(images.totalViews()).thenReturn(120L);
 		when(images.totalDownloads()).thenReturn(30L);
 		when(images.totalStorageBytes()).thenReturn(2048L);
@@ -63,8 +63,8 @@ class ImageServiceTests {
 				dailyCount(today, 5L)));
 		when(images.countImagesByCategory()).thenReturn(List.of(categoryCount("cat-1", "风景", 7L)));
 		when(images.countUncategorizedImages()).thenReturn(1L);
-		when(images.selectTopViewed("DELETED", 5)).thenReturn(List.of(viewed));
-		when(images.selectTopDownloaded("DELETED", 5)).thenReturn(List.of(downloaded));
+		when(images.selectTopViewed(ImageStatus.DELETED, 5)).thenReturn(List.of(viewed));
+		when(images.selectTopDownloaded(ImageStatus.DELETED, 5)).thenReturn(List.of(downloaded));
 
 		ImageService.Statistics statistics = service.statistics();
 
@@ -89,9 +89,9 @@ class ImageServiceTests {
 	@Test
 	void listHandlesDeletedImagesWithoutCategory() {
 		ImageAsset deleted = image("image-deleted", "已停用未分类", 0, 0);
-		ReflectionTestUtils.setField(deleted, "status", "DELETED");
-		when(images.countSearch(null, null, null, "DELETED")).thenReturn(1L);
-		when(images.searchIds(null, null, null, "DELETED", 0L, 20)).thenReturn(List.of(deleted.id()));
+		ReflectionTestUtils.setField(deleted, "status", ImageStatus.DELETED);
+		when(images.countSearch(null, null, null, ImageStatus.DELETED)).thenReturn(1L);
+		when(images.searchIds(null, null, null, ImageStatus.DELETED, 0L, 20)).thenReturn(List.of(deleted.id()));
 		when(images.selectImagesByIds(List.of(deleted.id()))).thenReturn(List.of(deleted));
 		when(imageTags.selectByImageIds(List.of(deleted.id()))).thenReturn(List.of());
 
@@ -186,17 +186,17 @@ class ImageServiceTests {
 		int purged = service.purgeExpiredDeletedImages();
 
 		assertThat(purged).isZero();
-		verify(images, never()).selectByStatusAndDeletedAtBefore(anyString(), any());
+		verify(images, never()).selectByStatusAndDeletedAtBefore(any(ImageStatus.class), any());
 	}
 
 	@Test
 	void purgeExpiredDeletedImagesPurgesExpiredDeletedImagesWhenEnabled() {
 		ImageAsset expired = image("image-expired", "到期停用", 0, 0);
-		ReflectionTestUtils.setField(expired, "status", "DELETED");
+		ReflectionTestUtils.setField(expired, "status", ImageStatus.DELETED);
 		ReflectionTestUtils.setField(expired, "deletedAt", LocalDateTime.now().minusDays(8));
 		when(settings.get("soft_delete.cleanup.enabled", "false")).thenReturn("true");
 		when(settings.get("soft_delete.retention_days", "180")).thenReturn("7");
-		when(images.selectByStatusAndDeletedAtBefore(anyString(), any())).thenReturn(List.of(expired));
+		when(images.selectByStatusAndDeletedAtBefore(any(ImageStatus.class), any())).thenReturn(List.of(expired));
 		when(versions.selectByImageIdOrdered(expired.id())).thenReturn(List.of());
 
 		int purged = service.purgeExpiredDeletedImages();
@@ -205,7 +205,7 @@ class ImageServiceTests {
 		verify(imageTags).deleteByImageId(expired.id());
 		verify(images).deleteById(expired.id());
 		verify(auditLogService).record("image.purge.retention.cleanup", "IMAGE", "DELETED",
-				"{\"deleted\":1,\"retentionDays\":7}");
+				java.util.Map.of("deleted", 1, "retentionDays", 7));
 	}
 
 	private ImageDailyCount dailyCount(LocalDate day, long total) {

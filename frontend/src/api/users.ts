@@ -1,5 +1,7 @@
 import { http } from './http'
 
+export type UserStatus = 'ACTIVE' | 'DISABLED'
+
 export interface Permission {
   id: string
   code: string
@@ -23,7 +25,7 @@ export interface User {
   displayName: string
   email: string | null
   phone: string | null
-  status: string
+  status: UserStatus
   roles: Array<{ id: string; code: string; name: string }>
 }
 

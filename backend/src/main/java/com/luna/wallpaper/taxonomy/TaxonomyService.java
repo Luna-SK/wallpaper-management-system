@@ -1,6 +1,7 @@
 package com.luna.wallpaper.taxonomy;
 
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 
 import org.springframework.stereotype.Service;
@@ -47,7 +48,7 @@ public class TaxonomyService {
 		category.update(category.code(), category.name(), category.sortOrder(), request.enabled() == null || request.enabled());
 		categories.insert(category);
 		auditLogService.record("taxonomy.category.create", "CATEGORY", category.id(),
-				"{\"name\":\"" + escape(category.name()) + "\"}");
+				Map.of("name", category.name()));
 		return CategoryResponse.from(category, 0);
 	}
 
@@ -62,7 +63,7 @@ public class TaxonomyService {
 				request.enabled() == null || request.enabled());
 		categories.updateById(category);
 		auditLogService.record("taxonomy.category.update", "CATEGORY", category.id(),
-				"{\"enabled\":" + category.enabled() + "}");
+				Map.of("enabled", category.enabled()));
 		return CategoryResponse.from(category, categories.countImagesByCategoryId(category.id()));
 	}
 
@@ -71,7 +72,7 @@ public class TaxonomyService {
 		Category category = getCategory(id);
 		category.update(category.code(), category.name(), category.sortOrder(), true);
 		categories.updateById(category);
-		auditLogService.record("taxonomy.category.restore", "CATEGORY", id, "{}");
+		auditLogService.record("taxonomy.category.restore", "CATEGORY", id, Map.of());
 		return CategoryResponse.from(category, categories.countImagesByCategoryId(id));
 	}
 
@@ -86,7 +87,7 @@ public class TaxonomyService {
 		categories.clearImageCategory(id);
 		categories.clearUploadBatchCategory(id);
 		categories.deleteById(id);
-		auditLogService.record("taxonomy.category.purge", "CATEGORY", id, "{\"force\":" + force + "}");
+		auditLogService.record("taxonomy.category.purge", "CATEGORY", id, Map.of("force", force));
 		return impact;
 	}
 
@@ -107,7 +108,7 @@ public class TaxonomyService {
 		group.update(group.code(), group.name(), group.sortOrder(), request.enabled() == null || request.enabled());
 		tagGroups.insert(group);
 		auditLogService.record("taxonomy.tag-group.create", "TAG_GROUP", group.id(),
-				"{\"name\":\"" + escape(group.name()) + "\"}");
+				Map.of("name", group.name()));
 		return TagGroupResponse.from(group, 0);
 	}
 
@@ -124,7 +125,7 @@ public class TaxonomyService {
 		tagGroups.updateById(group);
 		int disabledTags = wasEnabled && !group.enabled() ? tags.disableByGroupId(id) : 0;
 		auditLogService.record("taxonomy.tag-group.update", "TAG_GROUP", id,
-				"{\"enabled\":" + group.enabled() + ",\"disabledTags\":" + disabledTags + "}");
+				Map.of("enabled", group.enabled(), "disabledTags", disabledTags));
 		return TagGroupResponse.from(group, tagGroups.countTagsByGroupId(id));
 	}
 
@@ -133,7 +134,7 @@ public class TaxonomyService {
 		TagGroup group = getTagGroup(id);
 		group.update(group.code(), group.name(), group.sortOrder(), true);
 		tagGroups.updateById(group);
-		auditLogService.record("taxonomy.tag-group.restore", "TAG_GROUP", id, "{}");
+		auditLogService.record("taxonomy.tag-group.restore", "TAG_GROUP", id, Map.of());
 		return TagGroupResponse.from(group, tagGroups.countTagsByGroupId(id));
 	}
 
@@ -149,7 +150,7 @@ public class TaxonomyService {
 		tagGroups.deleteUploadBatchRefsByGroupId(id);
 		tagGroups.deleteTagsByGroupId(id);
 		tagGroups.deleteById(id);
-		auditLogService.record("taxonomy.tag-group.purge", "TAG_GROUP", id, "{\"force\":" + force + "}");
+		auditLogService.record("taxonomy.tag-group.purge", "TAG_GROUP", id, Map.of("force", force));
 		return impact;
 	}
 
@@ -174,7 +175,7 @@ public class TaxonomyService {
 		}
 		tags.insert(tag);
 		tag.attachGroup(group);
-		auditLogService.record("taxonomy.tag.create", "TAG", tag.id(), "{\"name\":\"" + escape(tag.name()) + "\"}");
+		auditLogService.record("taxonomy.tag.create", "TAG", tag.id(), Map.of("name", tag.name()));
 		return TagResponse.from(tag);
 	}
 
@@ -194,7 +195,7 @@ public class TaxonomyService {
 		tag.update(name, request.sortOrder() == null ? 0 : request.sortOrder(), enabled);
 		tags.updateById(tag);
 		tag.attachGroup(group);
-		auditLogService.record("taxonomy.tag.update", "TAG", tag.id(), "{\"enabled\":" + tag.enabled() + "}");
+		auditLogService.record("taxonomy.tag.update", "TAG", tag.id(), Map.of("enabled", tag.enabled()));
 		return TagResponse.from(tag);
 	}
 
@@ -205,7 +206,7 @@ public class TaxonomyService {
 		tag.update(tag.name(), tag.sortOrder(), true);
 		tags.updateById(tag);
 		tag.attachGroup(group);
-		auditLogService.record("taxonomy.tag.restore", "TAG", id, "{}");
+		auditLogService.record("taxonomy.tag.restore", "TAG", id, Map.of());
 		return TagResponse.from(tag);
 	}
 
@@ -220,7 +221,7 @@ public class TaxonomyService {
 		tags.deleteImageRefsByTagId(id);
 		tags.deleteUploadBatchRefsByTagId(id);
 		tags.deleteById(id);
-		auditLogService.record("taxonomy.tag.purge", "TAG", id, "{\"force\":" + force + "}");
+		auditLogService.record("taxonomy.tag.purge", "TAG", id, Map.of("force", force));
 		return impact;
 	}
 
@@ -271,7 +272,4 @@ public class TaxonomyService {
 		return code.trim().toUpperCase().replace(' ', '_');
 	}
 
-	private static String escape(String value) {
-		return value.replace("\\", "\\\\").replace("\"", "\\\"");
-	}
 }

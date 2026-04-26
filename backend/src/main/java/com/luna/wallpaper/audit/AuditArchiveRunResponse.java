@@ -23,7 +23,7 @@ public record AuditArchiveRunResponse(
 				run.getCutoffTime(),
 				run.getArchiveBucket(),
 				run.getArchiveObjectKey(),
-				run.getStatus(),
+				run.getStatus().name(),
 				run.getArchivedCount(),
 				run.getDeletedCount(),
 				run.getStartedAt(),

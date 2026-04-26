@@ -1,6 +1,7 @@
 import { http } from './http'
 
 export type AuditArchiveStorage = 'RUSTFS'
+export type AuditArchiveRunStatus = 'RUNNING' | 'SUCCESS' | 'FAILED'
 
 export interface ApiResponse<T> {
   code: string
@@ -29,7 +30,7 @@ export interface AuditArchiveRun {
   cutoffTime: string | null
   archiveBucket: string | null
   archiveObjectKey: string | null
-  status: 'RUNNING' | 'SUCCESS' | 'FAILED' | string
+  status: AuditArchiveRunStatus
   archivedCount: number
   deletedCount: number
   startedAt: string

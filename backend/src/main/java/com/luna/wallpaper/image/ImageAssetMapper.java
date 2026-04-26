@@ -15,17 +15,17 @@ import com.baomidou.mybatisplus.core.mapper.BaseMapper;
 public interface ImageAssetMapper extends BaseMapper<ImageAsset> {
 
 	@Select("select * from images where sha256 = #{sha256} and status <> #{status} limit 1")
-	ImageAsset selectBySha256AndStatusNot(@Param("sha256") String sha256, @Param("status") String status);
+	ImageAsset selectBySha256AndStatusNot(@Param("sha256") String sha256, @Param("status") ImageStatus status);
 
-	default Optional<ImageAsset> findBySha256AndStatusNot(String sha256, String status) {
+	default Optional<ImageAsset> findBySha256AndStatusNot(String sha256, ImageStatus status) {
 		return Optional.ofNullable(selectBySha256AndStatusNot(sha256, status));
 	}
 
 	@Select("select * from images where status = #{status}")
-	List<ImageAsset> selectByStatus(@Param("status") String status);
+	List<ImageAsset> selectByStatus(@Param("status") ImageStatus status);
 
 	@Select("select * from images where status = #{status} and deleted_at < #{deletedAt}")
-	List<ImageAsset> selectByStatusAndDeletedAtBefore(@Param("status") String status,
+	List<ImageAsset> selectByStatusAndDeletedAtBefore(@Param("status") ImageStatus status,
 			@Param("deletedAt") LocalDateTime deletedAt);
 
 	@Select("""
@@ -65,7 +65,7 @@ public interface ImageAssetMapper extends BaseMapper<ImageAsset> {
 			</script>
 			""")
 	long countSearch(@Param("keyword") String keyword, @Param("categoryId") String categoryId,
-			@Param("tagId") String tagId, @Param("status") String status);
+			@Param("tagId") String tagId, @Param("status") ImageStatus status);
 
 	@Select("""
 			<script>
@@ -106,45 +106,70 @@ public interface ImageAssetMapper extends BaseMapper<ImageAsset> {
 			</script>
 			""")
 	List<String> searchIds(@Param("keyword") String keyword, @Param("categoryId") String categoryId,
-			@Param("tagId") String tagId, @Param("status") String status, @Param("offset") long offset,
+			@Param("tagId") String tagId, @Param("status") ImageStatus status, @Param("offset") long offset,
 			@Param("size") long size);
 
 	@Select("select count(*) from images where status <> #{status}")
-	long countByStatusNot(@Param("status") String status);
+	long countByStatusNot(@Param("status") ImageStatus status);
 
 	@Select("select count(*) from images where created_at >= #{time} and status <> #{status}")
-	long countByCreatedAtAfterAndStatusNot(@Param("time") LocalDateTime time, @Param("status") String status);
+	long countByCreatedAtAfterAndStatusNot(@Param("time") LocalDateTime time, @Param("status") ImageStatus status);
 
-	@Select("select coalesce(sum(size_bytes), 0) from images where status <> 'DELETED'")
-	long totalStorageBytes();
+	default long totalStorageBytes() {
+		return totalStorageBytesExcluding(ImageStatus.DELETED);
+	}
 
-	@Select("select coalesce(sum(view_count), 0) from images where status <> 'DELETED'")
-	long totalViews();
+	@Select("select coalesce(sum(size_bytes), 0) from images where status <> #{status}")
+	long totalStorageBytesExcluding(@Param("status") ImageStatus status);
 
-	@Select("select coalesce(sum(download_count), 0) from images where status <> 'DELETED'")
-	long totalDownloads();
+	default long totalViews() {
+		return totalViewsExcluding(ImageStatus.DELETED);
+	}
+
+	@Select("select coalesce(sum(view_count), 0) from images where status <> #{status}")
+	long totalViewsExcluding(@Param("status") ImageStatus status);
+
+	default long totalDownloads() {
+		return totalDownloadsExcluding(ImageStatus.DELETED);
+	}
+
+	@Select("select coalesce(sum(download_count), 0) from images where status <> #{status}")
+	long totalDownloadsExcluding(@Param("status") ImageStatus status);
 
 	@Select("""
 			select date(created_at) day, count(*) total
 			from images
-			where status <> 'DELETED' and created_at >= #{startAt}
+			where status <> #{status} and created_at >= #{startAt}
 			group by date(created_at)
 			order by date(created_at) asc
 			""")
-	List<ImageDailyCount> countUploadsByDaySince(@Param("startAt") LocalDateTime startAt);
+	List<ImageDailyCount> countUploadsByDaySinceExcluding(@Param("startAt") LocalDateTime startAt,
+			@Param("status") ImageStatus status);
+
+	default List<ImageDailyCount> countUploadsByDaySince(LocalDateTime startAt) {
+		return countUploadsByDaySinceExcluding(startAt, ImageStatus.DELETED);
+	}
 
 	@Select("""
 			select category.id category_id, category.name name, count(image.id) total
 			from images image
 			join categories category on category.id = image.category_id
-			where image.status <> 'DELETED'
+			where image.status <> #{status}
 			group by category.id, category.name
 			order by count(image.id) desc, category.name asc
 			""")
-	List<ImageCategoryCount> countImagesByCategory();
+	List<ImageCategoryCount> countImagesByCategoryExcluding(@Param("status") ImageStatus status);
 
-	@Select("select count(*) from images where status <> 'DELETED' and category_id is null")
-	long countUncategorizedImages();
+	default List<ImageCategoryCount> countImagesByCategory() {
+		return countImagesByCategoryExcluding(ImageStatus.DELETED);
+	}
+
+	@Select("select count(*) from images where status <> #{status} and category_id is null")
+	long countUncategorizedImagesExcluding(@Param("status") ImageStatus status);
+
+	default long countUncategorizedImages() {
+		return countUncategorizedImagesExcluding(ImageStatus.DELETED);
+	}
 
 	@Select("""
 			select *
@@ -153,7 +178,7 @@ public interface ImageAssetMapper extends BaseMapper<ImageAsset> {
 			order by view_count desc, created_at desc, id desc
 			limit #{limit}
 			""")
-	List<ImageAsset> selectTopViewed(@Param("status") String status, @Param("limit") int limit);
+	List<ImageAsset> selectTopViewed(@Param("status") ImageStatus status, @Param("limit") int limit);
 
 	@Select("""
 			select *
@@ -162,7 +187,7 @@ public interface ImageAssetMapper extends BaseMapper<ImageAsset> {
 			order by download_count desc, created_at desc, id desc
 			limit #{limit}
 			""")
-	List<ImageAsset> selectTopDownloaded(@Param("status") String status, @Param("limit") int limit);
+	List<ImageAsset> selectTopDownloaded(@Param("status") ImageStatus status, @Param("limit") int limit);
 
 	@Update("update images set view_count = view_count + 1, updated_at = now(6) where id = #{id}")
 	int incrementViewCount(@Param("id") String id);

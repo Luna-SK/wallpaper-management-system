@@ -6,6 +6,8 @@ import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
+import java.util.Map;
+
 import org.junit.jupiter.api.Test;
 
 import com.luna.wallpaper.audit.AuditLogService;
@@ -31,7 +33,7 @@ class TaxonomyServiceTests {
 		verify(tagGroups).updateById(group);
 		verify(tags).disableByGroupId(group.id());
 		verify(auditLogService).record("taxonomy.tag-group.update", "TAG_GROUP", group.id(),
-				"{\"enabled\":false,\"disabledTags\":3}");
+				Map.of("enabled", false, "disabledTags", 3));
 	}
 
 	@Test

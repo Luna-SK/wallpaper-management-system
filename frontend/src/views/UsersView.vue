@@ -15,6 +15,7 @@ import {
   type Permission,
   type Role,
   type User,
+  type UserStatus,
 } from '../api/users'
 import { useDialogEnterSubmit } from '../utils/dialogEnterSubmit'
 
@@ -29,7 +30,15 @@ const roleDialogVisible = ref(false)
 const assignDialogVisible = ref(false)
 const permissionDialogVisible = ref(false)
 const resetPasswordVisible = ref(false)
-const userForm = reactive({ id: '', username: '', displayName: '', email: '', phone: '', status: 'ACTIVE', initialPassword: '' })
+const userForm = reactive<{
+  id: string
+  username: string
+  displayName: string
+  email: string
+  phone: string
+  status: UserStatus
+  initialPassword: string
+}>({ id: '', username: '', displayName: '', email: '', phone: '', status: 'ACTIVE', initialPassword: '' })
 const roleForm = reactive({ id: '', code: '', name: '', enabled: true })
 const resetPasswordForm = reactive({ userId: '', username: '', newPassword: '' })
 const selectedRoleIds = ref<string[]>([])

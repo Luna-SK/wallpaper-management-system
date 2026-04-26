@@ -30,7 +30,7 @@ public final class ImageDtos {
 			List<TagBrief> tags, LocalDateTime createdAt) {
 		static ImageResponse from(ImageAsset image) {
 			return new ImageResponse(image.id(), image.title(), image.originalFilename(), image.mimeType(), image.sizeBytes(),
-					image.width(), image.height(), image.status(), image.viewCount(), image.downloadCount(),
+					image.width(), image.height(), image.status().name(), image.viewCount(), image.downloadCount(),
 					image.category() == null ? null : CategoryBrief.from(image.category()),
 					image.tags().stream().map(TagBrief::from).toList(), image.createdAt());
 		}
@@ -53,7 +53,7 @@ public final class ImageDtos {
 			String mode, String categoryId, List<String> tagIds, LocalDateTime expiresAt, LocalDateTime confirmedAt,
 			List<UploadBatchItemResponse> items) {
 		static UploadBatchResponse from(UploadBatch batch, List<UploadBatchItem> items) {
-			return new UploadBatchResponse(batch.id(), batch.status(), batch.totalCount(), batch.successCount(),
+			return new UploadBatchResponse(batch.id(), batch.status().name(), batch.totalCount(), batch.successCount(),
 					batch.failedCount(), batch.duplicateCount(), batch.progressPercent(), batch.createdAt(),
 					batch.finishedAt(), batch.mode(), batch.categoryId(), batch.tagIds(), batch.expiresAt(), batch.confirmedAt(),
 					items.stream().map(UploadBatchItemResponse::from).toList());
@@ -64,7 +64,7 @@ public final class ImageDtos {
 			String status, int progressPercent, int retryCount, String errorMessage) {
 		static UploadBatchItemResponse from(UploadBatchItem item) {
 			return new UploadBatchItemResponse(item.id(), item.imageId(), item.candidateImageId(), item.originalFilename(),
-					item.status(), item.progressPercent(), item.retryCount(), item.errorMessage());
+					item.status().name(), item.progressPercent(), item.retryCount(), item.errorMessage());
 		}
 	}
 }

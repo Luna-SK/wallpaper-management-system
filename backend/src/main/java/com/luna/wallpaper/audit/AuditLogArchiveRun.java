@@ -20,7 +20,7 @@ class AuditLogArchiveRun {
 
 	private String archiveObjectKey;
 
-	private String status;
+	private AuditArchiveRunStatus status;
 
 	private long archivedCount;
 
@@ -39,7 +39,7 @@ class AuditLogArchiveRun {
 		this.id = id;
 		this.triggerType = triggerType;
 		this.cutoffTime = cutoffTime;
-		this.status = "RUNNING";
+		this.status = AuditArchiveRunStatus.RUNNING;
 		this.startedAt = LocalDateTime.now();
 	}
 
@@ -48,13 +48,13 @@ class AuditLogArchiveRun {
 		this.archiveObjectKey = archiveObjectKey;
 		this.archivedCount = archivedCount;
 		this.deletedCount = deletedCount;
-		this.status = "SUCCESS";
+		this.status = AuditArchiveRunStatus.SUCCESS;
 		this.finishedAt = LocalDateTime.now();
 		this.errorMessage = null;
 	}
 
 	void fail(Exception exception) {
-		this.status = "FAILED";
+		this.status = AuditArchiveRunStatus.FAILED;
 		this.finishedAt = LocalDateTime.now();
 		this.errorMessage = exception.getMessage();
 	}
@@ -79,7 +79,7 @@ class AuditLogArchiveRun {
 		return archiveObjectKey;
 	}
 
-	String getStatus() {
+	AuditArchiveRunStatus getStatus() {
 		return status;
 	}
 

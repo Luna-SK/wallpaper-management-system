@@ -9,14 +9,27 @@ import java.nio.charset.StandardCharsets;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.util.List;
+import java.util.Map;
 
 import org.junit.jupiter.api.Test;
+import org.mockito.ArgumentCaptor;
 import org.springframework.test.util.ReflectionTestUtils;
+
+import tools.jackson.databind.json.JsonMapper;
 
 class AuditLogServiceTests {
 
 	private final AuditLogMapper mapper = org.mockito.Mockito.mock(AuditLogMapper.class);
-	private final AuditLogService service = new AuditLogService(mapper);
+	private final AuditLogService service = new AuditLogService(mapper, JsonMapper.builder().build());
+
+	@Test
+	void recordsStructuredDetailAsJson() {
+		service.record("image.update", "IMAGE", "image-1", Map.of("title", "A \"quoted\" image"));
+
+		ArgumentCaptor<AuditLog> captor = ArgumentCaptor.forClass(AuditLog.class);
+		verify(mapper).insert(captor.capture());
+		assertThat(captor.getValue().getDetailJson()).isEqualTo("{\"title\":\"A \\\"quoted\\\" image\"}");
+	}
 
 	@Test
 	void exportsAllMatchingLogsAsCsv() {

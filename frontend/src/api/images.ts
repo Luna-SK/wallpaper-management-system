@@ -1,5 +1,9 @@
 import { http } from './http'
 
+export type ImageStatus = 'ACTIVE' | 'DELETED'
+export type UploadBatchStatus = 'CREATED' | 'STAGING' | 'STAGED' | 'PARTIAL_FAILED' | 'CONFIRMED' | 'CANCELLED' | 'EXPIRED'
+export type UploadBatchItemStatus = 'PROCESSING' | 'STAGED' | 'DUPLICATE' | 'FAILED' | 'CONFIRMED' | 'CANCELLED'
+
 export interface ImageCategory {
   id: string
   code: string
@@ -22,7 +26,7 @@ export interface ImageRecord {
   sizeBytes: number
   width: number | null
   height: number | null
-  status: string
+  status: ImageStatus
   viewCount: number
   downloadCount: number
   category: ImageCategory | null
@@ -46,7 +50,7 @@ export interface UploadBatchItem {
   imageId: string | null
   candidateImageId: string | null
   originalFilename: string
-  status: string
+  status: UploadBatchItemStatus
   progressPercent: number
   retryCount: number
   errorMessage: string | null
@@ -54,7 +58,7 @@ export interface UploadBatchItem {
 
 export interface UploadBatch {
   id: string
-  status: string
+  status: UploadBatchStatus
   totalCount: number
   successCount: number
   failedCount: number
@@ -100,12 +104,12 @@ export interface StatisticsRankingItem {
   downloadCount: number
 }
 
-export async function getImages(params: { keyword?: string; categoryId?: string; tagId?: string; status?: string; page?: number; size?: number } = {}) {
+export async function getImages(params: { keyword?: string; categoryId?: string; tagId?: string; status?: ImageStatus; page?: number; size?: number } = {}) {
   const response = await http.get<ImagePage>('/images', { params })
   return response.data
 }
 
-export async function updateImage(id: string, payload: { title: string; status: string; categoryId: string | null; tagIds: string[] }) {
+export async function updateImage(id: string, payload: { title: string; status: ImageStatus; categoryId: string | null; tagIds: string[] }) {
   const response = await http.patch<ImageRecord>(`/images/${id}`, payload)
   return response.data
 }

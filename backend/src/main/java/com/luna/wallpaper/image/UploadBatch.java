@@ -18,7 +18,7 @@ class UploadBatch {
 	@TableId(type = IdType.INPUT)
 	private String id;
 
-	private String status = "CREATED";
+	private UploadBatchStatus status = UploadBatchStatus.CREATED;
 
 	private String mode = "BATCH";
 
@@ -68,7 +68,7 @@ class UploadBatch {
 	}
 
 	String id() { return id; }
-	String status() { return status; }
+	UploadBatchStatus status() { return status; }
 	String mode() { return mode; }
 	String categoryId() { return categoryId; }
 	List<String> tagIds() {
@@ -93,34 +93,34 @@ class UploadBatch {
 		this.duplicateCount = duplicateCount;
 		this.progressPercent = totalCount == 0 ? 100 : Math.min(100, processed * 100 / totalCount);
 		if (processed >= totalCount) {
-			this.status = failedCount > 0 ? "PARTIAL_FAILED" : "STAGED";
+			this.status = failedCount > 0 ? UploadBatchStatus.PARTIAL_FAILED : UploadBatchStatus.STAGED;
 			this.finishedAt = LocalDateTime.now();
 			this.progressPercent = 100;
 		}
 		else {
-			this.status = "STAGING";
+			this.status = UploadBatchStatus.STAGING;
 		}
 	}
 
 	void markConfirmed() {
-		this.status = "CONFIRMED";
+		this.status = UploadBatchStatus.CONFIRMED;
 		this.confirmedAt = LocalDateTime.now();
 		this.finishedAt = this.confirmedAt;
 		this.progressPercent = 100;
 	}
 
 	void markCancelled() {
-		this.status = "CANCELLED";
+		this.status = UploadBatchStatus.CANCELLED;
 		this.finishedAt = LocalDateTime.now();
 	}
 
 	void markExpired() {
-		this.status = "EXPIRED";
+		this.status = UploadBatchStatus.EXPIRED;
 		this.finishedAt = LocalDateTime.now();
 	}
 
 	boolean isTerminal() {
-		return "CONFIRMED".equals(status) || "CANCELLED".equals(status) || "EXPIRED".equals(status);
+		return status.isTerminal();
 	}
 
 	void replaceTagIds(Collection<String> tagIds) {
