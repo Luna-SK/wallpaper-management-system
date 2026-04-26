@@ -9,10 +9,13 @@ public final class RbacDtos {
 	}
 
 	public record UserRequest(@NotBlank String username, @NotBlank String displayName, String email, String phone,
-			String status) {
+			String status, String initialPassword) {
 	}
 
 	public record UserRolesRequest(List<String> roleIds) {
+	}
+
+	public record UserPasswordResetRequest(@NotBlank String newPassword) {
 	}
 
 	public record UserResponse(String id, String username, String displayName, String email, String phone, String status,

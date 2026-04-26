@@ -18,6 +18,7 @@ import com.luna.wallpaper.rbac.RbacDtos.PermissionResponse;
 import com.luna.wallpaper.rbac.RbacDtos.RolePermissionsRequest;
 import com.luna.wallpaper.rbac.RbacDtos.RoleRequest;
 import com.luna.wallpaper.rbac.RbacDtos.RoleResponse;
+import com.luna.wallpaper.rbac.RbacDtos.UserPasswordResetRequest;
 import com.luna.wallpaper.rbac.RbacDtos.UserRequest;
 import com.luna.wallpaper.rbac.RbacDtos.UserResponse;
 import com.luna.wallpaper.rbac.RbacDtos.UserRolesRequest;
@@ -54,6 +55,12 @@ class RbacController {
 	@PreAuthorize("hasAuthority('user:manage')")
 	UserResponse updateUserRoles(@PathVariable String id, @RequestBody UserRolesRequest request) {
 		return service.updateUserRoles(id, request);
+	}
+
+	@PutMapping("/users/{id}/password")
+	@PreAuthorize("hasAuthority('user:manage')")
+	void resetUserPassword(@PathVariable String id, @Valid @RequestBody UserPasswordResetRequest request) {
+		service.resetUserPassword(id, request);
 	}
 
 	@GetMapping("/roles")

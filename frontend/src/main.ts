@@ -7,10 +7,12 @@ import App from './App.vue'
 import { router } from './router'
 import { pinia } from './stores'
 import { useAuthStore } from './stores/auth'
-import { setupUnauthorizedHandler } from './api/http'
+import { setupRefreshHandler, setupUnauthorizedHandler } from './api/http'
+
+setupRefreshHandler(() => useAuthStore(pinia).refresh())
 
 setupUnauthorizedHandler(() => {
-  useAuthStore(pinia).logout()
+  useAuthStore(pinia).clearSession()
   ElMessage.warning('登录状态已失效，请重新登录')
   const current = router.currentRoute.value
   if (current.name !== 'login') {

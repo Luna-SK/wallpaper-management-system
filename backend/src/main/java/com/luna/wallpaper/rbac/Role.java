@@ -12,7 +12,7 @@ import com.baomidou.mybatisplus.annotation.TableId;
 import com.baomidou.mybatisplus.annotation.TableName;
 
 @TableName("roles")
-class Role {
+public class Role {
 
 	@TableId(type = IdType.INPUT)
 	private String id;

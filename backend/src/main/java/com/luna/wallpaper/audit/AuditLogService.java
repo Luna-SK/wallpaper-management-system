@@ -7,6 +7,9 @@ import java.util.List;
 
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.security.core.context.SecurityContextHolder;
+
+import com.luna.wallpaper.rbac.AuthenticatedUser;
 
 @Service
 public class AuditLogService {
@@ -19,7 +22,7 @@ public class AuditLogService {
 
 	@Transactional
 	public void record(String action, String targetType, String targetId, String detailJson) {
-		mapper.insert(new AuditLog(action, targetType, targetId, detailJson));
+		mapper.insert(new AuditLog(currentActorId(), action, targetType, targetId, detailJson));
 	}
 
 	@Transactional(readOnly = true)
@@ -88,6 +91,14 @@ public class AuditLogService {
 	private String csvValue(Object value) {
 		String text = value == null ? "" : String.valueOf(value);
 		return "\"" + text.replace("\"", "\"\"") + "\"";
+	}
+
+	private String currentActorId() {
+		var authentication = SecurityContextHolder.getContext().getAuthentication();
+		if (authentication != null && authentication.getPrincipal() instanceof AuthenticatedUser user) {
+			return user.id();
+		}
+		return null;
 	}
 
 	public record AuditLogPageResponse(List<AuditLogResponse> items, int page, int size, long total) {

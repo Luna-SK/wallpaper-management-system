@@ -352,6 +352,26 @@ textarea {
   font-size: 24px;
 }
 
+.auth-form-footer {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  margin-top: 18px;
+  color: #66736f;
+  font-size: 14px;
+}
+
+.auth-form-footer a {
+  color: #0d433c;
+  font-weight: 600;
+  text-decoration: none;
+}
+
+.auth-form-footer a:hover {
+  text-decoration: underline;
+}
+
 .placeholder-grid {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));

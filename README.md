@@ -78,6 +78,8 @@ docker compose --env-file .env.example config
 - The frontend keeps its own Vite/Nginx configuration and does not read backend or Docker `.env` files.
 - Do not copy one environment file over another. The three projects stay independent even when some variable names are intentionally similar.
 - `DB_NAME` is the database name. `DB_USERNAME` is the database login user.
+- `APP_SECURITY_JWT_SECRET` signs access tokens and must be replaced outside local development; `APP_SECURITY_ACCESS_TOKEN_TTL` and `APP_SECURITY_REFRESH_TOKEN_TTL` control access-token and refresh-session lifetime.
+- `APP_SECURITY_DEVELOPMENT_TOKEN_ENABLED` defaults to `false`; only enable it explicitly for local/test bypass scenarios.
 - `UPLOAD_MAX_FILE_SIZE` and `UPLOAD_MAX_REQUEST_SIZE` are backend startup hard limits. The values on the System Settings page are runtime business limits and cannot be set above these hard limits.
 - Soft-deleted image cleanup is controlled from System Settings. The cleanup switch is off by default, the retention period is configurable, and the cleanup schedule uses a Spring cron expression. The default schedule is every Sunday at 03:00: `0 0 3 * * SUN`.
 - Database schema changes must go through Liquibase. The persistence layer uses MyBatis-Plus; do not reintroduce Spring Data JPA or Hibernate runtime DDL behavior.

@@ -43,6 +43,10 @@ app:
   security:
     allowed-origins: ${APP_ALLOWED_ORIGINS}
     development-token: ${APP_SECURITY_DEVELOPMENT_TOKEN}
+    development-token-enabled: ${APP_SECURITY_DEVELOPMENT_TOKEN_ENABLED:false}
+    jwt-secret: ${APP_SECURITY_JWT_SECRET}
+    access-token-ttl: ${APP_SECURITY_ACCESS_TOKEN_TTL:15m}
+    refresh-token-ttl: ${APP_SECURITY_REFRESH_TOKEN_TTL:7d}
   storage:
     endpoint: ${RUSTFS_ENDPOINT}
     region: ${RUSTFS_REGION}

@@ -1,0 +1,38 @@
+databaseChangeLog:
+  - changeSet:
+      id: 001-create-auth-refresh-tokens
+      author: codex
+      changes:
+        - createTable:
+            tableName: auth_refresh_tokens
+            columns:
+              - column: { name: id, type: varchar(36), constraints: { primaryKey: true, nullable: false } }
+              - column: { name: user_id, type: varchar(36), constraints: { nullable: false } }
+              - column: { name: token_hash, type: char(64), constraints: { nullable: false, unique: true } }
+              - column: { name: expires_at, type: datetime(6), constraints: { nullable: false } }
+              - column: { name: revoked_at, type: datetime(6) }
+              - column: { name: created_ip, type: varchar(80) }
+              - column: { name: user_agent, type: varchar(512) }
+              - column: { name: created_at, type: datetime(6), constraints: { nullable: false } }
+              - column: { name: updated_at, type: datetime(6), constraints: { nullable: false } }
+        - createIndex:
+            tableName: auth_refresh_tokens
+            indexName: idx_auth_refresh_tokens_user
+            columns:
+              - column: { name: user_id }
+        - createIndex:
+            tableName: auth_refresh_tokens
+            indexName: idx_auth_refresh_tokens_expires
+            columns:
+              - column: { name: expires_at }
+
+  - changeSet:
+      id: 002-bcrypt-seed-passwords
+      author: codex
+      changes:
+        - sql:
+            sql: |
+              update app_users
+              set password_hash = '{bcrypt}$2y$10$RWOHNbbbuDOH6a0H6nESD.4zAfEllkf2t1Gs591h7Ubug4B0Y7rlG',
+                  updated_at = now(6)
+              where password_hash = '{noop}admin123';

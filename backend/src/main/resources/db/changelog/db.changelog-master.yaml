@@ -13,3 +13,5 @@ databaseChangeLog:
       file: db/changelog/006-tag-groups-taxonomy-refine.yaml
   - include:
       file: db/changelog/007-tag-group-disable-consistency.yaml
+  - include:
+      file: db/changelog/008-auth-rbac.yaml

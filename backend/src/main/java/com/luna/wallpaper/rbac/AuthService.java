@@ -1,0 +1,348 @@
+package com.luna.wallpaper.rbac;
+
+import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
+import java.security.SecureRandom;
+import java.time.Instant;
+import java.time.LocalDateTime;
+import java.time.ZoneId;
+import java.util.Base64;
+import java.util.Comparator;
+import java.util.HexFormat;
+import java.util.LinkedHashSet;
+import java.util.List;
+import java.util.Map;
+import java.util.Optional;
+import java.util.Set;
+import java.util.function.Function;
+import java.util.stream.Collectors;
+
+import jakarta.servlet.http.HttpServletRequest;
+
+import org.springframework.security.authentication.BadCredentialsException;
+import org.springframework.security.authentication.DisabledException;
+import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
+import org.springframework.security.core.Authentication;
+import org.springframework.security.core.authority.SimpleGrantedAuthority;
+import org.springframework.security.crypto.password.PasswordEncoder;
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
+
+import com.luna.wallpaper.audit.AuditLogService;
+import com.luna.wallpaper.config.SecurityProperties;
+import com.luna.wallpaper.rbac.AuthDtos.AuthResponse;
+import com.luna.wallpaper.rbac.AuthDtos.AuthUserResponse;
+import com.luna.wallpaper.rbac.AuthDtos.LoginRequest;
+import com.luna.wallpaper.rbac.AuthDtos.PasswordChangeRequest;
+import com.luna.wallpaper.rbac.AuthDtos.ProfileUpdateRequest;
+import com.luna.wallpaper.rbac.AuthDtos.RefreshRequest;
+import com.luna.wallpaper.rbac.AuthDtos.RegisterRequest;
+import com.luna.wallpaper.rbac.JwtTokenService.AccessTokenClaims;
+
+@Service
+public class AuthService {
+
+	private static final String TOKEN_TYPE = "Bearer";
+	private static final int REFRESH_TOKEN_BYTES = 48;
+	private static final String VIEWER_ROLE_CODE = "VIEWER";
+
+	private final AppUserMapper users;
+	private final RoleMapper roles;
+	private final PermissionMapper permissions;
+	private final UserRoleMapper userRoles;
+	private final RolePermissionMapper rolePermissions;
+	private final AuthRefreshTokenMapper refreshTokens;
+	private final PasswordEncoder passwordEncoder;
+	private final JwtTokenService jwtTokenService;
+	private final SecurityProperties securityProperties;
+	private final AuditLogService auditLogService;
+	private final SecureRandom secureRandom = new SecureRandom();
+
+	AuthService(AppUserMapper users, RoleMapper roles, PermissionMapper permissions, UserRoleMapper userRoles,
+			RolePermissionMapper rolePermissions, AuthRefreshTokenMapper refreshTokens, PasswordEncoder passwordEncoder,
+			JwtTokenService jwtTokenService, SecurityProperties securityProperties, AuditLogService auditLogService) {
+		this.users = users;
+		this.roles = roles;
+		this.permissions = permissions;
+		this.userRoles = userRoles;
+		this.rolePermissions = rolePermissions;
+		this.refreshTokens = refreshTokens;
+		this.passwordEncoder = passwordEncoder;
+		this.jwtTokenService = jwtTokenService;
+		this.securityProperties = securityProperties;
+		this.auditLogService = auditLogService;
+	}
+
+	@Transactional
+	public AuthResponse login(LoginRequest request, HttpServletRequest servletRequest) {
+		AppUser user = users.findByUsername(normalizeUsername(request.username()))
+				.orElseThrow(() -> new BadCredentialsException("用户名或密码错误"));
+		if (!"ACTIVE".equals(user.status())) {
+			throw new DisabledException("用户已停用");
+		}
+		if (!passwordEncoder.matches(request.password(), user.passwordHash())) {
+			throw new BadCredentialsException("用户名或密码错误");
+		}
+		UserAccess access = loadUserAccess(user);
+		TokenBundle tokens = createSessionAndTokens(user, servletRequest);
+		auditLogService.record("auth.login", "USER", user.id(), "{}");
+		return response(access, tokens);
+	}
+
+	@Transactional
+	public AuthResponse register(RegisterRequest request, HttpServletRequest servletRequest) {
+		String username = normalizeUsername(request.username());
+		if (users.findByUsername(username).isPresent()) {
+			throw new IllegalArgumentException("用户名已存在");
+		}
+		requirePassword(request.password());
+		AppUser user = new AppUser(username, request.displayName().trim(), request.email(), request.phone(),
+				passwordEncoder.encode(request.password()));
+		users.insert(user);
+		Role viewer = roles.findByCode(VIEWER_ROLE_CODE)
+				.orElseThrow(() -> new IllegalStateException("默认浏览角色不存在"));
+		userRoles.insertBatch(user.id(), List.of(viewer.id()));
+		user.replaceRoles(new LinkedHashSet<>(List.of(viewer)));
+		UserAccess access = loadUserAccess(user);
+		TokenBundle tokens = createSessionAndTokens(user, servletRequest);
+		auditLogService.record("auth.register", "USER", user.id(), "{\"username\":\"" + escape(user.username()) + "\"}");
+		return response(access, tokens);
+	}
+
+	@Transactional
+	public AuthResponse refresh(RefreshRequest request, HttpServletRequest servletRequest) {
+		AuthRefreshToken session = Optional.ofNullable(refreshTokens.selectByTokenHash(sha256(request.refreshToken())))
+				.orElseThrow(() -> new BadCredentialsException("登录已失效，请重新登录"));
+		if (!session.isActive(LocalDateTime.now())) {
+			throw new BadCredentialsException("登录已失效，请重新登录");
+		}
+		AppUser user = requireActiveUser(session.userId());
+		UserAccess access = loadUserAccess(user);
+		TokenBundle tokens = rotateSessionAndTokens(session, user, servletRequest);
+		auditLogService.record("auth.refresh", "USER", user.id(), "{\"sessionId\":\"" + session.id() + "\"}");
+		return response(access, tokens);
+	}
+
+	@Transactional
+	public void logout(Authentication authentication) {
+		AuthenticatedUser current = currentUser(authentication);
+		refreshTokens.revokeById(current.sessionId());
+		auditLogService.record("auth.logout", "USER", current.id(), "{\"sessionId\":\"" + current.sessionId() + "\"}");
+	}
+
+	@Transactional(readOnly = true)
+	public AuthUserResponse me(Authentication authentication) {
+		AuthenticatedUser current = currentUser(authentication);
+		return userResponse(loadUserAccess(requireActiveUser(current.id())));
+	}
+
+	@Transactional
+	public AuthUserResponse updateProfile(Authentication authentication, ProfileUpdateRequest request) {
+		AuthenticatedUser current = currentUser(authentication);
+		AppUser user = requireActiveUser(current.id());
+		user.update(request.displayName().trim(), request.email(), request.phone(), user.status());
+		users.updateById(user);
+		auditLogService.record("auth.profile.update", "USER", user.id(), "{}");
+		return userResponse(loadUserAccess(user));
+	}
+
+	@Transactional
+	public void changePassword(Authentication authentication, PasswordChangeRequest request) {
+		AuthenticatedUser current = currentUser(authentication);
+		AppUser user = requireActiveUser(current.id());
+		if (!passwordEncoder.matches(request.currentPassword(), user.passwordHash())) {
+			throw new BadCredentialsException("当前密码不正确");
+		}
+		requirePassword(request.newPassword());
+		user.changePasswordHash(passwordEncoder.encode(request.newPassword()));
+		users.updateById(user);
+		refreshTokens.revokeOtherSessions(user.id(), current.sessionId());
+		auditLogService.record("auth.password.change", "USER", user.id(),
+				"{\"revokedOtherSessions\":true}");
+	}
+
+	@Transactional
+	public void resetPassword(String userId, String newPassword) {
+		requirePassword(newPassword);
+		AppUser user = Optional.ofNullable(users.selectById(userId))
+				.orElseThrow(() -> new IllegalArgumentException("用户不存在"));
+		user.changePasswordHash(passwordEncoder.encode(newPassword));
+		users.updateById(user);
+		refreshTokens.revokeByUserId(user.id());
+		auditLogService.record("user.password.reset", "USER", user.id(), "{\"revokedSessions\":true}");
+	}
+
+	@Transactional(readOnly = true)
+	public Optional<Authentication> authenticateAccessToken(String accessToken) {
+		try {
+			AccessTokenClaims claims = jwtTokenService.parse(accessToken);
+			AuthRefreshToken session = refreshTokens.selectById(claims.sessionId());
+			if (session == null || !session.isActive(LocalDateTime.now())) {
+				return Optional.empty();
+			}
+			UserAccess access = loadUserAccess(requireActiveUser(claims.userId()));
+			AuthenticatedUser principal = new AuthenticatedUser(access.user().id(), access.user().username(),
+					access.user().displayName(), session.id());
+			List<SimpleGrantedAuthority> authorities = access.permissions().stream()
+					.map(Permission::code)
+					.distinct()
+					.map(SimpleGrantedAuthority::new)
+					.toList();
+			return Optional.of(new UsernamePasswordAuthenticationToken(principal, accessToken, authorities));
+		}
+		catch (RuntimeException ex) {
+			return Optional.empty();
+		}
+	}
+
+	private TokenBundle createSessionAndTokens(AppUser user, HttpServletRequest request) {
+		String refreshToken = newRefreshToken();
+		Instant refreshExpiresAt = Instant.now().plus(securityProperties.safeRefreshTokenTtl());
+		AuthRefreshToken session = new AuthRefreshToken(user.id(), sha256(refreshToken),
+				toLocalDateTime(refreshExpiresAt), clientIp(request), userAgent(request));
+		refreshTokens.insert(session);
+		return accessAndRefreshTokens(user, session, refreshToken, refreshExpiresAt);
+	}
+
+	private TokenBundle rotateSessionAndTokens(AuthRefreshToken session, AppUser user, HttpServletRequest request) {
+		String refreshToken = newRefreshToken();
+		Instant refreshExpiresAt = Instant.now().plus(securityProperties.safeRefreshTokenTtl());
+		session.rotate(sha256(refreshToken), toLocalDateTime(refreshExpiresAt));
+		refreshTokens.updateById(session);
+		return accessAndRefreshTokens(user, session, refreshToken, refreshExpiresAt);
+	}
+
+	private TokenBundle accessAndRefreshTokens(AppUser user, AuthRefreshToken session, String refreshToken,
+			Instant refreshExpiresAt) {
+		Instant accessExpiresAt = Instant.now().plus(securityProperties.safeAccessTokenTtl());
+		String accessToken = jwtTokenService.createAccessToken(user, session.id(), accessExpiresAt);
+		return new TokenBundle(accessToken, refreshToken, accessExpiresAt, refreshExpiresAt);
+	}
+
+	private AuthResponse response(UserAccess access, TokenBundle tokens) {
+		List<String> permissionCodes = access.permissions().stream().map(Permission::code).distinct().toList();
+		return new AuthResponse(access.user().username(), TOKEN_TYPE, tokens.accessToken(), tokens.refreshToken(),
+				tokens.accessExpiresAt(), tokens.refreshExpiresAt(), userResponse(access), permissionCodes);
+	}
+
+	private AuthUserResponse userResponse(UserAccess access) {
+		return AuthUserResponse.from(access.user(), access.permissions());
+	}
+
+	private UserAccess loadUserAccess(AppUser user) {
+		List<UserRoleLink> links = userRoles.selectByUserIds(List.of(user.id()));
+		List<Role> assignedRoles = links.isEmpty() ? List.of() : roles.selectBatchIds(
+						links.stream().map(UserRoleLink::roleId).distinct().toList())
+				.stream()
+				.filter(Role::enabled)
+				.sorted(Comparator.comparing(Role::code))
+				.toList();
+		List<Permission> assignedPermissions = loadPermissions(assignedRoles);
+		Map<String, List<Permission>> permissionsByRole = permissionsByRole(assignedRoles, assignedPermissions);
+		for (Role role : assignedRoles) {
+			role.replacePermissions(new LinkedHashSet<>(permissionsByRole.getOrDefault(role.id(), List.of())));
+		}
+		user.replaceRoles(new LinkedHashSet<>(assignedRoles));
+		return new UserAccess(user, assignedRoles, assignedPermissions);
+	}
+
+	private List<Permission> loadPermissions(List<Role> assignedRoles) {
+		if (assignedRoles.isEmpty()) {
+			return List.of();
+		}
+		List<RolePermissionLink> links = rolePermissions.selectByRoleIds(assignedRoles.stream().map(Role::id).toList());
+		if (links.isEmpty()) {
+			return List.of();
+		}
+		return permissions.selectBatchIds(links.stream().map(RolePermissionLink::permissionId).distinct().toList())
+				.stream()
+				.sorted(Comparator.comparing(Permission::resource).thenComparing(Permission::action))
+				.toList();
+	}
+
+	private Map<String, List<Permission>> permissionsByRole(List<Role> assignedRoles, List<Permission> assignedPermissions) {
+		if (assignedRoles.isEmpty() || assignedPermissions.isEmpty()) {
+			return Map.of();
+		}
+		Map<String, Permission> permissionsById = assignedPermissions.stream()
+				.collect(Collectors.toMap(Permission::id, Function.identity()));
+		return rolePermissions.selectByRoleIds(assignedRoles.stream().map(Role::id).toList()).stream()
+				.map(link -> new RolePermissionAssignment(link.roleId(), permissionsById.get(link.permissionId())))
+				.filter(assignment -> assignment.permission() != null)
+				.collect(Collectors.groupingBy(RolePermissionAssignment::roleId,
+						Collectors.mapping(RolePermissionAssignment::permission, Collectors.toList())));
+	}
+
+	private AppUser requireActiveUser(String id) {
+		AppUser user = Optional.ofNullable(users.selectById(id))
+				.orElseThrow(() -> new BadCredentialsException("登录已失效，请重新登录"));
+		if (!"ACTIVE".equals(user.status())) {
+			throw new DisabledException("用户已停用");
+		}
+		return user;
+	}
+
+	private AuthenticatedUser currentUser(Authentication authentication) {
+		if (authentication != null && authentication.getPrincipal() instanceof AuthenticatedUser user) {
+			return user;
+		}
+		throw new BadCredentialsException("请先登录");
+	}
+
+	private String newRefreshToken() {
+		byte[] bytes = new byte[REFRESH_TOKEN_BYTES];
+		secureRandom.nextBytes(bytes);
+		return Base64.getUrlEncoder().withoutPadding().encodeToString(bytes);
+	}
+
+	static String sha256(String value) {
+		try {
+			MessageDigest digest = MessageDigest.getInstance("SHA-256");
+			return HexFormat.of().formatHex(digest.digest(value.getBytes(StandardCharsets.UTF_8)));
+		}
+		catch (Exception ex) {
+			throw new IllegalStateException("SHA-256 is unavailable", ex);
+		}
+	}
+
+	private static LocalDateTime toLocalDateTime(Instant instant) {
+		return LocalDateTime.ofInstant(instant, ZoneId.systemDefault());
+	}
+
+	private static String normalizeUsername(String username) {
+		return username == null ? "" : username.trim();
+	}
+
+	private static void requirePassword(String password) {
+		if (password == null || password.length() < 6) {
+			throw new IllegalArgumentException("密码至少需要 6 位");
+		}
+	}
+
+	private static String clientIp(HttpServletRequest request) {
+		String forwarded = request.getHeader("X-Forwarded-For");
+		if (forwarded != null && !forwarded.isBlank()) {
+			return forwarded.split(",")[0].trim();
+		}
+		return request.getRemoteAddr();
+	}
+
+	private static String userAgent(HttpServletRequest request) {
+		String value = request.getHeader("User-Agent");
+		return value == null || value.length() <= 512 ? value : value.substring(0, 512);
+	}
+
+	private static String escape(String value) {
+		return value == null ? "" : value.replace("\\", "\\\\").replace("\"", "\\\"");
+	}
+
+	private record UserAccess(AppUser user, List<Role> roles, List<Permission> permissions) {
+	}
+
+	private record TokenBundle(String accessToken, String refreshToken, Instant accessExpiresAt,
+			Instant refreshExpiresAt) {
+	}
+
+	private record RolePermissionAssignment(String roleId, Permission permission) {
+	}
+}

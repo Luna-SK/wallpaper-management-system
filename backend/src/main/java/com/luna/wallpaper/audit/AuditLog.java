@@ -35,8 +35,9 @@ class AuditLog {
 	protected AuditLog() {
 	}
 
-	AuditLog(String action, String targetType, String targetId, String detailJson) {
+	AuditLog(String actorId, String action, String targetType, String targetId, String detailJson) {
 		this.id = UUID.randomUUID().toString();
+		this.actorId = actorId;
 		this.action = action;
 		this.targetType = targetType;
 		this.targetId = targetId;

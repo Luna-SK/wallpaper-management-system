@@ -11,6 +11,7 @@ import java.util.stream.Collectors;
 
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.security.crypto.password.PasswordEncoder;
 
 import com.luna.wallpaper.audit.AuditLogService;
 import com.luna.wallpaper.rbac.RbacDtos.PermissionResponse;
@@ -29,15 +30,20 @@ class RbacService {
 	private final PermissionMapper permissions;
 	private final UserRoleMapper userRoles;
 	private final RolePermissionMapper rolePermissions;
+	private final AuthRefreshTokenMapper refreshTokens;
+	private final PasswordEncoder passwordEncoder;
 	private final AuditLogService auditLogService;
 
 	RbacService(AppUserMapper users, RoleMapper roles, PermissionMapper permissions, UserRoleMapper userRoles,
-			RolePermissionMapper rolePermissions, AuditLogService auditLogService) {
+			RolePermissionMapper rolePermissions, AuthRefreshTokenMapper refreshTokens, PasswordEncoder passwordEncoder,
+			AuditLogService auditLogService) {
 		this.users = users;
 		this.roles = roles;
 		this.permissions = permissions;
 		this.userRoles = userRoles;
 		this.rolePermissions = rolePermissions;
+		this.refreshTokens = refreshTokens;
+		this.passwordEncoder = passwordEncoder;
 		this.auditLogService = auditLogService;
 	}
 
@@ -51,9 +57,11 @@ class RbacService {
 	@Transactional
 	UserResponse createUser(UserRequest request) {
 		if (users.findByUsername(request.username()).isPresent()) {
-			throw new IllegalArgumentException("账号已存在");
+			throw new IllegalArgumentException("用户名已存在");
 		}
-		AppUser user = new AppUser(request.username().trim(), request.displayName().trim(), request.email(), request.phone());
+		requirePassword(request.initialPassword());
+		AppUser user = new AppUser(request.username().trim(), request.displayName().trim(), request.email(), request.phone(),
+				passwordEncoder.encode(request.initialPassword()));
 		user.update(user.displayName(), user.email(), user.phone(), normalizeStatus(request.status()));
 		users.insert(user);
 		auditLogService.record("user.create", "USER", user.id(), "{\"username\":\"" + user.username() + "\"}");
@@ -80,6 +88,16 @@ class RbacService {
 		user.replaceRoles(selected);
 		auditLogService.record("user.roles.update", "USER", id, "{\"roleCount\":" + selected.size() + "}");
 		return UserResponse.from(user);
+	}
+
+	@Transactional
+	void resetUserPassword(String id, RbacDtos.UserPasswordResetRequest request) {
+		requirePassword(request.newPassword());
+		AppUser user = getUser(id);
+		user.changePasswordHash(passwordEncoder.encode(request.newPassword()));
+		users.updateById(user);
+		refreshTokens.revokeByUserId(id);
+		auditLogService.record("user.password.reset", "USER", id, "{\"revokedSessions\":true}");
 	}
 
 	@Transactional(readOnly = true)
@@ -200,5 +218,11 @@ class RbacService {
 
 	private static String normalizeStatus(String status) {
 		return status == null || status.isBlank() ? "ACTIVE" : status.trim().toUpperCase();
+	}
+
+	private static void requirePassword(String password) {
+		if (password == null || password.length() < 6) {
+			throw new IllegalArgumentException("密码至少需要 6 位");
+		}
 	}
 }

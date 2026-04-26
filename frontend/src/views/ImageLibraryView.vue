@@ -27,8 +27,10 @@ import {
   type UploadBatchItem,
 } from '../api/images'
 import { getCategories, getTags, type Category, type Tag } from '../api/taxonomy'
+import { useAuthStore } from '../stores/auth'
 import { useDialogEnterSubmit } from '../utils/dialogEnterSubmit'
 
+const auth = useAuthStore()
 const loading = ref(false)
 const keyword = ref('')
 const selectedCategoryId = ref('')
@@ -78,6 +80,10 @@ const selectedRowsOnPageCount = computed(() => rows.value.filter((row) => select
 const gridAllSelected = computed(() => rows.value.length > 0 && selectedRowsOnPageCount.value === rows.value.length)
 const gridSelectionIndeterminate = computed(() => selectedRowsOnPageCount.value > 0 && selectedRowsOnPageCount.value < rows.value.length)
 const showingDeletedImages = computed(() => imageScope.value === 'DELETED')
+const canView = computed(() => auth.hasPermission('image:view'))
+const canUpload = computed(() => auth.hasPermission('image:upload'))
+const canEdit = computed(() => auth.hasPermission('image:edit'))
+const canDelete = computed(() => auth.hasPermission('image:delete'))
 const currentPreview = computed(() => previewIndex.value >= 0 ? rows.value[previewIndex.value] ?? null : null)
 const canPreviewPrevious = computed(() => previewIndex.value > 0)
 const canPreviewNext = computed(() => previewIndex.value >= 0 && previewIndex.value < rows.value.length - 1)
@@ -119,6 +125,14 @@ function errorMessage(error: unknown, fallback: string) {
     return error.response?.data?.message ?? fallback
   }
   return fallback
+}
+
+function ensureOperationAllowed(allowed: boolean) {
+  if (!allowed) {
+    ElMessage.warning('当前用户没有此操作权限')
+    return false
+  }
+  return true
 }
 
 function formatBytes(value: number) {
@@ -429,6 +443,7 @@ function handleImageScopeChange() {
 }
 
 async function openUploadDialog() {
+  if (!ensureOperationAllowed(canUpload.value)) return
   if (categories.value.length === 0) {
     await loadCategories()
   }
@@ -490,6 +505,9 @@ function clearSelectedUploadFiles() {
 }
 
 function validateUploadSelection() {
+  if (!ensureOperationAllowed(canUpload.value)) {
+    return null
+  }
   const files = selectedUploadFiles()
   if (files.length === 0) {
     ElMessage.warning('请先选择图片文件')
@@ -511,6 +529,9 @@ function validateUploadSelection() {
 }
 
 async function stageSelectedUploadFiles(files: File[]) {
+  if (!ensureOperationAllowed(canUpload.value)) {
+    return null
+  }
   uploadLoading.value = true
   uploadAbortController.value = new AbortController()
   try {
@@ -544,6 +565,7 @@ async function stageSelectedUploadFiles(files: File[]) {
 }
 
 async function retryUploadItem(item: UploadBatchItem) {
+  if (!ensureOperationAllowed(canUpload.value)) return
   const file = uploadItemFiles[item.id]
   if (!uploadSession.value || !file) {
     ElMessage.warning('找不到该失败文件，请重新打开上传弹窗选择文件')
@@ -565,6 +587,7 @@ async function retryUploadItem(item: UploadBatchItem) {
 }
 
 async function confirmUploadDialog() {
+  if (!ensureOperationAllowed(canUpload.value)) return
   if (!uploadSession.value) {
     const files = validateUploadSelection()
     if (!files) return
@@ -728,6 +751,7 @@ function handlePreviewKeydown(event: KeyboardEvent) {
 }
 
 async function openEdit(row: ImageRecord) {
+  if (!ensureOperationAllowed(canEdit.value)) return
   editing.value = row
   editVisible.value = true
   editForm.title = row.title
@@ -745,6 +769,7 @@ async function onEditCategoryChange() {
 
 async function saveEdit() {
   if (!editing.value) return
+  if (!ensureOperationAllowed(canEdit.value)) return
   try {
     await updateImage(editing.value.id, {
       title: editForm.title,
@@ -762,6 +787,7 @@ async function saveEdit() {
 }
 
 async function remove(row: ImageRecord) {
+  if (!ensureOperationAllowed(canDelete.value)) return
   try {
     await ElMessageBox.confirm(`确定停用图片“${row.title}”？`, '停用图片', { type: 'warning' })
   } catch {
@@ -777,6 +803,7 @@ async function remove(row: ImageRecord) {
 }
 
 async function batchDisableSelected() {
+  if (!ensureOperationAllowed(canDelete.value)) return
   const ids = [...selectedRowIds.value]
   if (ids.length === 0) {
     ElMessage.warning('请先选择图片')
@@ -800,6 +827,7 @@ async function batchDisableSelected() {
 }
 
 async function restore(row: ImageRecord) {
+  if (!ensureOperationAllowed(canDelete.value)) return
   try {
     await restoreImage(row.id)
     ElMessage.success('图片已恢复')
@@ -810,6 +838,7 @@ async function restore(row: ImageRecord) {
 }
 
 async function batchRestoreSelected() {
+  if (!ensureOperationAllowed(canDelete.value)) return
   const ids = [...selectedRowIds.value]
   if (ids.length === 0) {
     ElMessage.warning('请先选择图片')
@@ -828,6 +857,7 @@ async function batchRestoreSelected() {
 }
 
 async function purge(row: ImageRecord) {
+  if (!ensureOperationAllowed(canDelete.value)) return
   try {
     await ElMessageBox.confirm(`彻底删除图片“${row.title}”？此操作不可恢复。`, '彻底删除图片', {
       confirmButtonText: '彻底删除',
@@ -846,6 +876,7 @@ async function purge(row: ImageRecord) {
 }
 
 async function batchPurgeSelected() {
+  if (!ensureOperationAllowed(canDelete.value)) return
   const ids = [...selectedRowIds.value]
   if (ids.length === 0) {
     ElMessage.warning('请先选择图片')
@@ -872,6 +903,7 @@ async function batchPurgeSelected() {
 }
 
 async function purgeAllDeleted() {
+  if (!ensureOperationAllowed(canDelete.value)) return
   if (pagination.total === 0) {
     ElMessage.info('当前没有已停用图片')
     return
@@ -898,6 +930,7 @@ async function purgeAllDeleted() {
 }
 
 async function download(row: ImageRecord) {
+  if (!ensureOperationAllowed(canView.value)) return
   try {
     await downloadImage(row.id, row.originalFilename)
   } catch (error) {
@@ -906,6 +939,7 @@ async function download(row: ImageRecord) {
 }
 
 async function batchDownloadSelected() {
+  if (!ensureOperationAllowed(canView.value)) return
   const ids = [...selectedRowIds.value]
   if (ids.length === 0) {
     ElMessage.warning('请先选择图片')
@@ -950,7 +984,7 @@ onBeforeUnmount(() => {
       <div>
         <p>按关键词、分类、标签、上传者和时间范围检索图片。</p>
       </div>
-      <el-button type="primary" :icon="UploadFilled" @click="openUploadDialog">上传图片</el-button>
+      <el-button v-if="canUpload" type="primary" :icon="UploadFilled" @click="openUploadDialog">上传图片</el-button>
     </div>
 
     <div class="surface surface-pad">
@@ -996,6 +1030,7 @@ onBeforeUnmount(() => {
         </div>
         <div v-if="!showingDeletedImages" class="batch-toolbar-actions">
           <el-button
+            v-if="canView"
             type="primary"
             plain
             :icon="Download"
@@ -1006,6 +1041,7 @@ onBeforeUnmount(() => {
             批量下载
           </el-button>
           <el-button
+            v-if="canDelete"
             type="danger"
             plain
             :icon="Delete"
@@ -1016,7 +1052,7 @@ onBeforeUnmount(() => {
             批量停用
           </el-button>
         </div>
-        <div v-else class="batch-toolbar-actions">
+        <div v-else-if="canDelete" class="batch-toolbar-actions">
           <el-button
             type="danger"
             :icon="Delete"
@@ -1096,15 +1132,15 @@ onBeforeUnmount(() => {
                 </div>
               </div>
             </div>
-            <div class="image-grid-actions">
+            <div v-if="!showingDeletedImages || canDelete" class="image-grid-actions">
               <template v-if="!showingDeletedImages">
-                <el-button link type="primary" @click="openEdit(row)">编辑</el-button>
-                <el-button link type="primary" :icon="Download" @click="download(row)">下载</el-button>
-                <el-button link type="danger" @click="remove(row)">停用</el-button>
+                <el-button v-if="canEdit" link type="primary" @click="openEdit(row)">编辑</el-button>
+                <el-button v-if="canView" link type="primary" :icon="Download" @click="download(row)">下载</el-button>
+                <el-button v-if="canDelete" link type="danger" @click="remove(row)">停用</el-button>
               </template>
               <template v-else>
-                <el-button link type="primary" @click="restore(row)">恢复</el-button>
-                <el-button link type="danger" @click="purge(row)">彻底删除</el-button>
+                <el-button v-if="canDelete" link type="primary" @click="restore(row)">恢复</el-button>
+                <el-button v-if="canDelete" link type="danger" @click="purge(row)">彻底删除</el-button>
               </template>
             </div>
           </article>
@@ -1142,16 +1178,16 @@ onBeforeUnmount(() => {
             <el-tag :type="statusTagType(row.status)" effect="light">{{ statusLabel(row.status) }}</el-tag>
           </template>
         </el-table-column>
-        <el-table-column label="操作" width="210" fixed="right">
+        <el-table-column v-if="!showingDeletedImages || canDelete" label="操作" width="210" fixed="right">
           <template #default="{ row }">
             <template v-if="!showingDeletedImages">
-              <el-button link type="primary" @click="openEdit(row)">编辑</el-button>
-              <el-button link type="primary" :icon="Download" @click="download(row)">下载</el-button>
-              <el-button link type="danger" @click="remove(row)">停用</el-button>
+              <el-button v-if="canEdit" link type="primary" @click="openEdit(row)">编辑</el-button>
+              <el-button v-if="canView" link type="primary" :icon="Download" @click="download(row)">下载</el-button>
+              <el-button v-if="canDelete" link type="danger" @click="remove(row)">停用</el-button>
             </template>
             <template v-else>
-              <el-button link type="primary" @click="restore(row)">恢复</el-button>
-              <el-button link type="danger" @click="purge(row)">彻底删除</el-button>
+              <el-button v-if="canDelete" link type="primary" @click="restore(row)">恢复</el-button>
+              <el-button v-if="canDelete" link type="danger" @click="purge(row)">彻底删除</el-button>
             </template>
           </template>
         </el-table-column>
@@ -1215,7 +1251,7 @@ onBeforeUnmount(() => {
       </div>
     </el-dialog>
 
-    <el-dialog v-model="uploadVisible" title="上传图片" width="720px" :before-close="handleUploadBeforeClose">
+    <el-dialog v-if="canUpload" v-model="uploadVisible" title="上传图片" width="720px" :before-close="handleUploadBeforeClose">
       <el-form label-width="88px">
         <el-form-item label="上传模式">
           <el-radio-group v-model="uploadMode" :disabled="uploadLocked" @change="handleUploadModeChange">
@@ -1345,7 +1381,7 @@ onBeforeUnmount(() => {
       </template>
     </el-dialog>
 
-    <el-dialog v-model="editVisible" title="编辑图片信息" width="520px">
+    <el-dialog v-if="canEdit" v-model="editVisible" title="编辑图片信息" width="520px">
       <el-form label-width="88px">
         <el-form-item label="标题">
           <el-input v-model="editForm.title" />

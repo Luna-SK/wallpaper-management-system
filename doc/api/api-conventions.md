@@ -32,12 +32,14 @@
 - `POST /api/auth/login`
 - `POST /api/auth/refresh`
 - `POST /api/auth/logout`
-- `POST /api/auth/password/forgot`
-- `POST /api/auth/password/reset`
+- `GET /api/auth/me`
+- `PATCH /api/auth/profile`
+- `PATCH /api/auth/password`
 - `GET /api/users`
 - `POST /api/users`
 - `PATCH /api/users/{id}`
 - `PUT /api/users/{id}/roles`
+- `PUT /api/users/{id}/password`
 - `GET /api/roles`
 - `POST /api/roles`
 - `PATCH /api/roles/{id}`
@@ -90,6 +92,14 @@
 
 分类、标签组、标签的彻底删除只允许对已停用项执行。若存在图片、上传会话或下级标签引用，未传 `force=true` 时返回 `409 REFERENCE_EXISTS` 和引用数量；前端二次确认后可带 `force=true` 自动解除引用并物理删除。
 
+## Auth and RBAC
+
+认证使用短期 JWT access token 和服务端 refresh session。`POST /api/auth/login` 返回 `accessToken`、`refreshToken`、过期时间、当前用户资料、角色和权限编码；后续请求使用 `Authorization: Bearer <accessToken>`。
+
+`POST /api/auth/refresh` 使用 refresh token 轮换新的 token 对；`POST /api/auth/logout` 撤销当前 session。用户可通过 `PATCH /api/auth/profile` 修改个人资料，通过 `PATCH /api/auth/password` 修改自己的密码。管理员通过 `PUT /api/users/{id}/password` 重置用户密码，重置后该用户已有 session 会被撤销。
+
+权限来自当前启用用户、启用角色和角色权限关系，请求鉴权时动态加载；角色权限调整后无需用户重新登录即可在下一次请求生效。开发令牌旁路默认关闭，仅在显式配置 `APP_SECURITY_DEVELOPMENT_TOKEN_ENABLED=true` 时启用。
+
 ## System Settings
 
 `GET /api/system-settings` 返回上传业务上限、后端上传硬上限、预览质量和已停用图片清理配置：
@@ -139,8 +149,8 @@
 ## Errors
 
 - `VALIDATION_ERROR`
-- `AUTHENTICATION_REQUIRED`
-- `ACCESS_DENIED`
+- `UNAUTHORIZED`
+- `FORBIDDEN`
 - `RESOURCE_NOT_FOUND`
 - `DUPLICATE_IMAGE`
 - `UNSUPPORTED_FILE_TYPE`

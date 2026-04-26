@@ -12,7 +12,7 @@ import com.baomidou.mybatisplus.annotation.TableId;
 import com.baomidou.mybatisplus.annotation.TableName;
 
 @TableName("app_users")
-class AppUser {
+public class AppUser {
 
 	@TableId(type = IdType.INPUT)
 	private String id;
@@ -41,13 +41,13 @@ class AppUser {
 	protected AppUser() {
 	}
 
-	AppUser(String username, String displayName, String email, String phone) {
+	AppUser(String username, String displayName, String email, String phone, String passwordHash) {
 		this.id = UUID.randomUUID().toString();
 		this.username = username;
 		this.displayName = displayName;
 		this.email = email;
 		this.phone = phone;
-		this.passwordHash = "{noop}admin123";
+		this.passwordHash = passwordHash;
 		this.status = "ACTIVE";
 	}
 
@@ -56,6 +56,7 @@ class AppUser {
 	String displayName() { return displayName; }
 	String email() { return email; }
 	String phone() { return phone; }
+	String passwordHash() { return passwordHash; }
 	String status() { return status; }
 	Set<Role> roles() { return roles; }
 
@@ -64,6 +65,10 @@ class AppUser {
 		this.email = email;
 		this.phone = phone;
 		this.status = status;
+	}
+
+	void changePasswordHash(String passwordHash) {
+		this.passwordHash = passwordHash;
 	}
 
 	void replaceRoles(Set<Role> roles) {

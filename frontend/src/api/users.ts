@@ -32,16 +32,21 @@ export async function getUsers() {
   return response.data
 }
 
-export async function saveUser(payload: Partial<User> & { username: string; displayName: string }) {
+export async function saveUser(payload: Partial<User> & { username: string; displayName: string; initialPassword?: string }) {
   const body = {
     username: payload.username,
     displayName: payload.displayName,
     email: payload.email,
     phone: payload.phone,
     status: payload.status ?? 'ACTIVE',
+    initialPassword: payload.initialPassword,
   }
   const response = payload.id ? await http.patch<User>(`/users/${payload.id}`, body) : await http.post<User>('/users', body)
   return response.data
+}
+
+export async function resetUserPassword(userId: string, newPassword: string) {
+  await http.put(`/users/${userId}/password`, { newPassword })
 }
 
 export async function updateUserRoles(userId: string, roleIds: string[]) {

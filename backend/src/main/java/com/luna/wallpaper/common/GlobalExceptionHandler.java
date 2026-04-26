@@ -2,6 +2,8 @@ package com.luna.wallpaper.common;
 
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
+import org.springframework.security.access.AccessDeniedException;
+import org.springframework.security.core.AuthenticationException;
 import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
@@ -23,6 +25,18 @@ class GlobalExceptionHandler {
 	ResponseEntity<ApiResponse<ReferenceImpact>> handleTaxonomyReference(TaxonomyReferenceException exception) {
 		return ResponseEntity.status(HttpStatus.CONFLICT)
 				.body(new ApiResponse<>("REFERENCE_EXISTS", exception.getMessage(), exception.impact(), null));
+	}
+
+	@ExceptionHandler(AuthenticationException.class)
+	ResponseEntity<ApiResponse<Void>> handleAuthentication(AuthenticationException exception) {
+		return ResponseEntity.status(HttpStatus.UNAUTHORIZED)
+				.body(ApiResponse.error("UNAUTHORIZED", exception.getMessage()));
+	}
+
+	@ExceptionHandler(AccessDeniedException.class)
+	ResponseEntity<ApiResponse<Void>> handleAccessDenied(AccessDeniedException exception) {
+		return ResponseEntity.status(HttpStatus.FORBIDDEN)
+				.body(ApiResponse.error("FORBIDDEN", "权限不足"));
 	}
 
 	@ExceptionHandler(MethodArgumentNotValidException.class)

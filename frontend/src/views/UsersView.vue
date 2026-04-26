@@ -7,6 +7,7 @@ import {
   getPermissions,
   getRoles,
   getUsers,
+  resetUserPassword,
   saveRole,
   saveUser,
   updateRolePermissions,
@@ -27,8 +28,10 @@ const userDialogVisible = ref(false)
 const roleDialogVisible = ref(false)
 const assignDialogVisible = ref(false)
 const permissionDialogVisible = ref(false)
-const userForm = reactive({ id: '', username: '', displayName: '', email: '', phone: '', status: 'ACTIVE' })
+const resetPasswordVisible = ref(false)
+const userForm = reactive({ id: '', username: '', displayName: '', email: '', phone: '', status: 'ACTIVE', initialPassword: '' })
 const roleForm = reactive({ id: '', code: '', name: '', enabled: true })
+const resetPasswordForm = reactive({ userId: '', username: '', newPassword: '' })
 const selectedRoleIds = ref<string[]>([])
 const selectedPermissionIds = ref<string[]>([])
 
@@ -112,6 +115,7 @@ function openUser(row?: User) {
   userForm.email = row?.email ?? ''
   userForm.phone = row?.phone ?? ''
   userForm.status = row?.status ?? 'ACTIVE'
+  userForm.initialPassword = ''
   userDialogVisible.value = true
 }
 
@@ -123,6 +127,23 @@ async function submitUser() {
     await refresh()
   } catch (error) {
     ElMessage.error(errorMessage(error, '用户保存失败'))
+  }
+}
+
+function openResetPassword(row: User) {
+  resetPasswordForm.userId = row.id
+  resetPasswordForm.username = row.username
+  resetPasswordForm.newPassword = ''
+  resetPasswordVisible.value = true
+}
+
+async function submitResetPassword() {
+  try {
+    await resetUserPassword(resetPasswordForm.userId, resetPasswordForm.newPassword)
+    ElMessage.success('密码已重置')
+    resetPasswordVisible.value = false
+  } catch (error) {
+    ElMessage.error(errorMessage(error, '密码重置失败'))
   }
 }
 
@@ -195,6 +216,7 @@ useDialogEnterSubmit(userDialogVisible, submitUser)
 useDialogEnterSubmit(assignDialogVisible, submitUserRoles)
 useDialogEnterSubmit(roleDialogVisible, submitRole)
 useDialogEnterSubmit(permissionDialogVisible, submitRolePermissions)
+useDialogEnterSubmit(resetPasswordVisible, submitResetPassword)
 
 onMounted(refresh)
 </script>
@@ -203,7 +225,7 @@ onMounted(refresh)
   <section>
     <div class="page-head">
       <div>
-        <p>账号、角色、权限和访问范围管理。</p>
+        <p>用户、角色、权限和访问范围管理。</p>
       </div>
     </div>
 
@@ -211,12 +233,12 @@ onMounted(refresh)
       <el-tabs>
         <el-tab-pane label="用户">
           <div class="toolbar-row">
-            <el-input v-model="userKeyword" placeholder="搜索账号、姓名或角色" :prefix-icon="Search" style="max-width: 320px" />
+            <el-input v-model="userKeyword" placeholder="搜索用户名、姓名或角色" :prefix-icon="Search" style="max-width: 320px" />
             <el-button type="primary" :icon="Plus" @click="openUser()">新增用户</el-button>
           </div>
 
           <el-table :data="filteredUsers" stripe>
-            <el-table-column prop="username" label="账号" width="160" />
+            <el-table-column prop="username" label="用户名" width="160" />
             <el-table-column prop="displayName" label="姓名" width="160" />
             <el-table-column label="角色" min-width="220">
               <template #default="{ row }">
@@ -228,10 +250,11 @@ onMounted(refresh)
                 <el-tag :type="row.status === 'ACTIVE' ? 'success' : 'info'">{{ row.status === 'ACTIVE' ? '启用' : '停用' }}</el-tag>
               </template>
             </el-table-column>
-            <el-table-column label="操作" width="200" fixed="right">
+            <el-table-column label="操作" width="260" fixed="right">
               <template #default="{ row }">
                 <el-button link type="primary" @click="openUser(row)">编辑</el-button>
                 <el-button link type="primary" @click="openAssignRoles(row)">分配角色</el-button>
+                <el-button link type="primary" @click="openResetPassword(row)">重置密码</el-button>
               </template>
             </el-table-column>
           </el-table>
@@ -281,8 +304,9 @@ onMounted(refresh)
 
     <el-dialog v-model="userDialogVisible" title="用户" width="480px">
       <el-form label-width="86px">
-        <el-form-item label="账号"><el-input v-model="userForm.username" :disabled="Boolean(userForm.id)" /></el-form-item>
+        <el-form-item label="用户名"><el-input v-model="userForm.username" :disabled="Boolean(userForm.id)" /></el-form-item>
         <el-form-item label="姓名"><el-input v-model="userForm.displayName" /></el-form-item>
+        <el-form-item v-if="!userForm.id" label="初始密码"><el-input v-model="userForm.initialPassword" type="password" show-password /></el-form-item>
         <el-form-item label="邮箱"><el-input v-model="userForm.email" /></el-form-item>
         <el-form-item label="电话"><el-input v-model="userForm.phone" /></el-form-item>
         <el-form-item label="状态">
@@ -290,6 +314,14 @@ onMounted(refresh)
         </el-form-item>
       </el-form>
       <template #footer><el-button @click="userDialogVisible = false">取消</el-button><el-button type="primary" @click="submitUser">保存</el-button></template>
+    </el-dialog>
+
+    <el-dialog v-model="resetPasswordVisible" title="重置密码" width="460px">
+      <el-form label-width="86px">
+        <el-form-item label="用户名"><el-input v-model="resetPasswordForm.username" disabled /></el-form-item>
+        <el-form-item label="新密码"><el-input v-model="resetPasswordForm.newPassword" type="password" show-password /></el-form-item>
+      </el-form>
+      <template #footer><el-button @click="resetPasswordVisible = false">取消</el-button><el-button type="primary" @click="submitResetPassword">保存</el-button></template>
     </el-dialog>
 
     <el-dialog v-model="assignDialogVisible" title="分配角色" width="460px">

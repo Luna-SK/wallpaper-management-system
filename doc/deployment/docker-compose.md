@@ -48,6 +48,8 @@ The backend builds its JDBC URL from `DB_HOST`, `DB_PORT`, and `DB_NAME`; Docker
 
 `SERVER_PORT` controls the backend container listening port, and `BACKEND_PORT` controls the host port exposed by Docker. The default for both is `18090`, and the frontend Nginx container proxies `/api` to `backend:18090`.
 
+`APP_SECURITY_JWT_SECRET` signs JWT access tokens and must be changed for every deployment. Access token and refresh session lifetime are controlled by `APP_SECURITY_ACCESS_TOKEN_TTL` and `APP_SECURITY_REFRESH_TOKEN_TTL`. `APP_SECURITY_DEVELOPMENT_TOKEN_ENABLED` defaults to `false`; keep it disabled outside explicit local diagnostics.
+
 `UPLOAD_MAX_FILE_SIZE` and `UPLOAD_MAX_REQUEST_SIZE` are startup hard limits for file upload. Administrators can lower runtime business limits on the System Settings page, but they cannot raise them above the Docker `.env` hard limits.
 
 备份：

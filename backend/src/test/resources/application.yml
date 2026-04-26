@@ -11,6 +11,10 @@ app:
   security:
     allowed-origins: http://localhost:5173,http://127.0.0.1:5173,http://localhost
     development-token: test-development-token
+    development-token-enabled: false
+    jwt-secret: test-jwt-secret-for-wallpaper-auth-rbac-suite
+    access-token-ttl: 15m
+    refresh-token-ttl: 7d
   storage:
     endpoint: http://localhost:19010
     region: cn-east-1

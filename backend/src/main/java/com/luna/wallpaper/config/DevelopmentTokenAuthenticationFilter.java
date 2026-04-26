@@ -9,6 +9,8 @@ import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.stereotype.Component;
 import org.springframework.web.filter.OncePerRequestFilter;
 
+import com.luna.wallpaper.rbac.AuthenticatedUser;
+
 import jakarta.servlet.FilterChain;
 import jakarta.servlet.ServletException;
 import jakarta.servlet.http.HttpServletRequest;
@@ -47,7 +49,8 @@ class DevelopmentTokenAuthenticationFilter extends OncePerRequestFilter {
 			if (properties.developmentToken().equals(token)
 					&& SecurityContextHolder.getContext().getAuthentication() == null) {
 				UsernamePasswordAuthenticationToken authentication = new UsernamePasswordAuthenticationToken(
-						"development-admin", token, DEVELOPMENT_AUTHORITIES);
+						new AuthenticatedUser("development-admin", "development-admin", "Development Admin", "development"),
+						token, DEVELOPMENT_AUTHORITIES);
 				SecurityContextHolder.getContext().setAuthentication(authentication);
 			}
 		}
