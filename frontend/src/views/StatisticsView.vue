@@ -184,7 +184,7 @@ onBeforeUnmount(() => {
         <div class="metric stat-metric">
           <span>图片总量</span>
           <strong>{{ formatNumber(stats.imageTotal) }}</strong>
-          <small>当前未彻底删除图片</small>
+          <small>不含已停用图片</small>
         </div>
         <div class="metric stat-metric">
           <span>今日上传</span>
