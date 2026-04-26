@@ -156,10 +156,6 @@ function categoryText(row: ImageRecord) {
   return row.category?.name ?? '-'
 }
 
-function tagText(row: ImageRecord) {
-  return row.tags.map((item) => item.name).join('、') || '-'
-}
-
 function tagOptionLabel(tag: Tag) {
   return tag.groupName ? `${tag.groupName} / ${tag.name}` : tag.name
 }
@@ -172,9 +168,8 @@ function hiddenGridTagCount(row: ImageRecord) {
   return Math.max(0, row.tags.length - gridTagDisplayLimit)
 }
 
-function hiddenGridTagTitle(row: ImageRecord) {
-  const hiddenCount = hiddenGridTagCount(row)
-  return hiddenCount ? `还有 ${hiddenCount} 个标签：${tagText(row)}` : tagText(row)
+function hiddenGridTags(row: ImageRecord) {
+  return row.tags.slice(gridTagDisplayLimit)
 }
 
 function revokeThumbnailUrl(id: string) {
@@ -1114,19 +1109,34 @@ onBeforeUnmount(() => {
                 </div>
                 <div class="image-grid-taxonomy-row">
                   <span class="image-grid-taxonomy-label">标签</span>
-                  <div class="image-grid-chip-row" :title="tagText(row)">
+                  <div class="image-grid-chip-row">
                     <el-tag v-for="tag in visibleGridTags(row)" :key="tag.id" class="image-grid-chip" size="small" effect="light">
                       {{ tag.name }}
                     </el-tag>
-                    <el-tag
+                    <el-popover
                       v-if="hiddenGridTagCount(row)"
-                      class="image-grid-chip image-grid-more-chip"
-                      size="small"
-                      effect="plain"
-                      :title="hiddenGridTagTitle(row)"
+                      trigger="hover"
+                      placement="top"
+                      :width="260"
+                      popper-class="image-grid-hidden-tags-popper"
                     >
-                      …
-                    </el-tag>
+                      <template #reference>
+                        <el-tag class="image-grid-chip image-grid-more-chip" size="small" effect="plain">
+                          …
+                        </el-tag>
+                      </template>
+                      <div class="image-grid-hidden-tags" :aria-label="`剩余 ${hiddenGridTagCount(row)} 个标签`">
+                        <el-tag
+                          v-for="tag in hiddenGridTags(row)"
+                          :key="tag.id"
+                          class="image-grid-hidden-tag"
+                          size="small"
+                          effect="light"
+                        >
+                          {{ tag.name }}
+                        </el-tag>
+                      </div>
+                    </el-popover>
                     <span v-if="row.tags.length === 0" class="taxonomy-empty">暂无标签</span>
                   </div>
                 </div>
@@ -1661,11 +1671,28 @@ onBeforeUnmount(() => {
   text-align: center;
 }
 
+.image-grid-hidden-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  max-width: 236px;
+}
+
+.image-grid-hidden-tag {
+  margin: 0;
+  max-width: 100%;
+}
+
 .image-grid-chip :deep(.el-tag__content),
+.image-grid-hidden-tag :deep(.el-tag__content),
 .preview-detail-tags :deep(.el-tag__content) {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+:global(.image-grid-hidden-tags-popper) {
+  max-width: 280px;
 }
 
 .taxonomy-empty {
