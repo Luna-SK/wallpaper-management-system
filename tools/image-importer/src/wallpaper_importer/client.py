@@ -23,6 +23,8 @@ class ImportClient:
                 "sourcePath": str(file_path),
                 "categoryCode": self.settings.default_category_code,
                 "categoryName": self.settings.default_category_name,
+                "tagGroupCode": self.settings.default_tag_group_code,
+                "tagGroupName": self.settings.default_tag_group_name,
                 "tagNames": ",".join(tag_names),
             }
             return self.client.post("/imports/images", files=files, data=data)

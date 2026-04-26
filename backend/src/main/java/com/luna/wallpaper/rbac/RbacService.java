@@ -1,7 +1,10 @@
 package com.luna.wallpaper.rbac;
 
+import java.util.Comparator;
 import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Map;
+import java.util.Optional;
 import java.util.Set;
 import java.util.function.Function;
 import java.util.stream.Collectors;
@@ -21,22 +24,28 @@ import com.luna.wallpaper.rbac.RbacDtos.UserRolesRequest;
 @Service
 class RbacService {
 
-	private final AppUserRepository users;
-	private final RoleRepository roles;
-	private final PermissionRepository permissions;
+	private final AppUserMapper users;
+	private final RoleMapper roles;
+	private final PermissionMapper permissions;
+	private final UserRoleMapper userRoles;
+	private final RolePermissionMapper rolePermissions;
 	private final AuditLogService auditLogService;
 
-	RbacService(AppUserRepository users, RoleRepository roles, PermissionRepository permissions,
-			AuditLogService auditLogService) {
+	RbacService(AppUserMapper users, RoleMapper roles, PermissionMapper permissions, UserRoleMapper userRoles,
+			RolePermissionMapper rolePermissions, AuditLogService auditLogService) {
 		this.users = users;
 		this.roles = roles;
 		this.permissions = permissions;
+		this.userRoles = userRoles;
+		this.rolePermissions = rolePermissions;
 		this.auditLogService = auditLogService;
 	}
 
 	@Transactional(readOnly = true)
 	List<UserResponse> users() {
-		return users.findAllByOrderByUsernameAsc().stream().map(UserResponse::from).toList();
+		List<AppUser> result = users.selectOrdered();
+		attachRoles(result);
+		return result.stream().map(UserResponse::from).toList();
 	}
 
 	@Transactional
@@ -44,25 +53,30 @@ class RbacService {
 		if (users.findByUsername(request.username()).isPresent()) {
 			throw new IllegalArgumentException("账号已存在");
 		}
-		AppUser user = users.save(new AppUser(request.username().trim(), request.displayName().trim(), request.email(),
-				request.phone()));
+		AppUser user = new AppUser(request.username().trim(), request.displayName().trim(), request.email(), request.phone());
 		user.update(user.displayName(), user.email(), user.phone(), normalizeStatus(request.status()));
+		users.insert(user);
 		auditLogService.record("user.create", "USER", user.id(), "{\"username\":\"" + user.username() + "\"}");
 		return UserResponse.from(user);
 	}
 
 	@Transactional
 	UserResponse updateUser(String id, UserRequest request) {
-		AppUser user = users.findById(id).orElseThrow(() -> new IllegalArgumentException("用户不存在"));
+		AppUser user = getUser(id);
 		user.update(request.displayName().trim(), request.email(), request.phone(), normalizeStatus(request.status()));
+		users.updateById(user);
 		auditLogService.record("user.update", "USER", id, "{\"status\":\"" + user.status() + "\"}");
 		return UserResponse.from(user);
 	}
 
 	@Transactional
 	UserResponse updateUserRoles(String id, UserRolesRequest request) {
-		AppUser user = users.findById(id).orElseThrow(() -> new IllegalArgumentException("用户不存在"));
-		Set<Role> selected = new LinkedHashSet<>(roles.findByIdIn(request.roleIds() == null ? List.of() : request.roleIds()));
+		AppUser user = getUser(id);
+		Set<Role> selected = new LinkedHashSet<>(roles.selectBatchIds(request.roleIds() == null ? List.of() : request.roleIds()));
+		userRoles.deleteByUserId(id);
+		if (!selected.isEmpty()) {
+			userRoles.insertBatch(id, selected.stream().map(Role::id).toList());
+		}
 		user.replaceRoles(selected);
 		auditLogService.record("user.roles.update", "USER", id, "{\"roleCount\":" + selected.size() + "}");
 		return UserResponse.from(user);
@@ -70,10 +84,11 @@ class RbacService {
 
 	@Transactional(readOnly = true)
 	List<RoleResponse> roles() {
-		var userCounts = users.findAll().stream()
-				.flatMap(user -> user.roles().stream().map(role -> role.id()))
-				.collect(Collectors.groupingBy(Function.identity(), Collectors.summingInt(id -> 1)));
-		return roles.findAllByOrderByCodeAsc().stream()
+		List<Role> result = roles.selectOrdered();
+		attachPermissions(result);
+		Map<String, Integer> userCounts = userRoles.countUsersByRole().stream()
+				.collect(Collectors.toMap(RoleUserCount::roleId, RoleUserCount::userCount));
+		return result.stream()
 				.map(role -> RoleResponse.from(role, userCounts.getOrDefault(role.id(), 0)))
 				.toList();
 	}
@@ -84,29 +99,35 @@ class RbacService {
 		if (roles.findByCode(code).isPresent()) {
 			throw new IllegalArgumentException("角色编码已存在");
 		}
-		Role role = roles.save(new Role(code, request.name().trim()));
+		Role role = new Role(code, request.name().trim());
 		role.update(code, role.name(), request.enabled() == null || request.enabled());
+		roles.insert(role);
 		auditLogService.record("role.create", "ROLE", role.id(), "{\"code\":\"" + role.code() + "\"}");
 		return RoleResponse.from(role, 0);
 	}
 
 	@Transactional
 	RoleResponse updateRole(String id, RoleRequest request) {
-		Role role = roles.findById(id).orElseThrow(() -> new IllegalArgumentException("角色不存在"));
+		Role role = getRole(id);
 		String code = normalizeCode(request.code());
-		if (roles.existsByCodeAndIdNot(code, id)) {
+		if (roles.hasCodeExcludingId(code, id)) {
 			throw new IllegalArgumentException("角色编码已存在");
 		}
 		role.update(code, request.name().trim(), request.enabled() == null || request.enabled());
+		roles.updateById(role);
 		auditLogService.record("role.update", "ROLE", id, "{\"enabled\":" + role.enabled() + "}");
 		return RoleResponse.from(role, 0);
 	}
 
 	@Transactional
 	RoleResponse updateRolePermissions(String id, RolePermissionsRequest request) {
-		Role role = roles.findById(id).orElseThrow(() -> new IllegalArgumentException("角色不存在"));
+		Role role = getRole(id);
 		Set<Permission> selected = new LinkedHashSet<>(
-				permissions.findByIdIn(request.permissionIds() == null ? List.of() : request.permissionIds()));
+				permissions.selectBatchIds(request.permissionIds() == null ? List.of() : request.permissionIds()));
+		rolePermissions.deleteByRoleId(id);
+		if (!selected.isEmpty()) {
+			rolePermissions.insertBatch(id, selected.stream().map(Permission::id).toList());
+		}
 		role.replacePermissions(selected);
 		auditLogService.record("role.permissions.update", "ROLE", id, "{\"permissionCount\":" + selected.size() + "}");
 		return RoleResponse.from(role, 0);
@@ -114,7 +135,63 @@ class RbacService {
 
 	@Transactional(readOnly = true)
 	List<PermissionResponse> permissions() {
-		return permissions.findAllByOrderByResourceAscActionAsc().stream().map(PermissionResponse::from).toList();
+		return permissions.selectOrdered().stream().map(PermissionResponse::from).toList();
+	}
+
+	private AppUser getUser(String id) {
+		return Optional.ofNullable(users.selectById(id)).orElseThrow(() -> new IllegalArgumentException("用户不存在"));
+	}
+
+	private Role getRole(String id) {
+		return Optional.ofNullable(roles.selectById(id)).orElseThrow(() -> new IllegalArgumentException("角色不存在"));
+	}
+
+	private void attachRoles(List<AppUser> appUsers) {
+		if (appUsers.isEmpty()) {
+			return;
+		}
+		List<String> userIds = appUsers.stream().map(AppUser::id).toList();
+		List<UserRoleLink> links = userRoles.selectByUserIds(userIds);
+		if (links.isEmpty()) {
+			return;
+		}
+		Map<String, Role> rolesById = roles.selectBatchIds(links.stream().map(UserRoleLink::roleId).distinct().toList())
+				.stream()
+				.collect(Collectors.toMap(Role::id, Function.identity()));
+		Map<String, List<UserRoleLink>> linksByUser = links.stream().collect(Collectors.groupingBy(UserRoleLink::userId));
+		for (AppUser user : appUsers) {
+			Set<Role> assigned = linksByUser.getOrDefault(user.id(), List.of()).stream()
+					.map(link -> rolesById.get(link.roleId()))
+					.filter(java.util.Objects::nonNull)
+					.sorted(Comparator.comparing(Role::code))
+					.collect(Collectors.toCollection(LinkedHashSet::new));
+			user.replaceRoles(assigned);
+		}
+	}
+
+	private void attachPermissions(List<Role> rolesToAttach) {
+		if (rolesToAttach.isEmpty()) {
+			return;
+		}
+		List<String> roleIds = rolesToAttach.stream().map(Role::id).toList();
+		List<RolePermissionLink> links = rolePermissions.selectByRoleIds(roleIds);
+		if (links.isEmpty()) {
+			return;
+		}
+		Map<String, Permission> permissionsById = permissions.selectBatchIds(
+						links.stream().map(RolePermissionLink::permissionId).distinct().toList())
+				.stream()
+				.collect(Collectors.toMap(Permission::id, Function.identity()));
+		Map<String, List<RolePermissionLink>> linksByRole = links.stream()
+				.collect(Collectors.groupingBy(RolePermissionLink::roleId));
+		for (Role role : rolesToAttach) {
+			Set<Permission> assigned = linksByRole.getOrDefault(role.id(), List.of()).stream()
+					.map(link -> permissionsById.get(link.permissionId()))
+					.filter(java.util.Objects::nonNull)
+					.sorted(Comparator.comparing(Permission::resource).thenComparing(Permission::action))
+					.collect(Collectors.toCollection(LinkedHashSet::new));
+			role.replacePermissions(assigned);
+		}
 	}
 
 	private static String normalizeCode(String code) {

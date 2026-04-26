@@ -3,69 +3,52 @@ package com.luna.wallpaper.image;
 import java.time.LocalDateTime;
 import java.util.UUID;
 
-import jakarta.persistence.Column;
-import jakarta.persistence.Entity;
-import jakarta.persistence.Id;
-import jakarta.persistence.PrePersist;
-import jakarta.persistence.Table;
+import com.baomidou.mybatisplus.annotation.FieldFill;
+import com.baomidou.mybatisplus.annotation.IdType;
+import com.baomidou.mybatisplus.annotation.TableField;
+import com.baomidou.mybatisplus.annotation.TableId;
+import com.baomidou.mybatisplus.annotation.TableName;
 
-@Entity
-@Table(name = "image_versions")
+@TableName("image_versions")
 class ImageVersion {
 
-	@Id
-	@Column(nullable = false, length = 36)
+	@TableId(type = IdType.INPUT)
 	private String id;
 
-	@Column(name = "image_id", nullable = false, length = 36)
 	private String imageId;
 
-	@Column(name = "version_no", nullable = false)
 	private int versionNo;
 
-	@Column(name = "source_version_id", length = 36)
 	private String sourceVersionId;
 
-	@Column(name = "operation_type", nullable = false, length = 40)
 	private String operationType;
 
-	@Column(name = "original_filename", nullable = false)
 	private String originalFilename;
 
-	@Column(nullable = false, length = 64)
 	private String sha256;
 
-	@Column(name = "mime_type", nullable = false, length = 120)
 	private String mimeType;
 
-	@Column(name = "size_bytes", nullable = false)
 	private long sizeBytes;
 
 	private Integer width;
 	private Integer height;
 
-	@Column(nullable = false, length = 120)
 	private String bucket;
 
-	@Column(name = "original_object_key", nullable = false, length = 512)
 	private String originalObjectKey;
 
-	@Column(name = "thumbnail_object_key", nullable = false, length = 512)
 	private String thumbnailObjectKey;
 
-	@Column(name = "high_preview_object_key", nullable = false, length = 512)
 	private String highPreviewObjectKey;
 
-	@Column(name = "standard_preview_object_key", nullable = false, length = 512)
 	private String standardPreviewObjectKey;
 
-	@Column(name = "current_flag", nullable = false, columnDefinition = "tinyint(1)")
 	private boolean currentFlag = true;
 
-	@Column(name = "created_by", length = 36)
 	private String createdBy;
 
-	@Column(name = "created_at", nullable = false)
+	@TableField(fill = FieldFill.INSERT)
 	private LocalDateTime createdAt;
 
 	protected ImageVersion() {
@@ -87,11 +70,6 @@ class ImageVersion {
 		this.thumbnailObjectKey = stored.thumbnailObjectKey();
 		this.highPreviewObjectKey = stored.highPreviewObjectKey();
 		this.standardPreviewObjectKey = stored.standardPreviewObjectKey();
-	}
-
-	@PrePersist
-	void prePersist() {
-		this.createdAt = LocalDateTime.now();
 	}
 
 	String id() { return id; }

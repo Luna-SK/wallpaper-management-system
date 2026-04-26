@@ -3,11 +3,12 @@ package com.luna.wallpaper.audit;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
-import static org.mockito.Mockito.doAnswer;
 
 import java.time.Clock;
 import java.time.Instant;
@@ -17,10 +18,7 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 
-import org.springframework.data.domain.PageImpl;
-import org.springframework.data.domain.PageRequest;
 import org.junit.jupiter.api.Test;
-import org.springframework.data.domain.Pageable;
 import org.springframework.test.util.ReflectionTestUtils;
 
 import com.luna.wallpaper.config.StorageProperties;
@@ -34,9 +32,8 @@ import tools.jackson.databind.json.JsonMapper;
 
 class AuditLogArchiveServiceTests {
 
-	private final AuditLogRepository auditLogRepository = org.mockito.Mockito.mock(AuditLogRepository.class);
-	private final AuditLogArchiveRunRepository archiveRunRepository =
-			org.mockito.Mockito.mock(AuditLogArchiveRunRepository.class);
+	private final AuditLogMapper auditLogMapper = org.mockito.Mockito.mock(AuditLogMapper.class);
+	private final AuditLogArchiveRunMapper archiveRunMapper = org.mockito.Mockito.mock(AuditLogArchiveRunMapper.class);
 	private final SystemSettingService systemSettingService = org.mockito.Mockito.mock(SystemSettingService.class);
 	private final S3Client s3Client = org.mockito.Mockito.mock(S3Client.class);
 	private final Clock clock = Clock.fixed(Instant.parse("2026-04-24T02:30:00Z"), ZoneId.of("Asia/Shanghai"));
@@ -46,9 +43,8 @@ class AuditLogArchiveServiceTests {
 		AuditLog log = auditLog("log-1", LocalDateTime.of(2025, 10, 1, 8, 0));
 		AuditLogArchiveService service = service();
 
-		when(auditLogRepository.findByCreatedAtBeforeOrderByCreatedAtAsc(any(), any(Pageable.class)))
+		when(auditLogMapper.selectArchiveBatch(any(), any(), any(), anyInt()))
 				.thenReturn(List.of(log));
-		when(archiveRunRepository.save(any(AuditLogArchiveRun.class))).thenAnswer(invocation -> invocation.getArgument(0));
 		when(s3Client.putObject(any(PutObjectRequest.class), any(RequestBody.class)))
 				.thenReturn(PutObjectResponse.builder().build());
 
@@ -59,8 +55,8 @@ class AuditLogArchiveServiceTests {
 		assertThat(response.deletedCount()).isEqualTo(1);
 		assertThat(response.archiveObjectKey()).startsWith("audit-logs/2026/04/");
 		verify(s3Client).putObject(any(PutObjectRequest.class), any(RequestBody.class));
-		verify(auditLogRepository).deleteAllByIdInBatch(List.of("log-1"));
-		verify(archiveRunRepository).deleteByStartedAtBefore(LocalDateTime.of(2025, 10, 26, 10, 30));
+		verify(auditLogMapper).deleteArchiveBatchByIds(List.of("log-1"));
+		verify(archiveRunMapper).deleteByStartedAtBefore(LocalDateTime.of(2025, 10, 26, 10, 30));
 	}
 
 	@Test
@@ -68,9 +64,8 @@ class AuditLogArchiveServiceTests {
 		AuditLog log = auditLog("log-2", LocalDateTime.of(2025, 10, 1, 8, 0));
 		AuditLogArchiveService service = service();
 
-		when(auditLogRepository.findByCreatedAtBeforeOrderByCreatedAtAsc(any(), any(Pageable.class)))
+		when(auditLogMapper.selectArchiveBatch(any(), any(), any(), anyInt()))
 				.thenReturn(List.of(log));
-		when(archiveRunRepository.save(any(AuditLogArchiveRun.class))).thenAnswer(invocation -> invocation.getArgument(0));
 		when(s3Client.putObject(any(PutObjectRequest.class), any(RequestBody.class)))
 				.thenThrow(SdkClientException.create("rustfs unavailable"));
 
@@ -78,7 +73,7 @@ class AuditLogArchiveServiceTests {
 
 		assertThat(response.status()).isEqualTo("FAILED");
 		assertThat(response.errorMessage()).contains("rustfs unavailable");
-		verify(auditLogRepository, never()).deleteAllByIdInBatch(any());
+		verify(auditLogMapper, never()).deleteArchiveBatchByIds(any());
 	}
 
 	@Test
@@ -105,8 +100,8 @@ class AuditLogArchiveServiceTests {
 				LocalDateTime.of(2025, 10, 26, 10, 30));
 		AuditLogArchiveService service = service();
 
-		when(archiveRunRepository.findAllByOrderByStartedAtDesc(any(Pageable.class)))
-				.thenReturn(new PageImpl<>(List.of(run), PageRequest.of(1, 20), 21));
+		when(archiveRunMapper.countAll()).thenReturn(21L);
+		when(archiveRunMapper.selectPageOrdered(20L, 20L)).thenReturn(List.of(run));
 
 		AuditLogArchiveService.AuditArchiveRunPageResponse response = service.listArchiveRuns(2, 20);
 
@@ -121,7 +116,7 @@ class AuditLogArchiveServiceTests {
 		AuditLogArchiveService service = service();
 		LocalDateTime cutoffTime = LocalDateTime.of(2025, 10, 26, 10, 30);
 
-		when(archiveRunRepository.countByStartedAtBefore(cutoffTime)).thenReturn(3L);
+		when(archiveRunMapper.countByStartedAtBefore(cutoffTime)).thenReturn(3L);
 
 		assertThat(service.countExpiredArchiveRuns()).isEqualTo(3);
 	}
@@ -145,8 +140,8 @@ class AuditLogArchiveServiceTests {
 			return null;
 		}).when(systemSettingService).put(anyString(), anyString());
 		return new AuditLogArchiveService(
-				auditLogRepository,
-				archiveRunRepository,
+				auditLogMapper,
+				archiveRunMapper,
 				systemSettingService,
 				new StorageProperties(
 						"http://localhost:19010",

@@ -6,15 +6,15 @@ import org.springframework.transaction.annotation.Transactional;
 @Service
 public class SystemSettingService {
 
-	private final SystemSettingRepository repository;
+	private final SystemSettingMapper mapper;
 
-	SystemSettingService(SystemSettingRepository repository) {
-		this.repository = repository;
+	SystemSettingService(SystemSettingMapper mapper) {
+		this.mapper = mapper;
 	}
 
 	@Transactional(readOnly = true)
 	public String get(String key, String defaultValue) {
-		return repository.findById(key)
+		return java.util.Optional.ofNullable(mapper.selectById(key))
 				.map(SystemSetting::getValue)
 				.filter(value -> !value.isBlank())
 				.orElse(defaultValue);
@@ -22,9 +22,12 @@ public class SystemSettingService {
 
 	@Transactional
 	public void put(String key, String value) {
-		SystemSetting setting = repository.findById(key)
-				.orElseGet(() -> new SystemSetting(key, value));
+		SystemSetting setting = mapper.selectById(key);
+		if (setting == null) {
+			mapper.insert(new SystemSetting(key, value));
+			return;
+		}
 		setting.updateValue(value);
-		repository.save(setting);
+		mapper.updateById(setting);
 	}
 }

@@ -3,20 +3,18 @@ package com.luna.wallpaper.image;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import java.util.ArrayList;
-import java.sql.Date;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.util.List;
-import java.util.Optional;
 
 import org.junit.jupiter.api.Test;
-import org.springframework.data.domain.PageRequest;
 import org.springframework.mock.web.MockMultipartFile;
 import org.springframework.test.util.ReflectionTestUtils;
 
@@ -24,21 +22,29 @@ import com.luna.wallpaper.audit.AuditLogService;
 import com.luna.wallpaper.settings.SystemSettingService;
 import com.luna.wallpaper.settings.UploadLimitService;
 import com.luna.wallpaper.settings.UploadLimitService.UploadLimitSettings;
-import com.luna.wallpaper.taxonomy.CategoryRepository;
-import com.luna.wallpaper.taxonomy.TagRepository;
+import com.luna.wallpaper.taxonomy.CategoryMapper;
+import com.luna.wallpaper.taxonomy.Tag;
+import com.luna.wallpaper.taxonomy.TagGroup;
+import com.luna.wallpaper.taxonomy.TagGroupMapper;
+import com.luna.wallpaper.taxonomy.TagMapper;
 
 class ImageServiceTests {
 
-	private final ImageAssetRepository images = mock(ImageAssetRepository.class);
-	private final ImageVersionRepository versions = mock(ImageVersionRepository.class);
-	private final UploadBatchRepository batches = mock(UploadBatchRepository.class);
-	private final UploadBatchItemRepository batchItems = mock(UploadBatchItemRepository.class);
+	private final ImageAssetMapper images = mock(ImageAssetMapper.class);
+	private final ImageVersionMapper versions = mock(ImageVersionMapper.class);
+	private final UploadBatchMapper batches = mock(UploadBatchMapper.class);
+	private final UploadBatchItemMapper batchItems = mock(UploadBatchItemMapper.class);
+	private final ImageTagMapper imageTags = mock(ImageTagMapper.class);
+	private final UploadBatchTagMapper uploadBatchTags = mock(UploadBatchTagMapper.class);
+	private final CategoryMapper categories = mock(CategoryMapper.class);
+	private final TagGroupMapper tagGroups = mock(TagGroupMapper.class);
+	private final TagMapper tags = mock(TagMapper.class);
 	private final ImageStorageService storage = mock(ImageStorageService.class);
 	private final SystemSettingService settings = mock(SystemSettingService.class);
 	private final UploadLimitService uploadLimitService = mock(UploadLimitService.class);
 	private final AuditLogService auditLogService = mock(AuditLogService.class);
 	private final ImageService service = new ImageService(images, versions,
-			batches, batchItems, mock(CategoryRepository.class), mock(TagRepository.class), storage,
+			batches, batchItems, imageTags, uploadBatchTags, categories, tagGroups, tags, storage,
 			settings, uploadLimitService, auditLogService);
 
 	@Test
@@ -52,15 +58,13 @@ class ImageServiceTests {
 		when(images.totalViews()).thenReturn(120L);
 		when(images.totalDownloads()).thenReturn(30L);
 		when(images.totalStorageBytes()).thenReturn(2048L);
-		when(images.countUploadsByDaySince(trendStart.atStartOfDay())).thenReturn(List.<Object[]>of(
-				new Object[] { Date.valueOf(trendStart.plusDays(1)), 2L },
-				new Object[] { Date.valueOf(today), 5L }));
-		when(images.countImagesByCategory()).thenReturn(List.<Object[]>of(new Object[] { "cat-1", "风景", 7L }));
+		when(images.countUploadsByDaySince(trendStart.atStartOfDay())).thenReturn(List.of(
+				dailyCount(trendStart.plusDays(1), 2L),
+				dailyCount(today, 5L)));
+		when(images.countImagesByCategory()).thenReturn(List.of(categoryCount("cat-1", "风景", 7L)));
 		when(images.countUncategorizedImages()).thenReturn(1L);
-		when(images.findByStatusNotOrderByViewCountDescCreatedAtDesc("DELETED", PageRequest.of(0, 5)))
-				.thenReturn(List.of(viewed));
-		when(images.findByStatusNotOrderByDownloadCountDescCreatedAtDesc("DELETED", PageRequest.of(0, 5)))
-				.thenReturn(List.of(downloaded));
+		when(images.selectTopViewed("DELETED", 5)).thenReturn(List.of(viewed));
+		when(images.selectTopDownloaded("DELETED", 5)).thenReturn(List.of(downloaded));
 
 		ImageService.Statistics statistics = service.statistics();
 
@@ -83,17 +87,63 @@ class ImageServiceTests {
 	}
 
 	@Test
+	void listHandlesDeletedImagesWithoutCategory() {
+		ImageAsset deleted = image("image-deleted", "已停用未分类", 0, 0);
+		ReflectionTestUtils.setField(deleted, "status", "DELETED");
+		when(images.countSearch(null, null, null, "DELETED")).thenReturn(1L);
+		when(images.searchIds(null, null, null, "DELETED", 0L, 20)).thenReturn(List.of(deleted.id()));
+		when(images.selectImagesByIds(List.of(deleted.id()))).thenReturn(List.of(deleted));
+		when(imageTags.selectByImageIds(List.of(deleted.id()))).thenReturn(List.of());
+
+		var page = service.list(null, null, null, "DELETED", 1, 20);
+
+		assertThat(page.items()).hasSize(1);
+		assertThat(page.items().getFirst().category()).isNull();
+		assertThat(page.items().getFirst().status()).isEqualTo("DELETED");
+		verify(categories, never()).selectBatchIds(any());
+	}
+
+	@Test
+	void listHidesDisabledTagsAndTagsUnderDisabledGroups() {
+		ImageAsset image = image("image-1", "墙布", 0, 0);
+		Tag visibleTag = tag("tag-visible", "group-active", "可见标签", true);
+		Tag disabledTag = tag("tag-disabled", "group-active", "已停用标签", false);
+		Tag hiddenByGroupTag = tag("tag-hidden-group", "group-disabled", "停用组标签", true);
+		TagGroup activeGroup = tagGroup("group-active", "启用组", true);
+		TagGroup disabledGroup = tagGroup("group-disabled", "停用组", false);
+		when(images.countSearch(null, null, null, null)).thenReturn(1L);
+		when(images.searchIds(null, null, null, null, 0L, 20)).thenReturn(List.of(image.id()));
+		when(images.selectImagesByIds(List.of(image.id()))).thenReturn(List.of(image));
+		when(imageTags.selectByImageIds(List.of(image.id()))).thenReturn(List.of(
+				imageTagLink(image.id(), visibleTag.id()),
+				imageTagLink(image.id(), disabledTag.id()),
+				imageTagLink(image.id(), hiddenByGroupTag.id())));
+		when(tags.selectBatchIds(List.of(visibleTag.id(), disabledTag.id(), hiddenByGroupTag.id())))
+				.thenReturn(List.of(visibleTag, disabledTag, hiddenByGroupTag));
+		when(tagGroups.selectBatchIds(any())).thenReturn(List.of(activeGroup, disabledGroup));
+
+		var page = service.list(null, null, null, null, 1, 20);
+
+		assertThat(page.items()).hasSize(1);
+		assertThat(page.items().getFirst().tags())
+				.extracting(ImageDtos.TagBrief::id)
+				.containsExactly(visibleTag.id());
+		assertThat(page.items().getFirst().tags().getFirst().groupName()).isEqualTo(activeGroup.name());
+	}
+
+	@Test
 	void stageUploadSessionItemFailsWhenFileExceedsBusinessFileLimit() {
 		UploadBatch batch = new UploadBatch("SINGLE", 1, "category-1", List.of("tag-1"));
 		List<UploadBatchItem> items = new ArrayList<>();
 		when(uploadLimitService.current()).thenReturn(new UploadLimitSettings(1, 10, 50, 500));
-		when(batches.findById(batch.id())).thenReturn(Optional.of(batch));
-		when(batchItems.findByBatchIdOrderByCreatedAtAsc(batch.id())).thenAnswer(invocation -> List.copyOf(items));
-		when(batchItems.save(any(UploadBatchItem.class))).thenAnswer(invocation -> {
+		when(batches.selectById(batch.id())).thenReturn(batch);
+		when(uploadBatchTags.selectTagIdsByBatchId(batch.id())).thenReturn(batch.tagIds());
+		when(batchItems.selectByBatchIdOrdered(batch.id())).thenAnswer(invocation -> List.copyOf(items));
+		doAnswer(invocation -> {
 			UploadBatchItem item = invocation.getArgument(0);
 			items.add(item);
-			return item;
-		});
+			return 1;
+		}).when(batchItems).insert(any(UploadBatchItem.class));
 
 		var file = new MockMultipartFile("file", "large.jpg", "image/jpeg", new byte[2 * 1024 * 1024]);
 		var response = service.stageUploadSessionItem(batch.id(), file);
@@ -111,13 +161,14 @@ class ImageServiceTests {
 		existing.receivedSize(1536L * 1024L);
 		List<UploadBatchItem> items = new ArrayList<>(List.of(existing));
 		when(uploadLimitService.current()).thenReturn(new UploadLimitSettings(2, 2, 50, 500));
-		when(batches.findById(batch.id())).thenReturn(Optional.of(batch));
-		when(batchItems.findByBatchIdOrderByCreatedAtAsc(batch.id())).thenAnswer(invocation -> List.copyOf(items));
-		when(batchItems.save(any(UploadBatchItem.class))).thenAnswer(invocation -> {
+		when(batches.selectById(batch.id())).thenReturn(batch);
+		when(uploadBatchTags.selectTagIdsByBatchId(batch.id())).thenReturn(batch.tagIds());
+		when(batchItems.selectByBatchIdOrdered(batch.id())).thenAnswer(invocation -> List.copyOf(items));
+		doAnswer(invocation -> {
 			UploadBatchItem item = invocation.getArgument(0);
 			items.add(item);
-			return item;
-		});
+			return 1;
+		}).when(batchItems).insert(any(UploadBatchItem.class));
 
 		var file = new MockMultipartFile("file", "second.jpg", "image/jpeg", new byte[1024 * 1024]);
 		var response = service.stageUploadSessionItem(batch.id(), file);
@@ -135,7 +186,7 @@ class ImageServiceTests {
 		int purged = service.purgeExpiredDeletedImages();
 
 		assertThat(purged).isZero();
-		verify(images, never()).findByStatusAndDeletedAtBefore(anyString(), any());
+		verify(images, never()).selectByStatusAndDeletedAtBefore(anyString(), any());
 	}
 
 	@Test
@@ -145,15 +196,31 @@ class ImageServiceTests {
 		ReflectionTestUtils.setField(expired, "deletedAt", LocalDateTime.now().minusDays(8));
 		when(settings.get("soft_delete.cleanup.enabled", "false")).thenReturn("true");
 		when(settings.get("soft_delete.retention_days", "180")).thenReturn("7");
-		when(images.findByStatusAndDeletedAtBefore(anyString(), any())).thenReturn(List.of(expired));
-		when(versions.findByImageIdOrderByVersionNoDesc(expired.id())).thenReturn(List.of());
+		when(images.selectByStatusAndDeletedAtBefore(anyString(), any())).thenReturn(List.of(expired));
+		when(versions.selectByImageIdOrdered(expired.id())).thenReturn(List.of());
 
 		int purged = service.purgeExpiredDeletedImages();
 
 		assertThat(purged).isEqualTo(1);
-		verify(images).delete(expired);
+		verify(imageTags).deleteByImageId(expired.id());
+		verify(images).deleteById(expired.id());
 		verify(auditLogService).record("image.purge.retention.cleanup", "IMAGE", "DELETED",
 				"{\"deleted\":1,\"retentionDays\":7}");
+	}
+
+	private ImageDailyCount dailyCount(LocalDate day, long total) {
+		ImageDailyCount row = new ImageDailyCount();
+		ReflectionTestUtils.setField(row, "day", day);
+		ReflectionTestUtils.setField(row, "total", total);
+		return row;
+	}
+
+	private ImageCategoryCount categoryCount(String categoryId, String name, long total) {
+		ImageCategoryCount row = new ImageCategoryCount();
+		ReflectionTestUtils.setField(row, "categoryId", categoryId);
+		ReflectionTestUtils.setField(row, "name", name);
+		ReflectionTestUtils.setField(row, "total", total);
+		return row;
 	}
 
 	private ImageAsset image(String id, String title, long viewCount, long downloadCount) {
@@ -161,5 +228,40 @@ class ImageServiceTests {
 		ReflectionTestUtils.setField(image, "viewCount", viewCount);
 		ReflectionTestUtils.setField(image, "downloadCount", downloadCount);
 		return image;
+	}
+
+	private Tag tag(String id, String groupId, String name, boolean enabled) {
+		Tag tag = instantiate(Tag.class);
+		ReflectionTestUtils.setField(tag, "id", id);
+		ReflectionTestUtils.setField(tag, "groupId", groupId);
+		ReflectionTestUtils.setField(tag, "name", name);
+		ReflectionTestUtils.setField(tag, "enabled", enabled);
+		return tag;
+	}
+
+	private TagGroup tagGroup(String id, String name, boolean enabled) {
+		TagGroup group = instantiate(TagGroup.class);
+		ReflectionTestUtils.setField(group, "id", id);
+		ReflectionTestUtils.setField(group, "name", name);
+		ReflectionTestUtils.setField(group, "enabled", enabled);
+		return group;
+	}
+
+	private ImageTagLink imageTagLink(String imageId, String tagId) {
+		ImageTagLink link = new ImageTagLink();
+		ReflectionTestUtils.setField(link, "imageId", imageId);
+		ReflectionTestUtils.setField(link, "tagId", tagId);
+		return link;
+	}
+
+	private static <T> T instantiate(Class<T> type) {
+		try {
+			var constructor = type.getDeclaredConstructor();
+			constructor.setAccessible(true);
+			return constructor.newInstance();
+		}
+		catch (ReflectiveOperationException ex) {
+			throw new IllegalStateException("Cannot instantiate " + type.getSimpleName(), ex);
+		}
 	}
 }

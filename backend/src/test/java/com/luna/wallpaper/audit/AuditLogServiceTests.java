@@ -10,21 +10,19 @@ import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.util.List;
 
-import org.springframework.data.domain.PageImpl;
-import org.springframework.data.domain.PageRequest;
 import org.junit.jupiter.api.Test;
 import org.springframework.test.util.ReflectionTestUtils;
 
 class AuditLogServiceTests {
 
-	private final AuditLogRepository repository = org.mockito.Mockito.mock(AuditLogRepository.class);
-	private final AuditLogService service = new AuditLogService(repository);
+	private final AuditLogMapper mapper = org.mockito.Mockito.mock(AuditLogMapper.class);
+	private final AuditLogService service = new AuditLogService(mapper);
 
 	@Test
 	void exportsAllMatchingLogsAsCsv() {
 		AuditLog log = auditLog("log-1", "image.update", "IMAGE", "image-1",
 				"{\"title\":\"A \\\"quoted\\\" image\"}", LocalDateTime.of(2026, 4, 25, 9, 30));
-		when(repository.findForExport("image", null, null)).thenReturn(List.of(log));
+		when(mapper.selectForExport("image", null, null)).thenReturn(List.of(log));
 
 		String csv = new String(service.exportCsv(" image ", null, null), StandardCharsets.UTF_8);
 
@@ -41,7 +39,7 @@ class AuditLogServiceTests {
 
 		service.exportCsv("download", startDate, endDate);
 
-		verify(repository).findForExport("download",
+		verify(mapper).selectForExport("download",
 				LocalDateTime.of(2026, 4, 1, 0, 0),
 				LocalDateTime.of(2026, 4, 25, 23, 59, 59, 999_999_999));
 	}
@@ -50,19 +48,27 @@ class AuditLogServiceTests {
 	void listsInclusiveLocalDateRange() {
 		LocalDate startDate = LocalDate.of(2026, 4, 1);
 		LocalDate endDate = LocalDate.of(2026, 4, 25);
-		PageRequest pageRequest = PageRequest.of(1, 50);
-		when(repository.search("preview",
+		when(mapper.countSearch("preview",
+				LocalDateTime.of(2026, 4, 1, 0, 0),
+				LocalDateTime.of(2026, 4, 25, 23, 59, 59, 999_999_999)))
+				.thenReturn(1L);
+		when(mapper.search("preview",
 				LocalDateTime.of(2026, 4, 1, 0, 0),
 				LocalDateTime.of(2026, 4, 25, 23, 59, 59, 999_999_999),
-				pageRequest))
-				.thenReturn(new PageImpl<>(List.of(), pageRequest, 0));
+				50L,
+				50))
+				.thenReturn(List.of());
 
 		service.list(" preview ", startDate, endDate, 2, 50);
 
-		verify(repository).search("preview",
+		verify(mapper).countSearch("preview",
+				LocalDateTime.of(2026, 4, 1, 0, 0),
+				LocalDateTime.of(2026, 4, 25, 23, 59, 59, 999_999_999));
+		verify(mapper).search("preview",
 				LocalDateTime.of(2026, 4, 1, 0, 0),
 				LocalDateTime.of(2026, 4, 25, 23, 59, 59, 999_999_999),
-				pageRequest);
+				50L,
+				50);
 	}
 
 	@Test

@@ -27,6 +27,7 @@ import {
   type UploadBatchItem,
 } from '../api/images'
 import { getCategories, getTags, type Category, type Tag } from '../api/taxonomy'
+import { useDialogEnterSubmit } from '../utils/dialogEnterSubmit'
 
 const loading = ref(false)
 const keyword = ref('')
@@ -143,6 +144,10 @@ function categoryText(row: ImageRecord) {
 
 function tagText(row: ImageRecord) {
   return row.tags.map((item) => item.name).join('、') || '-'
+}
+
+function tagOptionLabel(tag: Tag) {
+  return tag.groupName ? `${tag.groupName} / ${tag.name}` : tag.name
 }
 
 function visibleGridTags(row: ImageRecord) {
@@ -288,20 +293,19 @@ function syncBatchUploadPreviews(files = uploadFileList.value) {
 
 async function loadCategories() {
   categories.value = await getCategories()
-  if (selectedCategoryId.value) {
-    tags.value = await getTags(selectedCategoryId.value)
-  }
+  tags.value = await getTags()
 }
 
 async function loadTagsForFilter() {
   selectedTagId.value = ''
   pagination.page = 1
-  tags.value = selectedCategoryId.value ? await getTags(selectedCategoryId.value) : []
+  if (tags.value.length === 0) {
+    tags.value = await getTags()
+  }
 }
 
 async function loadUploadTags() {
-  uploadForm.tagIds = []
-  uploadTags.value = uploadForm.categoryId ? await getTags(uploadForm.categoryId) : []
+  uploadTags.value = await getTags()
 }
 
 async function loadImages() {
@@ -438,7 +442,7 @@ async function openUploadDialog() {
   revokeAllBatchUploadPreviews()
   uploadSession.value = null
   Object.keys(uploadItemFiles).forEach((key) => delete uploadItemFiles[key])
-  uploadTags.value = uploadForm.categoryId ? await getTags(uploadForm.categoryId) : []
+  uploadTags.value = await getTags()
   uploadVisible.value = true
 }
 
@@ -730,12 +734,13 @@ async function openEdit(row: ImageRecord) {
   editForm.status = row.status
   editForm.categoryId = row.category?.id ?? ''
   editForm.tagIds = row.tags.map((tag) => tag.id)
-  tags.value = editForm.categoryId ? await getTags(editForm.categoryId) : []
+  tags.value = await getTags()
 }
 
-async function onEditCategoryChange(categoryId: string) {
-  editForm.tagIds = []
-  tags.value = categoryId ? await getTags(categoryId) : []
+async function onEditCategoryChange() {
+  if (tags.value.length === 0) {
+    tags.value = await getTags()
+  }
 }
 
 async function saveEdit() {
@@ -917,6 +922,13 @@ async function batchDownloadSelected() {
   }
 }
 
+function isUploadConfirmDisabled() {
+  return uploadCancelling.value || uploadConfirming.value || uploadLoading.value || Boolean(uploadSession.value && !uploadCanConfirmSession.value)
+}
+
+useDialogEnterSubmit(uploadVisible, confirmUploadDialog, { disabled: isUploadConfirmDisabled })
+useDialogEnterSubmit(editVisible, saveEdit)
+
 onMounted(async () => {
   window.addEventListener('keydown', handlePreviewKeydown)
   await loadCategories()
@@ -955,8 +967,8 @@ onBeforeUnmount(() => {
           <el-select v-model="selectedCategoryId" placeholder="分类" clearable @change="loadTagsForFilter">
             <el-option v-for="category in categoryOptions" :key="category.id" :label="category.name" :value="category.id" />
           </el-select>
-          <el-select v-model="selectedTagId" placeholder="标签" clearable :disabled="!selectedCategoryId">
-            <el-option v-for="tag in tagOptions" :key="tag.id" :label="tag.name" :value="tag.id" />
+          <el-select v-model="selectedTagId" placeholder="标签" clearable>
+            <el-option v-for="tag in tagOptions" :key="tag.id" :label="tagOptionLabel(tag)" :value="tag.id" />
           </el-select>
           <div class="filter-actions">
             <el-button @click="applyFilters">筛选</el-button>
@@ -1294,9 +1306,9 @@ onBeforeUnmount(() => {
             filterable
             clearable
             placeholder="搜索并选择至少一个标签"
-            :disabled="!uploadForm.categoryId || uploadLocked"
+            :disabled="uploadLocked"
           >
-            <el-option v-for="tag in uploadTagOptions" :key="tag.id" :label="tag.name" :value="tag.id" />
+            <el-option v-for="tag in uploadTagOptions" :key="tag.id" :label="tagOptionLabel(tag)" :value="tag.id" />
           </el-select>
         </el-form-item>
       </el-form>
@@ -1351,7 +1363,7 @@ onBeforeUnmount(() => {
         </el-form-item>
         <el-form-item label="标签">
           <el-select v-model="editForm.tagIds" class="full-tag-select" multiple filterable clearable placeholder="搜索并选择标签">
-            <el-option v-for="tag in tagOptions" :key="tag.id" :label="tag.name" :value="tag.id" />
+            <el-option v-for="tag in tagOptions" :key="tag.id" :label="tagOptionLabel(tag)" :value="tag.id" />
           </el-select>
         </el-form-item>
       </el-form>

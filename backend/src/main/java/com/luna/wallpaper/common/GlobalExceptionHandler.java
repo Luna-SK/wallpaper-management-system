@@ -6,6 +6,9 @@ import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
 
+import com.luna.wallpaper.taxonomy.TaxonomyReferenceException;
+import com.luna.wallpaper.taxonomy.TaxonomyDtos.ReferenceImpact;
+
 import jakarta.validation.ConstraintViolationException;
 
 @RestControllerAdvice
@@ -14,6 +17,12 @@ class GlobalExceptionHandler {
 	@ExceptionHandler(IllegalArgumentException.class)
 	ResponseEntity<ApiResponse<Void>> handleIllegalArgument(IllegalArgumentException exception) {
 		return badRequest(exception.getMessage());
+	}
+
+	@ExceptionHandler(TaxonomyReferenceException.class)
+	ResponseEntity<ApiResponse<ReferenceImpact>> handleTaxonomyReference(TaxonomyReferenceException exception) {
+		return ResponseEntity.status(HttpStatus.CONFLICT)
+				.body(new ApiResponse<>("REFERENCE_EXISTS", exception.getMessage(), exception.impact(), null));
 	}
 
 	@ExceptionHandler(MethodArgumentNotValidException.class)

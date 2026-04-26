@@ -12,6 +12,8 @@ class Settings(BaseSettings):
     data_dir: Path = Field(alias="DATA_DIR")
     default_category_code: str = Field(default="TEXTILE_DEFECT", alias="DEFAULT_CATEGORY_CODE")
     default_category_name: str = Field(default="纺织瑕疵", alias="DEFAULT_CATEGORY_NAME")
+    default_tag_group_code: str = Field(default="DEFECT", alias="DEFAULT_TAG_GROUP_CODE")
+    default_tag_group_name: str = Field(default="瑕疵", alias="DEFAULT_TAG_GROUP_NAME")
     dry_run: bool = Field(default=True, alias="DRY_RUN")
 
 

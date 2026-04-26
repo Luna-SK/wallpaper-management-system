@@ -15,6 +15,7 @@ import {
   type Role,
   type User,
 } from '../api/users'
+import { useDialogEnterSubmit } from '../utils/dialogEnterSubmit'
 
 const loading = ref(false)
 const userKeyword = ref('')
@@ -190,6 +191,11 @@ async function toggleRole(row: Role) {
   }
 }
 
+useDialogEnterSubmit(userDialogVisible, submitUser)
+useDialogEnterSubmit(assignDialogVisible, submitUserRoles)
+useDialogEnterSubmit(roleDialogVisible, submitRole)
+useDialogEnterSubmit(permissionDialogVisible, submitRolePermissions)
+
 onMounted(refresh)
 </script>
 
@@ -287,9 +293,11 @@ onMounted(refresh)
     </el-dialog>
 
     <el-dialog v-model="assignDialogVisible" title="分配角色" width="460px">
-      <el-select v-model="selectedRoleIds" multiple style="width: 100%">
-        <el-option v-for="role in roles" :key="role.id" :label="role.name" :value="role.id" />
-      </el-select>
+      <div>
+        <el-select v-model="selectedRoleIds" multiple style="width: 100%">
+          <el-option v-for="role in roles" :key="role.id" :label="role.name" :value="role.id" />
+        </el-select>
+      </div>
       <template #footer><el-button @click="assignDialogVisible = false">取消</el-button><el-button type="primary" @click="submitUserRoles">保存</el-button></template>
     </el-dialog>
 
@@ -303,11 +311,13 @@ onMounted(refresh)
     </el-dialog>
 
     <el-dialog v-model="permissionDialogVisible" title="配置权限" width="620px">
-      <el-checkbox-group v-model="selectedPermissionIds" class="permission-checks">
-        <el-checkbox v-for="permission in permissions" :key="permission.id" :label="permission.id">
-          {{ permission.name }}（{{ permission.code }}）
-        </el-checkbox>
-      </el-checkbox-group>
+      <div>
+        <el-checkbox-group v-model="selectedPermissionIds" class="permission-checks">
+          <el-checkbox v-for="permission in permissions" :key="permission.id" :label="permission.name" :value="permission.id">
+            {{ permission.name }}（{{ permission.code }}）
+          </el-checkbox>
+        </el-checkbox-group>
+      </div>
       <template #footer><el-button @click="permissionDialogVisible = false">取消</el-button><el-button type="primary" @click="submitRolePermissions">保存</el-button></template>
     </el-dialog>
   </section>

@@ -11,14 +11,19 @@
 
 - `images`：图片元数据，包括标题、原文件名、SHA-256、MIME、大小、宽高、上传者、来源、单一分类、状态、浏览量、下载量。
 - `image_versions`：图片版本记录，保存原图、缩略图、高清预览、标准预览的 RustFS object key。覆盖编辑只切换当前版本指针，历史版本进入保留期。
-- `image_objects`：保留为对象索引扩展表；首版运行主要以 `image_versions` 记录当前可用对象。
 - `image_tags`：图片与标签的多对多关系。
-- `upload_batches`、`upload_batch_items`：上传会话、文件级状态、暂存对象 key、失败原因和重试记录。文件先暂存到 RustFS，确认后才创建正式 `images + image_versions` 记录；取消或过期会话会清理未确认对象。
+- `upload_batches`、`upload_batch_items`、`upload_batch_tags`：上传会话、文件级状态、会话标签、暂存对象 key、失败原因和重试记录。文件先暂存到 RustFS，确认后才创建正式 `images + image_versions` 记录；取消或过期会话会清理未确认对象。
+
+`image_objects` 不再作为活动模型使用。空库初始化会创建历史基线表，再由增量 changelog 在确认为空后删除；如果旧库中该表存在数据，迁移会中止，需先人工核对备份和对象索引数据。
 
 ## Taxonomy
 
-- `categories`：图片分类，一期内置 `纺织瑕疵`。
-- `tags`：分类下标签，用于搜索和补充描述。标签名不全局唯一，唯一约束为 `category_id + name`。
+- `categories`：图片主分类，一张图片最多关联一个分类；一期保留 `纺织瑕疵`。
+- `tag_groups`：标签组，表示标签维度，例如 `瑕疵`、风格、颜色、材质。
+- `tags`：标签属于一个标签组，用于检索和补充描述。标签唯一约束为 `group_id + name`。
+- `image_tags`：图片与标签的多对多关系；标签不再受图片分类限制。
+
+分类、标签组和标签都使用 `enabled=false` 表示已停用。已停用项支持彻底删除；若仍被图片或上传会话引用，后端在 `force=true` 时会先解除引用再物理删除。
 
 ## Audit And Settings
 

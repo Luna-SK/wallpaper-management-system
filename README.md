@@ -2,17 +2,30 @@
 
 图片管理系统。
 
-本项目是一个全新的独立实现，面向墙布图片、分类标签、图片检索、访问控制和审计统计。纺织瑕疵图片管理是一期内置场景，后续可扩展到更多墙布图片分类。
+本项目是一个全新的独立实现，面向墙布图片、分类、标签组、标签、图片检索、访问控制和审计统计。纺织瑕疵图片管理是一期内置场景，后续可扩展到更多墙布图片分类和标签维度。
 
 ## Structure
 
 ```text
 wzut-wallpaper-manager/
-├── backend/             # Spring Boot 4 + Java 25
+├── backend/             # Spring Boot 4 + Java 25 + MyBatis-Plus + Liquibase
 ├── frontend/            # Vue 3 + TypeScript + Vite
 ├── ops/docker/          # Docker Compose deployment
 ├── tools/image-importer/# Batch import tool
 └── doc/                 # Planning, architecture, API, deployment, acceptance docs
+```
+
+## Project Handoff
+
+交接或新建开发上下文时，请把本目录 `wzut-wallpaper-manager/` 作为项目根目录。
+
+- 开发、验证和提交工作流：[doc/development/workflow.md](doc/development/workflow.md)
+
+提交信息统一使用 Conventional Commits，例如：
+
+```text
+fix(taxonomy): hide disabled tags in image library
+docs(workflow): add development handoff guide
 ```
 
 ## Quick Start
@@ -56,6 +69,7 @@ docker compose --env-file .env.example config
 
 ## Configuration Boundaries
 
+- Database schema changes are managed only through Liquibase changelogs. The backend uses MyBatis-Plus for persistence and does not rely on runtime ORM DDL generation.
 - `backend/.env` is the backend local development configuration file. It is ignored by Git; commit changes only to `backend/.env.example`.
 - `frontend/.env` is the frontend local development configuration file. It is ignored by Git; commit changes only to `frontend/.env.example`.
 - `ops/docker/.env` is the Docker Compose deployment configuration file. It is ignored by Git; commit changes only to `ops/docker/.env.example`.
@@ -66,3 +80,4 @@ docker compose --env-file .env.example config
 - `DB_NAME` is the database name. `DB_USERNAME` is the database login user.
 - `UPLOAD_MAX_FILE_SIZE` and `UPLOAD_MAX_REQUEST_SIZE` are backend startup hard limits. The values on the System Settings page are runtime business limits and cannot be set above these hard limits.
 - Soft-deleted image cleanup is controlled from System Settings. The cleanup switch is off by default, the retention period is configurable, and the cleanup schedule uses a Spring cron expression. The default schedule is every Sunday at 03:00: `0 0 3 * * SUN`.
+- Database schema changes must go through Liquibase. The persistence layer uses MyBatis-Plus; do not reintroduce Spring Data JPA or Hibernate runtime DDL behavior.

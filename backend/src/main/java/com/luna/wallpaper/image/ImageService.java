@@ -14,13 +14,13 @@ import java.util.HexFormat;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
+import java.util.function.Function;
 import java.util.zip.ZipEntry;
 import java.util.zip.ZipOutputStream;
 
-import org.springframework.data.domain.Page;
-import org.springframework.data.domain.PageRequest;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.multipart.MultipartFile;
@@ -37,33 +37,42 @@ import com.luna.wallpaper.settings.SystemSettingService;
 import com.luna.wallpaper.settings.UploadLimitService;
 import com.luna.wallpaper.settings.UploadLimitService.UploadLimitSettings;
 import com.luna.wallpaper.taxonomy.Category;
-import com.luna.wallpaper.taxonomy.CategoryRepository;
+import com.luna.wallpaper.taxonomy.CategoryMapper;
 import com.luna.wallpaper.taxonomy.Tag;
-import com.luna.wallpaper.taxonomy.TagRepository;
+import com.luna.wallpaper.taxonomy.TagGroup;
+import com.luna.wallpaper.taxonomy.TagGroupMapper;
+import com.luna.wallpaper.taxonomy.TagMapper;
 
 @Service
 class ImageService {
 
-	private final ImageAssetRepository images;
-	private final ImageVersionRepository versions;
-	private final UploadBatchRepository batches;
-	private final UploadBatchItemRepository batchItems;
-	private final CategoryRepository categories;
-	private final TagRepository tags;
+	private final ImageAssetMapper images;
+	private final ImageVersionMapper versions;
+	private final UploadBatchMapper batches;
+	private final UploadBatchItemMapper batchItems;
+	private final ImageTagMapper imageTags;
+	private final UploadBatchTagMapper uploadBatchTags;
+	private final CategoryMapper categories;
+	private final TagGroupMapper tagGroups;
+	private final TagMapper tags;
 	private final ImageStorageService storage;
 	private final SystemSettingService settings;
 	private final UploadLimitService uploadLimitService;
 	private final AuditLogService auditLogService;
 
-	ImageService(ImageAssetRepository images, ImageVersionRepository versions, UploadBatchRepository batches,
-			UploadBatchItemRepository batchItems, CategoryRepository categories, TagRepository tags,
+	ImageService(ImageAssetMapper images, ImageVersionMapper versions, UploadBatchMapper batches,
+			UploadBatchItemMapper batchItems, ImageTagMapper imageTags, UploadBatchTagMapper uploadBatchTags,
+			CategoryMapper categories, TagGroupMapper tagGroups, TagMapper tags,
 			ImageStorageService storage, SystemSettingService settings, UploadLimitService uploadLimitService,
 			AuditLogService auditLogService) {
 		this.images = images;
 		this.versions = versions;
 		this.batches = batches;
 		this.batchItems = batchItems;
+		this.imageTags = imageTags;
+		this.uploadBatchTags = uploadBatchTags;
 		this.categories = categories;
+		this.tagGroups = tagGroups;
 		this.tags = tags;
 		this.storage = storage;
 		this.settings = settings;
@@ -77,10 +86,10 @@ class ImageService {
 		String statusFilter = status == null || status.isBlank() ? null : status.trim().toUpperCase();
 		int safePage = Math.max(1, page);
 		int safeSize = Math.min(Math.max(1, size), 100);
-		Page<ImageAsset> result = images.search(query, blankToNull(categoryId), blankToNull(tagId),
-				statusFilter, PageRequest.of(safePage - 1, safeSize));
-		return new ImagePageResponse(result.getContent().stream().map(ImageResponse::from).toList(),
-				safePage, safeSize, result.getTotalElements());
+		long total = images.countSearch(query, blankToNull(categoryId), blankToNull(tagId), statusFilter);
+		List<ImageAsset> result = total == 0 ? List.of() : loadImages(images.searchIds(query, blankToNull(categoryId),
+				blankToNull(tagId), statusFilter, (long) (safePage - 1) * safeSize, safeSize));
+		return new ImagePageResponse(result.stream().map(ImageResponse::from).toList(), safePage, safeSize, total);
 	}
 
 	@Transactional(readOnly = true)
@@ -115,7 +124,9 @@ class ImageService {
 			throw new IllegalArgumentException("单张上传只能选择 1 张图片");
 		}
 		UploadTaxonomy uploadTaxonomy = validateUploadTaxonomy(request.categoryId(), request.tagIds());
-		UploadBatch batch = batches.save(new UploadBatch(mode, totalCount, uploadTaxonomy.category().id(), uploadTaxonomy.tagIds()));
+		UploadBatch batch = new UploadBatch(mode, totalCount, uploadTaxonomy.category().id(), uploadTaxonomy.tagIds());
+		batches.insert(batch);
+		replaceUploadBatchTags(batch);
 		auditLogService.record("image.upload.session.create", "UPLOAD_BATCH", batch.id(),
 				"{\"mode\":\"" + mode + "\",\"total\":" + totalCount + "}");
 		return UploadBatchResponse.from(batch, List.of());
@@ -125,11 +136,12 @@ class ImageService {
 	UploadBatchResponse stageUploadSessionItem(String sessionId, MultipartFile file) {
 		UploadBatch batch = getUploadSession(sessionId);
 		ensureCanStage(batch);
-		List<UploadBatchItem> existingItems = batchItems.findByBatchIdOrderByCreatedAtAsc(sessionId);
+		List<UploadBatchItem> existingItems = batchItems.selectByBatchIdOrdered(sessionId);
 		if (existingItems.size() >= batch.totalCount()) {
 			throw new IllegalArgumentException("上传文件数量已达到本次会话上限");
 		}
-		UploadBatchItem item = batchItems.save(new UploadBatchItem(batch.id(), filename(file)));
+		UploadBatchItem item = new UploadBatchItem(batch.id(), filename(file));
+		batchItems.insert(item);
 		stageItem(batch, item, file, existingItems);
 		return uploadSession(batch.id());
 	}
@@ -142,23 +154,28 @@ class ImageService {
 	@Transactional(readOnly = true)
 	UploadBatchResponse uploadSession(String id) {
 		UploadBatch batch = getUploadSession(id);
-		return UploadBatchResponse.from(batch, batchItems.findByBatchIdOrderByCreatedAtAsc(id));
+		return UploadBatchResponse.from(batch, batchItems.selectByBatchIdOrdered(id));
 	}
 
 	@Transactional
 	UploadBatchResponse retry(String batchId, String itemId) {
-		UploadBatch batch = batches.findById(batchId).orElseThrow(() -> new IllegalArgumentException("上传批次不存在"));
-		UploadBatchItem item = batchItems.findById(itemId).orElseThrow(() -> new IllegalArgumentException("上传文件不存在"));
+		UploadBatch batch = Optional.ofNullable(batches.selectById(batchId))
+				.orElseThrow(() -> new IllegalArgumentException("上传批次不存在"));
+		loadUploadBatchTags(batch);
+		UploadBatchItem item = Optional.ofNullable(batchItems.selectById(itemId))
+				.orElseThrow(() -> new IllegalArgumentException("上传文件不存在"));
 		item.retryFailed("请重新选择原文件上传，系统不会保存失败文件的临时内容");
+		batchItems.updateById(item);
 		auditLogService.record("image.batch.item.retry", "UPLOAD_BATCH_ITEM", item.id(), "{}");
-		return UploadBatchResponse.from(batch, batchItems.findByBatchIdOrderByCreatedAtAsc(batch.id()));
+		return UploadBatchResponse.from(batch, batchItems.selectByBatchIdOrdered(batch.id()));
 	}
 
 	@Transactional
 	UploadBatchResponse retryUploadSessionItem(String sessionId, String itemId, MultipartFile file) {
 		UploadBatch batch = getUploadSession(sessionId);
 		ensureCanStage(batch);
-		UploadBatchItem item = batchItems.findById(itemId).orElseThrow(() -> new IllegalArgumentException("上传文件不存在"));
+		UploadBatchItem item = Optional.ofNullable(batchItems.selectById(itemId))
+				.orElseThrow(() -> new IllegalArgumentException("上传文件不存在"));
 		if (!item.batchId().equals(batch.id())) {
 			throw new IllegalArgumentException("上传文件不属于当前会话");
 		}
@@ -166,7 +183,7 @@ class ImageService {
 			throw new IllegalArgumentException("只有失败文件可以重试");
 		}
 		item.retrying(filename(file));
-		List<UploadBatchItem> existingItems = batchItems.findByBatchIdOrderByCreatedAtAsc(sessionId).stream()
+		List<UploadBatchItem> existingItems = batchItems.selectByBatchIdOrdered(sessionId).stream()
 				.filter(existing -> !existing.id().equals(item.id()))
 				.toList();
 		stageItem(batch, item, file, existingItems);
@@ -184,26 +201,29 @@ class ImageService {
 			throw new IllegalArgumentException("上传会话已取消，不能确认入库");
 		}
 		UploadTaxonomy uploadTaxonomy = validateUploadTaxonomy(batch.categoryId(), batch.tagIds());
-		List<UploadBatchItem> items = batchItems.findByBatchIdOrderByCreatedAtAsc(id);
+		List<UploadBatchItem> items = batchItems.selectByBatchIdOrdered(id);
 		if (items.stream().noneMatch(item -> "STAGED".equals(item.status()) || "DUPLICATE".equals(item.status()))) {
 			throw new IllegalArgumentException("没有可确认入库的上传文件");
 		}
 		for (UploadBatchItem item : items) {
 			if ("STAGED".equals(item.status())) {
 				var existing = images.findBySha256AndStatusNot(item.sha256(), "DELETED");
-				if (existing.isPresent()) {
-					storage.deleteQuietly(item.storedImage());
-					item.duplicated(existing.get().id());
-					continue;
-				}
+					if (existing.isPresent()) {
+						storage.deleteQuietly(item.storedImage());
+						item.duplicated(existing.get().id());
+						batchItems.updateById(item);
+						continue;
+					}
 				ImageAsset image = createImage(item.candidateImageId(), item.storedImage(), uploadTaxonomy);
 				item.confirmed(image.id());
+				batchItems.updateById(item);
 			}
 		}
 		refreshUploadBatch(batch);
 		batch.markConfirmed();
+		batches.updateById(batch);
 		auditLogService.record("image.upload.session.confirm", "UPLOAD_BATCH", batch.id(), "{\"total\":" + items.size() + "}");
-		return UploadBatchResponse.from(batch, batchItems.findByBatchIdOrderByCreatedAtAsc(batch.id()));
+		return UploadBatchResponse.from(batch, batchItems.selectByBatchIdOrdered(batch.id()));
 	}
 
 	@Transactional
@@ -213,7 +233,7 @@ class ImageService {
 			return uploadSession(id);
 		}
 		cancelUploadSession(batch, false);
-		return UploadBatchResponse.from(batch, batchItems.findByBatchIdOrderByCreatedAtAsc(batch.id()));
+		return UploadBatchResponse.from(batch, batchItems.selectByBatchIdOrdered(batch.id()));
 	}
 
 	@Transactional
@@ -223,9 +243,10 @@ class ImageService {
 		String status = request.status() == null || request.status().isBlank() ? image.status() : request.status().trim();
 		Category category = findCategory(request.categoryId());
 		Set<Tag> selectedTags = findTags(request.tagIds());
-		validateSelectedTags(category, selectedTags);
 		image.updateMetadata(title, status);
 		image.replaceTaxonomy(category, selectedTags);
+		images.updateById(image);
+		replaceImageTags(image);
 		auditLogService.record("image.update", "IMAGE", image.id(), "{\"title\":\"" + escape(title) + "\"}");
 		return ImageResponse.from(image);
 	}
@@ -234,6 +255,7 @@ class ImageService {
 	void delete(String id) {
 		ImageAsset image = getImage(id);
 		image.markDeleted();
+		images.updateById(image);
 		auditLogService.record("image.delete", "IMAGE", id, "{}");
 	}
 
@@ -241,6 +263,7 @@ class ImageService {
 	void batchDisable(ImageBatchRequest request) {
 		for (ImageAsset image : getBatchImages(request)) {
 			image.markDeleted();
+			images.updateById(image);
 			auditLogService.record("image.delete", "IMAGE", image.id(), "{\"batch\":true}");
 		}
 	}
@@ -249,6 +272,7 @@ class ImageService {
 	void restore(String id) {
 		ImageAsset image = getDeletedImage(id);
 		image.restore();
+		images.updateById(image);
 		auditLogService.record("image.restore", "IMAGE", id, "{}");
 	}
 
@@ -256,6 +280,7 @@ class ImageService {
 	void batchRestore(ImageBatchRequest request) {
 		for (ImageAsset image : getDeletedBatchImages(request)) {
 			image.restore();
+			images.updateById(image);
 			auditLogService.record("image.restore", "IMAGE", image.id(), "{\"batch\":true}");
 		}
 	}
@@ -274,7 +299,7 @@ class ImageService {
 
 	@Transactional
 	int purgeDeleted() {
-		List<ImageAsset> deletedImages = images.findByStatus("DELETED");
+		List<ImageAsset> deletedImages = images.selectByStatus("DELETED");
 		for (ImageAsset image : deletedImages) {
 			purgeImage(image, true);
 		}
@@ -288,7 +313,7 @@ class ImageService {
 		}
 		int retentionDays = softDeleteRetentionDays();
 		LocalDateTime cutoff = LocalDateTime.now().minusDays(retentionDays);
-		List<ImageAsset> expiredImages = images.findByStatusAndDeletedAtBefore("DELETED", cutoff);
+		List<ImageAsset> expiredImages = images.selectByStatusAndDeletedAtBefore("DELETED", cutoff);
 		for (ImageAsset image : expiredImages) {
 			purgeImage(image, false, "{\"autoCleanup\":true,\"retentionDays\":" + retentionDays + "}");
 		}
@@ -309,6 +334,7 @@ class ImageService {
 	@Transactional
 	ObjectFile preview(String id) {
 		ImageAsset image = getRetainedImage(id);
+		images.incrementViewCount(id);
 		image.viewed();
 		ImageVersion version = currentVersion(image);
 		String quality = settings.get("preview.quality", "ORIGINAL");
@@ -325,6 +351,7 @@ class ImageService {
 	@Transactional
 	ObjectFile download(String id) {
 		ImageAsset image = getImage(id);
+		images.incrementDownloadCount(id);
 		image.downloaded();
 		ImageVersion version = currentVersion(image);
 		auditLogService.record("image.download", "IMAGE", id, "{}");
@@ -342,9 +369,10 @@ class ImageService {
 				byte[] content = storage.read(version.bucket(), version.originalObjectKey());
 				ZipEntry entry = new ZipEntry(uniqueZipFilename(version.originalFilename(), usedNames));
 				zip.putNextEntry(entry);
-				zip.write(content);
-				zip.closeEntry();
-				image.downloaded();
+					zip.write(content);
+					zip.closeEntry();
+					images.incrementDownloadCount(image.id());
+					image.downloaded();
 				auditLogService.record("image.download", "IMAGE", image.id(), "{\"batch\":true}");
 			}
 		}
@@ -370,8 +398,8 @@ class ImageService {
 
 	private List<TrendPoint> uploadTrend(LocalDate startDate, LocalDate endDate) {
 		Map<LocalDate, Long> countsByDay = new HashMap<>();
-		for (Object[] row : images.countUploadsByDaySince(startDate.atStartOfDay())) {
-			countsByDay.put(localDate(row[0]), number(row[1]));
+		for (ImageDailyCount row : images.countUploadsByDaySince(startDate.atStartOfDay())) {
+			countsByDay.put(row.day(), row.total());
 		}
 		return startDate.datesUntil(endDate.plusDays(1))
 				.map(date -> new TrendPoint(date, countsByDay.getOrDefault(date, 0L)))
@@ -380,7 +408,7 @@ class ImageService {
 
 	private List<CategoryDistributionItem> categoryDistribution() {
 		List<CategoryDistributionItem> items = images.countImagesByCategory().stream()
-				.map(row -> new CategoryDistributionItem((String) row[0], String.valueOf(row[1]), number(row[2])))
+				.map(row -> new CategoryDistributionItem(row.categoryId(), row.name(), row.total()))
 				.collect(java.util.stream.Collectors.toCollection(java.util.ArrayList::new));
 		long uncategorized = images.countUncategorizedImages();
 		if (uncategorized > 0) {
@@ -390,30 +418,13 @@ class ImageService {
 	}
 
 	private List<ImageRankingItem> topImagesByViews() {
-		return images.findByStatusNotOrderByViewCountDescCreatedAtDesc("DELETED", PageRequest.of(0, 5))
+		return images.selectTopViewed("DELETED", 5)
 				.stream().map(ImageRankingItem::from).toList();
 	}
 
 	private List<ImageRankingItem> topImagesByDownloads() {
-		return images.findByStatusNotOrderByDownloadCountDescCreatedAtDesc("DELETED", PageRequest.of(0, 5))
+		return images.selectTopDownloaded("DELETED", 5)
 				.stream().map(ImageRankingItem::from).toList();
-	}
-
-	private LocalDate localDate(Object value) {
-		if (value instanceof LocalDate date) {
-			return date;
-		}
-		if (value instanceof java.sql.Date date) {
-			return date.toLocalDate();
-		}
-		if (value instanceof java.sql.Timestamp timestamp) {
-			return timestamp.toLocalDateTime().toLocalDate();
-		}
-		return LocalDate.parse(String.valueOf(value));
-	}
-
-	private long number(Object value) {
-		return ((Number) value).longValue();
 	}
 
 	private void stageItem(UploadBatch batch, UploadBatchItem item, MultipartFile file, List<UploadBatchItem> existingItems) {
@@ -425,17 +436,19 @@ class ImageService {
 			var existingImage = images.findBySha256AndStatusNot(sha256, "DELETED");
 			if (existingImage.isPresent()) {
 				item.duplicated(existingImage.get().id(), sha256);
+				batchItems.updateById(item);
 			}
 			else if (existingItems.stream().anyMatch(existing -> sha256.equals(existing.sha256())
 					&& ("STAGED".equals(existing.status()) || "DUPLICATE".equals(existing.status())))) {
 				item.duplicated(null, sha256);
+				batchItems.updateById(item);
 			}
 			else {
 				String candidateImageId = UUID.randomUUID().toString();
 				stored = storage.store(file, candidateImageId);
 				try {
 					item.staged(candidateImageId, stored);
-					batchItems.flush();
+					batchItems.updateById(item);
 				}
 				catch (RuntimeException ex) {
 					storage.deleteQuietly(stored);
@@ -445,6 +458,7 @@ class ImageService {
 		}
 		catch (Exception ex) {
 			item.failed(ex.getMessage() == null ? "上传失败" : ex.getMessage());
+			batchItems.updateById(item);
 		}
 		refreshUploadBatch(batch);
 	}
@@ -467,9 +481,12 @@ class ImageService {
 		ImageAsset image = new ImageAsset(imageId, titleFrom(stored.originalFilename()), stored.originalFilename(), stored.sha256(), stored.mimeType(),
 				stored.sizeBytes(), stored.width(), stored.height());
 		image.replaceTaxonomy(uploadTaxonomy.category(), uploadTaxonomy.tags());
-		image = images.save(image);
-		ImageVersion version = versions.save(new ImageVersion(image.id(), 1, "UPLOAD", stored));
+		images.insert(image);
+		replaceImageTags(image);
+		ImageVersion version = new ImageVersion(image.id(), 1, "UPLOAD", stored);
+		versions.insert(version);
 		image.setCurrentVersionId(version.id());
+		images.updateById(image);
 		auditLogService.record("image.upload", "IMAGE", image.id(), "{\"filename\":\"" + escape(stored.originalFilename()) + "\"}");
 		return image;
 	}
@@ -485,7 +502,7 @@ class ImageService {
 		if (ids.isEmpty()) {
 			throw new IllegalArgumentException("请选择至少一张图片");
 		}
-		Map<String, ImageAsset> found = images.findAllById(ids).stream()
+		Map<String, ImageAsset> found = images.selectImagesByIds(ids).stream()
 				.filter(image -> !"DELETED".equals(image.status()))
 				.collect(java.util.stream.Collectors.toMap(ImageAsset::id, image -> image));
 		List<String> missing = ids.stream().filter(id -> !found.containsKey(id)).toList();
@@ -506,7 +523,7 @@ class ImageService {
 		if (ids.isEmpty()) {
 			throw new IllegalArgumentException("请选择至少一张图片");
 		}
-		Map<String, ImageAsset> found = images.findAllById(ids).stream()
+		Map<String, ImageAsset> found = images.selectImagesByIds(ids).stream()
 				.filter(image -> "DELETED".equals(image.status()))
 				.collect(java.util.stream.Collectors.toMap(ImageAsset::id, image -> image));
 		List<String> missing = ids.stream().filter(id -> !found.containsKey(id)).toList();
@@ -521,15 +538,17 @@ class ImageService {
 	}
 
 	private void purgeImage(ImageAsset image, boolean batch, String auditDetail) {
-		List<ImageVersion> imageVersions = versions.findByImageIdOrderByVersionNoDesc(image.id());
+		List<ImageVersion> imageVersions = versions.selectByImageIdOrdered(image.id());
 		for (ImageVersion version : imageVersions) {
 			storage.delete(new StoredImage(version.originalFilename(), "", version.mimeType(), 0L, null, null,
 					version.bucket(), version.originalObjectKey(), version.thumbnailObjectKey(), version.highPreviewObjectKey(),
 					version.standardPreviewObjectKey()));
 		}
-		versions.deleteAll(imageVersions);
-		image.replaceTaxonomy(null, Set.of());
-		images.delete(image);
+		if (!imageVersions.isEmpty()) {
+			versions.deleteVersionsByIds(imageVersions.stream().map(ImageVersion::id).toList());
+		}
+		imageTags.deleteByImageId(image.id());
+		images.deleteById(image.id());
 		auditLogService.record("image.purge", "IMAGE", image.id(), auditDetail);
 	}
 
@@ -547,16 +566,20 @@ class ImageService {
 	}
 
 	private void refreshUploadBatch(UploadBatch batch) {
-		List<UploadBatchItem> items = batchItems.findByBatchIdOrderByCreatedAtAsc(batch.id());
+		List<UploadBatchItem> items = batchItems.selectByBatchIdOrdered(batch.id());
 		int success = (int) items.stream().filter(item -> "STAGED".equals(item.status()) || "CONFIRMED".equals(item.status())).count();
 		int failed = (int) items.stream().filter(item -> "FAILED".equals(item.status())).count();
 		int duplicate = (int) items.stream().filter(item -> "DUPLICATE".equals(item.status())).count();
 		int processed = success + failed + duplicate;
 		batch.refreshCounts(success, failed, duplicate, processed);
+		batches.updateById(batch);
 	}
 
 	private UploadBatch getUploadSession(String id) {
-		return batches.findById(id).orElseThrow(() -> new IllegalArgumentException("上传会话不存在"));
+		UploadBatch batch = Optional.ofNullable(batches.selectById(id))
+				.orElseThrow(() -> new IllegalArgumentException("上传会话不存在"));
+		loadUploadBatchTags(batch);
+		return batch;
 	}
 
 	private void ensureCanStage(UploadBatch batch) {
@@ -566,15 +589,17 @@ class ImageService {
 	}
 
 	private void cancelUploadSession(UploadBatch batch, boolean expired) {
-		List<UploadBatchItem> items = batchItems.findByBatchIdOrderByCreatedAtAsc(batch.id());
+		List<UploadBatchItem> items = batchItems.selectByBatchIdOrdered(batch.id());
 		for (UploadBatchItem item : items) {
 			if (item.hasStoredObjects()) {
 				storage.deleteQuietly(item.storedImage());
 				item.cancelled();
+				batchItems.updateById(item);
 				continue;
 			}
 			if (!"DUPLICATE".equals(item.status()) && !"FAILED".equals(item.status())) {
 				item.cancelled();
+				batchItems.updateById(item);
 			}
 		}
 		if (expired) {
@@ -585,6 +610,7 @@ class ImageService {
 			batch.markCancelled();
 			auditLogService.record("image.upload.session.cancel", "UPLOAD_BATCH", batch.id(), "{}");
 		}
+		batches.updateById(batch);
 	}
 
 	private UploadTaxonomy validateUploadTaxonomy(String categoryId, List<String> tagIds) {
@@ -594,7 +620,7 @@ class ImageService {
 		if (tagIds == null || tagIds.stream().noneMatch(tagId -> tagId != null && !tagId.isBlank())) {
 			throw new IllegalArgumentException("上传图片必须至少选择一个标签");
 		}
-		Category category = categories.findById(categoryId.trim())
+		Category category = Optional.ofNullable(categories.selectById(categoryId.trim()))
 				.orElseThrow(() -> new IllegalArgumentException("选择的分类不存在"));
 		if (!category.enabled()) {
 			throw new IllegalArgumentException("选择的分类已停用");
@@ -603,41 +629,40 @@ class ImageService {
 				.filter(tagId -> tagId != null && !tagId.isBlank())
 				.map(String::trim)
 				.collect(java.util.stream.Collectors.toCollection(LinkedHashSet::new));
-		Set<Tag> selectedTags = new LinkedHashSet<>(tags.findByIdIn(requiredTagIds));
+		Set<Tag> selectedTags = new LinkedHashSet<>(tags.selectBatchIds(requiredTagIds));
 		if (selectedTags.size() != requiredTagIds.size()) {
 			throw new IllegalArgumentException("选择的标签不存在");
 		}
-		boolean invalidTag = selectedTags.stream()
-				.anyMatch(tag -> !tag.enabled() || !tag.categoryId().equals(category.id()));
-		if (invalidTag) {
-			throw new IllegalArgumentException("选择的标签必须属于当前分类且处于启用状态");
-		}
+		validateSelectedTags(selectedTags);
 		return new UploadTaxonomy(category, selectedTags);
 	}
 
 	private ImageAsset getImage(String id) {
-		return images.findById(id)
+		return Optional.ofNullable(images.selectById(id))
+				.map(this::loadImageRelations)
 				.filter(image -> !"DELETED".equals(image.status()))
 				.orElseThrow(() -> new IllegalArgumentException("图片不存在"));
 	}
 
 	private ImageAsset getDeletedImage(String id) {
-		return images.findById(id)
+		return Optional.ofNullable(images.selectById(id))
+				.map(this::loadImageRelations)
 				.filter(image -> "DELETED".equals(image.status()))
 				.orElseThrow(() -> new IllegalArgumentException("图片不存在或未停用"));
 	}
 
 	private ImageAsset getRetainedImage(String id) {
-		return images.findById(id)
+		return Optional.ofNullable(images.selectById(id))
+				.map(this::loadImageRelations)
 				.orElseThrow(() -> new IllegalArgumentException("图片不存在"));
 	}
 
 	private ImageVersion currentVersion(ImageAsset image) {
 		if (image.currentVersionId() != null) {
-			return versions.findById(image.currentVersionId())
+			return Optional.ofNullable(versions.selectById(image.currentVersionId()))
 					.orElseThrow(() -> new IllegalArgumentException("图片版本不存在"));
 		}
-		return versions.findFirstByImageIdOrderByVersionNoDesc(image.id())
+		return versions.findLatestByImageId(image.id())
 				.orElseThrow(() -> new IllegalArgumentException("图片版本不存在"));
 	}
 
@@ -645,7 +670,7 @@ class ImageService {
 		if (id == null || id.isBlank()) {
 			return null;
 		}
-		Category category = categories.findById(id.trim())
+		Category category = Optional.ofNullable(categories.selectById(id.trim()))
 				.orElseThrow(() -> new IllegalArgumentException("选择的分类不存在"));
 		if (!category.enabled()) {
 			throw new IllegalArgumentException("选择的分类已停用");
@@ -664,24 +689,28 @@ class ImageService {
 		if (requiredTagIds.isEmpty()) {
 			return Set.of();
 		}
-		Set<Tag> selectedTags = new LinkedHashSet<>(tags.findByIdIn(requiredTagIds));
+		Set<Tag> selectedTags = new LinkedHashSet<>(tags.selectBatchIds(requiredTagIds));
 		if (selectedTags.size() != requiredTagIds.size()) {
 			throw new IllegalArgumentException("选择的标签不存在");
 		}
+		validateSelectedTags(selectedTags);
 		return selectedTags;
 	}
 
-	private void validateSelectedTags(Category category, Set<Tag> selectedTags) {
+	private void validateSelectedTags(Set<Tag> selectedTags) {
 		if (selectedTags.isEmpty()) {
 			return;
 		}
-		if (category == null) {
-			throw new IllegalArgumentException("选择标签前必须选择分类");
-		}
+		Map<String, TagGroup> groupsById = tagGroups.selectBatchIds(
+						selectedTags.stream().map(Tag::groupId).distinct().toList())
+				.stream()
+				.collect(java.util.stream.Collectors.toMap(TagGroup::id, Function.identity()));
 		boolean invalidTag = selectedTags.stream()
-				.anyMatch(tag -> !tag.enabled() || !tag.categoryId().equals(category.id()));
+				.anyMatch(tag -> !tag.enabled() || !Optional.ofNullable(groupsById.get(tag.groupId()))
+						.map(TagGroup::enabled)
+						.orElse(false));
 		if (invalidTag) {
-			throw new IllegalArgumentException("选择的标签必须属于当前分类且处于启用状态");
+			throw new IllegalArgumentException("选择的标签或标签组已停用");
 		}
 	}
 
@@ -735,11 +764,93 @@ class ImageService {
 		return value.replace("\\", "\\\\").replace("\"", "\\\"");
 	}
 
+	private List<ImageAsset> loadImages(List<String> imageIds) {
+		if (imageIds.isEmpty()) {
+			return List.of();
+		}
+		Map<String, ImageAsset> imagesById = images.selectImagesByIds(imageIds).stream()
+				.collect(java.util.stream.Collectors.toMap(ImageAsset::id, Function.identity()));
+		List<ImageAsset> ordered = imageIds.stream()
+				.map(imagesById::get)
+				.filter(java.util.Objects::nonNull)
+				.toList();
+		loadImageRelations(ordered);
+		return ordered;
+	}
+
+	private ImageAsset loadImageRelations(ImageAsset image) {
+		loadImageRelations(List.of(image));
+		return image;
+	}
+
+	private void loadImageRelations(List<ImageAsset> imageList) {
+		if (imageList.isEmpty()) {
+			return;
+		}
+		List<String> categoryIds = imageList.stream()
+				.map(ImageAsset::categoryId)
+				.filter(java.util.Objects::nonNull)
+				.distinct()
+				.toList();
+		Map<String, Category> categoriesById = categoryIds.isEmpty()
+				? Map.of()
+				: categories.selectBatchIds(categoryIds).stream()
+						.collect(java.util.stream.Collectors.toMap(Category::id, Function.identity()));
+
+		List<ImageTagLink> links = imageTags.selectByImageIds(imageList.stream().map(ImageAsset::id).toList());
+		List<String> tagIds = links.stream().map(ImageTagLink::tagId).distinct().toList();
+		Map<String, Tag> tagsById = tagIds.isEmpty()
+				? Map.of()
+				: tags.selectBatchIds(tagIds).stream()
+						.collect(java.util.stream.Collectors.toMap(Tag::id, Function.identity()));
+		Map<String, TagGroup> tagGroupsById = tagsById.isEmpty()
+				? Map.of()
+				: tagGroups.selectBatchIds(tagsById.values().stream().map(Tag::groupId).distinct().toList()).stream()
+						.collect(java.util.stream.Collectors.toMap(TagGroup::id, Function.identity()));
+		tagsById.values().forEach(tag -> tag.attachGroup(tagGroupsById.get(tag.groupId())));
+		Map<String, Tag> visibleTagsById = tagsById.values().stream()
+				.filter(tag -> tag.enabled() && Optional.ofNullable(tagGroupsById.get(tag.groupId()))
+						.map(TagGroup::enabled)
+						.orElse(false))
+				.collect(java.util.stream.Collectors.toMap(Tag::id, Function.identity()));
+		Map<String, List<ImageTagLink>> linksByImage = links.stream()
+				.collect(java.util.stream.Collectors.groupingBy(ImageTagLink::imageId));
+
+		for (ImageAsset image : imageList) {
+			Set<Tag> assignedTags = linksByImage.getOrDefault(image.id(), List.of()).stream()
+					.map(link -> visibleTagsById.get(link.tagId()))
+					.filter(java.util.Objects::nonNull)
+					.collect(java.util.stream.Collectors.toCollection(LinkedHashSet::new));
+			Category category = image.categoryId() == null ? null : categoriesById.get(image.categoryId());
+			image.replaceTaxonomy(category, assignedTags);
+		}
+	}
+
+	private void replaceImageTags(ImageAsset image) {
+		imageTags.deleteByImageId(image.id());
+		List<String> tagIds = image.tags().stream().map(Tag::id).toList();
+		if (!tagIds.isEmpty()) {
+			imageTags.insertBatch(image.id(), tagIds);
+		}
+	}
+
+	private void replaceUploadBatchTags(UploadBatch batch) {
+		uploadBatchTags.deleteByBatchId(batch.id());
+		if (!batch.tagIds().isEmpty()) {
+			uploadBatchTags.insertBatch(batch.id(), batch.tagIds());
+		}
+	}
+
+	private void loadUploadBatchTags(UploadBatch batch) {
+		batch.replaceTagIds(uploadBatchTags.selectTagIdsByBatchId(batch.id()));
+	}
+
 	@Transactional
 	int expireUnconfirmedUploadSessions() {
-		List<UploadBatch> expired = batches.findByStatusInAndExpiresAtBefore(
+		List<UploadBatch> expired = batches.selectExpired(
 				List.of("CREATED", "STAGING", "STAGED", "PARTIAL_FAILED"), LocalDateTime.now());
 		for (UploadBatch batch : expired) {
+			loadUploadBatchTags(batch);
 			cancelUploadSession(batch, true);
 		}
 		return expired.size();
@@ -749,18 +860,8 @@ class ImageService {
 	int cleanupOrphanImageObjects() {
 		Instant cutoff = Instant.now().minusSeconds(24 * 60 * 60);
 		Set<String> referencedKeys = new HashSet<>();
-		for (ImageVersion version : versions.findAll()) {
-			referencedKeys.add(version.originalObjectKey());
-			referencedKeys.add(version.thumbnailObjectKey());
-			referencedKeys.add(version.highPreviewObjectKey());
-			referencedKeys.add(version.standardPreviewObjectKey());
-		}
-		for (UploadBatchItem item : batchItems.findByStatusIn(List.of("PROCESSING", "STAGED"))) {
-			referencedKeys.add(item.originalObjectKey());
-			referencedKeys.add(item.thumbnailObjectKey());
-			referencedKeys.add(item.highPreviewObjectKey());
-			referencedKeys.add(item.standardPreviewObjectKey());
-		}
+		referencedKeys.addAll(versions.selectReferencedObjectKeys());
+		referencedKeys.addAll(batchItems.selectReferencedObjectKeysByStatuses(List.of("PROCESSING", "STAGED")));
 		referencedKeys.remove(null);
 		List<ImageStorageService.StoredObject> orphanObjects = storage.listImageObjects().stream()
 				.filter(object -> object.lastModified() == null || object.lastModified().isBefore(cutoff))

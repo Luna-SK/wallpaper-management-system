@@ -2,36 +2,35 @@ package com.luna.wallpaper.settings;
 
 import java.time.LocalDateTime;
 
-import jakarta.persistence.Column;
-import jakarta.persistence.Entity;
-import jakarta.persistence.Id;
-import jakarta.persistence.Table;
+import com.baomidou.mybatisplus.annotation.FieldFill;
+import com.baomidou.mybatisplus.annotation.IdType;
+import com.baomidou.mybatisplus.annotation.TableField;
+import com.baomidou.mybatisplus.annotation.TableId;
+import com.baomidou.mybatisplus.annotation.TableName;
 
-@Entity
-@Table(name = "system_settings")
+@TableName("system_settings")
 class SystemSetting {
 
-	@Id
-	@Column(name = "setting_key", nullable = false, length = 120)
-	private String key;
+	@TableId(value = "setting_key", type = IdType.INPUT)
+	private String settingKey;
 
-	@Column(name = "setting_value", columnDefinition = "text")
+	@TableField("setting_value")
 	private String value;
 
-	@Column(name = "updated_at", nullable = false)
+	@TableField(fill = FieldFill.INSERT_UPDATE)
 	private LocalDateTime updatedAt;
 
 	protected SystemSetting() {
 	}
 
 	SystemSetting(String key, String value) {
-		this.key = key;
+		this.settingKey = key;
 		this.value = value;
 		this.updatedAt = LocalDateTime.now();
 	}
 
 	String getKey() {
-		return key;
+		return settingKey;
 	}
 
 	String getValue() {

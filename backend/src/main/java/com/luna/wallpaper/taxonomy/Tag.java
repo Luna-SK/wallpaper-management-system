@@ -3,68 +3,52 @@ package com.luna.wallpaper.taxonomy;
 import java.time.LocalDateTime;
 import java.util.UUID;
 
-import jakarta.persistence.Column;
-import jakarta.persistence.Entity;
-import jakarta.persistence.Id;
-import jakarta.persistence.PrePersist;
-import jakarta.persistence.PreUpdate;
-import jakarta.persistence.Table;
+import com.baomidou.mybatisplus.annotation.FieldFill;
+import com.baomidou.mybatisplus.annotation.IdType;
+import com.baomidou.mybatisplus.annotation.TableField;
+import com.baomidou.mybatisplus.annotation.TableId;
+import com.baomidou.mybatisplus.annotation.TableName;
 
-@Entity
-@Table(name = "tags")
+@TableName("tags")
 public class Tag {
 
-	@Id
-	@Column(nullable = false, length = 36)
+	@TableId(type = IdType.INPUT)
 	private String id;
 
-	@Column(name = "category_id", nullable = false, length = 36)
-	private String categoryId;
+	private String groupId;
 
-	@Column(nullable = false, length = 120)
 	private String name;
 
-	@Column(name = "sort_order", nullable = false)
 	private int sortOrder;
 
-	@Column(nullable = false, columnDefinition = "tinyint(1)")
 	private boolean enabled = true;
 
-	@Column(name = "created_at", nullable = false)
+	@TableField(fill = FieldFill.INSERT)
 	private LocalDateTime createdAt;
 
-	@Column(name = "updated_at", nullable = false)
+	@TableField(fill = FieldFill.INSERT_UPDATE)
 	private LocalDateTime updatedAt;
+
+	@TableField(exist = false)
+	private String groupName;
 
 	protected Tag() {
 	}
 
-	Tag(String categoryId, String name, int sortOrder) {
+	Tag(String groupId, String name, int sortOrder) {
 		this.id = UUID.randomUUID().toString();
-		this.categoryId = categoryId;
+		this.groupId = groupId;
 		this.name = name;
 		this.sortOrder = sortOrder;
 		this.enabled = true;
-	}
-
-	@PrePersist
-	void prePersist() {
-		LocalDateTime now = LocalDateTime.now();
-		this.createdAt = now;
-		this.updatedAt = now;
-	}
-
-	@PreUpdate
-	void preUpdate() {
-		this.updatedAt = LocalDateTime.now();
 	}
 
 	public String id() {
 		return id;
 	}
 
-	public String categoryId() {
-		return categoryId;
+	public String groupId() {
+		return groupId;
 	}
 
 	public String name() {
@@ -79,9 +63,21 @@ public class Tag {
 		return enabled;
 	}
 
+	public String groupName() {
+		return groupName;
+	}
+
 	void update(String name, int sortOrder, boolean enabled) {
 		this.name = name;
 		this.sortOrder = sortOrder;
 		this.enabled = enabled;
+	}
+
+	void moveToGroup(String groupId) {
+		this.groupId = groupId;
+	}
+
+	public void attachGroup(TagGroup group) {
+		this.groupName = group == null ? null : group.name();
 	}
 }

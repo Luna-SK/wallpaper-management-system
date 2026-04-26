@@ -5,80 +5,60 @@ import java.util.LinkedHashSet;
 import java.util.Set;
 import java.util.UUID;
 
+import com.baomidou.mybatisplus.annotation.FieldFill;
+import com.baomidou.mybatisplus.annotation.IdType;
+import com.baomidou.mybatisplus.annotation.TableField;
+import com.baomidou.mybatisplus.annotation.TableId;
+import com.baomidou.mybatisplus.annotation.TableName;
 import com.luna.wallpaper.taxonomy.Category;
 import com.luna.wallpaper.taxonomy.Tag;
-import jakarta.persistence.Column;
-import jakarta.persistence.Entity;
-import jakarta.persistence.FetchType;
-import jakarta.persistence.Id;
-import jakarta.persistence.JoinColumn;
-import jakarta.persistence.JoinTable;
-import jakarta.persistence.ManyToMany;
-import jakarta.persistence.ManyToOne;
-import jakarta.persistence.PrePersist;
-import jakarta.persistence.PreUpdate;
-import jakarta.persistence.Table;
 
-@Entity
-@Table(name = "images")
+@TableName("images")
 class ImageAsset {
 
-	@Id
-	@Column(nullable = false, length = 36)
+	@TableId(type = IdType.INPUT)
 	private String id;
 
-	@Column(nullable = false)
 	private String title;
 
-	@Column(name = "original_filename", nullable = false)
 	private String originalFilename;
 
-	@Column(nullable = false, length = 64)
 	private String sha256;
 
-	@Column(name = "mime_type", nullable = false, length = 120)
 	private String mimeType;
 
-	@Column(name = "size_bytes", nullable = false)
 	private long sizeBytes;
 
 	private Integer width;
 
 	private Integer height;
 
-	@Column(name = "uploader_id", length = 36)
 	private String uploaderId;
 
-	@Column(name = "source_path", length = 512)
 	private String sourcePath;
 
-	@Column(nullable = false, length = 24)
 	private String status = "ACTIVE";
 
-	@Column(name = "view_count", nullable = false)
 	private long viewCount;
 
-	@Column(name = "download_count", nullable = false)
 	private long downloadCount;
 
-	@Column(name = "current_version_id", length = 36)
 	private String currentVersionId;
 
-	@Column(name = "deleted_at")
 	private LocalDateTime deletedAt;
 
-	@ManyToOne(fetch = FetchType.LAZY)
-	@JoinColumn(name = "category_id")
+	private String categoryId;
+
+	@TableField(exist = false)
 	private Category category;
 
-	@ManyToMany
-	@JoinTable(name = "image_tags", joinColumns = @JoinColumn(name = "image_id"), inverseJoinColumns = @JoinColumn(name = "tag_id"))
+	@TableField(exist = false)
 	private Set<Tag> tags = new LinkedHashSet<>();
 
-	@Column(name = "created_at", nullable = false)
+	@TableField(fill = FieldFill.INSERT)
 	private LocalDateTime createdAt;
 
-	@Column(name = "updated_at", nullable = false)
+	@TableField(fill = FieldFill.INSERT_UPDATE)
 	private LocalDateTime updatedAt;
 
 	protected ImageAsset() {
@@ -101,18 +81,6 @@ class ImageAsset {
 		this.height = height;
 	}
 
-	@PrePersist
-	void prePersist() {
-		LocalDateTime now = LocalDateTime.now();
-		this.createdAt = now;
-		this.updatedAt = now;
-	}
-
-	@PreUpdate
-	void preUpdate() {
-		this.updatedAt = LocalDateTime.now();
-	}
-
 	String id() { return id; }
 	String title() { return title; }
 	String originalFilename() { return originalFilename; }
@@ -125,6 +93,7 @@ class ImageAsset {
 	long viewCount() { return viewCount; }
 	long downloadCount() { return downloadCount; }
 	String currentVersionId() { return currentVersionId; }
+	String categoryId() { return categoryId; }
 	Category category() { return category; }
 	Set<Tag> tags() { return tags; }
 	LocalDateTime createdAt() { return createdAt; }
@@ -135,6 +104,7 @@ class ImageAsset {
 	}
 
 	void replaceTaxonomy(Category category, Set<Tag> tags) {
+		this.categoryId = category == null ? null : category.id();
 		this.category = category;
 		this.tags.clear();
 		this.tags.addAll(tags);

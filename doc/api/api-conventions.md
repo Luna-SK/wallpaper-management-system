@@ -61,9 +61,18 @@
 - `GET /api/categories`
 - `POST /api/categories`
 - `PATCH /api/categories/{id}`
-- `GET /api/categories/{id}/tags`
-- `POST /api/categories/{id}/tags`
-- `PATCH /api/categories/{id}/tags/{tagId}`
+- `POST /api/categories/{id}/restore`
+- `DELETE /api/categories/{id}/purge?force=true`
+- `GET /api/tag-groups`
+- `POST /api/tag-groups`
+- `PATCH /api/tag-groups/{id}`
+- `POST /api/tag-groups/{id}/restore`
+- `DELETE /api/tag-groups/{id}/purge?force=true`
+- `GET /api/tags`
+- `POST /api/tags`
+- `PATCH /api/tags/{id}`
+- `POST /api/tags/{id}/restore`
+- `DELETE /api/tags/{id}/purge?force=true`
 - `GET /api/audit-logs`
 - `GET /api/audit-log-retention`
 - `PATCH /api/audit-log-retention`
@@ -73,11 +82,13 @@
 - `GET /api/system-settings`
 - `PATCH /api/system-settings`
 
-上传使用会话化接口：`POST /api/image-upload-sessions` 创建会话，`POST /api/image-upload-sessions/{id}/items` 上传文件到 RustFS 暂存区，`POST /api/image-upload-sessions/{id}/confirm` 确认入库，`POST /api/image-upload-sessions/{id}/cancel` 取消并清理未确认对象。创建会话必须包含 `categoryId`，并至少提交一个 `tagIds`；所有标签必须属于该分类且处于启用状态。旧 `POST /api/images/batch` 仅作为兼容接口保留。
+上传使用会话化接口：`POST /api/image-upload-sessions` 创建会话，`POST /api/image-upload-sessions/{id}/items` 上传文件到 RustFS 暂存区，`POST /api/image-upload-sessions/{id}/confirm` 确认入库，`POST /api/image-upload-sessions/{id}/cancel` 取消并清理未确认对象。创建会话必须包含 `categoryId`，并至少提交一个 `tagIds`；分类、标签和标签组都必须处于启用状态。旧 `POST /api/images/batch` 仅作为兼容接口保留。
 
 确认入库前，暂存文件不会出现在图片库。取消会话、过期会话和孤儿对象清理都会删除未被 `image_versions` 引用的 RustFS 对象。
 
-图片记录只关联一个分类。`GET /api/images` 和 `GET /api/images/{id}` 返回 `category` 对象或 `null`，`PATCH /api/images/{id}` 使用单个 `categoryId` 更新分类，标签仍使用 `tagIds` 多选。
+图片记录只关联一个分类。`GET /api/images` 和 `GET /api/images/{id}` 返回 `category` 对象或 `null`，`PATCH /api/images/{id}` 使用单个 `categoryId` 更新分类，标签使用 `tagIds` 多选且不受分类限制。标签响应包含 `groupId` 和 `groupName`。
+
+分类、标签组、标签的彻底删除只允许对已停用项执行。若存在图片、上传会话或下级标签引用，未传 `force=true` 时返回 `409 REFERENCE_EXISTS` 和引用数量；前端二次确认后可带 `force=true` 自动解除引用并物理删除。
 
 ## System Settings
 

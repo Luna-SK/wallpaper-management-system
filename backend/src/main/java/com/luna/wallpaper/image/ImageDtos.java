@@ -42,9 +42,9 @@ public final class ImageDtos {
 		}
 	}
 
-	public record TagBrief(String id, String categoryId, String name) {
+	public record TagBrief(String id, String categoryId, String groupId, String groupName, String name) {
 		static TagBrief from(Tag tag) {
-			return new TagBrief(tag.id(), tag.categoryId(), tag.name());
+			return new TagBrief(tag.id(), null, tag.groupId(), tag.groupName(), tag.name());
 		}
 	}
 

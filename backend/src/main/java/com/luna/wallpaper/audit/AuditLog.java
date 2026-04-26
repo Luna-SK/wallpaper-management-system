@@ -3,41 +3,33 @@ package com.luna.wallpaper.audit;
 import java.time.LocalDateTime;
 import java.util.UUID;
 
-import jakarta.persistence.Column;
-import jakarta.persistence.Entity;
-import jakarta.persistence.Id;
-import jakarta.persistence.Table;
+import com.baomidou.mybatisplus.annotation.FieldFill;
+import com.baomidou.mybatisplus.annotation.IdType;
+import com.baomidou.mybatisplus.annotation.TableField;
+import com.baomidou.mybatisplus.annotation.TableId;
+import com.baomidou.mybatisplus.annotation.TableName;
 
-@Entity
-@Table(name = "audit_logs")
+@TableName("audit_logs")
 class AuditLog {
 
-	@Id
-	@Column(nullable = false, length = 36)
+	@TableId(type = IdType.INPUT)
 	private String id;
 
-	@Column(name = "actor_id", length = 36)
 	private String actorId;
 
-	@Column(nullable = false, length = 120)
 	private String action;
 
-	@Column(name = "target_type", length = 80)
 	private String targetType;
 
-	@Column(name = "target_id", length = 80)
 	private String targetId;
 
-	@Column(name = "ip_address", length = 80)
 	private String ipAddress;
 
-	@Column(name = "user_agent", length = 512)
 	private String userAgent;
 
-	@Column(name = "detail_json", columnDefinition = "json")
 	private String detailJson;
 
-	@Column(name = "created_at", nullable = false)
+	@TableField(fill = FieldFill.INSERT)
 	private LocalDateTime createdAt;
 
 	protected AuditLog() {

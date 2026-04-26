@@ -30,7 +30,7 @@ class SecurityConfig {
 				.csrf(AbstractHttpConfigurer::disable)
 				.cors(Customizer.withDefaults())
 				.authorizeHttpRequests(authorize -> authorize
-						.requestMatchers("/actuator/health/**", "/api/system/health").permitAll()
+						.requestMatchers("/error", "/actuator/health/**", "/api/system/health").permitAll()
 						.requestMatchers(HttpMethod.POST, "/api/auth/login", "/api/auth/register",
 								"/api/auth/password/forgot", "/api/auth/password/reset").permitAll()
 						.requestMatchers(HttpMethod.GET, "/api/image-upload-batches/*/events",

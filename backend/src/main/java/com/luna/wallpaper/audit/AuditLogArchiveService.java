@@ -16,8 +16,6 @@ import java.util.zip.GZIPOutputStream;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import org.springframework.data.domain.Page;
-import org.springframework.data.domain.PageRequest;
 import org.springframework.scheduling.support.CronExpression;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -48,8 +46,8 @@ public class AuditLogArchiveService {
 	private static final DateTimeFormatter OBJECT_TIME_FORMAT =
 			DateTimeFormatter.ofPattern("yyyyMMdd-HHmmss");
 
-	private final AuditLogRepository auditLogRepository;
-	private final AuditLogArchiveRunRepository archiveRunRepository;
+	private final AuditLogMapper auditLogMapper;
+	private final AuditLogArchiveRunMapper archiveRunMapper;
 	private final SystemSettingService systemSettingService;
 	private final StorageProperties storageProperties;
 	private final S3Client s3Client;
@@ -57,25 +55,25 @@ public class AuditLogArchiveService {
 	private final Clock clock;
 
 	@Autowired
-	AuditLogArchiveService(AuditLogRepository auditLogRepository,
-			AuditLogArchiveRunRepository archiveRunRepository,
+	AuditLogArchiveService(AuditLogMapper auditLogMapper,
+			AuditLogArchiveRunMapper archiveRunMapper,
 			SystemSettingService systemSettingService,
 			StorageProperties storageProperties,
 			S3Client s3Client,
 			ObjectMapper objectMapper) {
-		this(auditLogRepository, archiveRunRepository, systemSettingService,
+		this(auditLogMapper, archiveRunMapper, systemSettingService,
 				storageProperties, s3Client, objectMapper, Clock.systemDefaultZone());
 	}
 
-	AuditLogArchiveService(AuditLogRepository auditLogRepository,
-			AuditLogArchiveRunRepository archiveRunRepository,
+	AuditLogArchiveService(AuditLogMapper auditLogMapper,
+			AuditLogArchiveRunMapper archiveRunMapper,
 			SystemSettingService systemSettingService,
 			StorageProperties storageProperties,
 			S3Client s3Client,
 			ObjectMapper objectMapper,
 			Clock clock) {
-		this.auditLogRepository = auditLogRepository;
-		this.archiveRunRepository = archiveRunRepository;
+		this.auditLogMapper = auditLogMapper;
+		this.archiveRunMapper = archiveRunMapper;
 		this.systemSettingService = systemSettingService;
 		this.storageProperties = storageProperties;
 		this.s3Client = s3Client;
@@ -113,8 +111,8 @@ public class AuditLogArchiveService {
 		AuditRetentionSettings settings = getSettings();
 		LocalDateTime now = LocalDateTime.now(clock);
 		LocalDateTime cutoffTime = now.minusDays(settings.retentionDays());
-		AuditLogArchiveRun run = archiveRunRepository.save(
-				new AuditLogArchiveRun(UUID.randomUUID().toString(), triggerType, cutoffTime));
+		AuditLogArchiveRun run = new AuditLogArchiveRun(UUID.randomUUID().toString(), triggerType, cutoffTime);
+		archiveRunMapper.insert(run);
 
 		try {
 			List<AuditLog> logs = findLogsToArchive(cutoffTime, settings.batchSize());
@@ -131,7 +129,8 @@ public class AuditLogArchiveService {
 			run.fail(exception);
 		}
 
-		AuditArchiveRunResponse response = AuditArchiveRunResponse.from(archiveRunRepository.save(run));
+		archiveRunMapper.updateById(run);
+		AuditArchiveRunResponse response = AuditArchiveRunResponse.from(run);
 		pruneExpiredArchiveRunsQuietly(settings);
 		return response;
 	}
@@ -140,30 +139,31 @@ public class AuditLogArchiveService {
 	public AuditArchiveRunPageResponse listArchiveRuns(int page, int size) {
 		int safePage = Math.max(1, page);
 		int safeSize = Math.min(Math.max(1, size), 100);
-		Page<AuditLogArchiveRun> result = archiveRunRepository.findAllByOrderByStartedAtDesc(
-				PageRequest.of(safePage - 1, safeSize));
-		return new AuditArchiveRunPageResponse(result.getContent().stream().map(AuditArchiveRunResponse::from).toList(),
-				safePage, safeSize, result.getTotalElements());
+		long total = archiveRunMapper.countAll();
+		List<AuditLogArchiveRun> runs = total == 0 ? List.of() : archiveRunMapper.selectPageOrdered(
+				(long) (safePage - 1) * safeSize, safeSize);
+		return new AuditArchiveRunPageResponse(runs.stream().map(AuditArchiveRunResponse::from).toList(),
+				safePage, safeSize, total);
 	}
 
 	@Transactional(readOnly = true)
 	public long countExpiredLogs() {
 		AuditRetentionSettings settings = getSettings();
 		LocalDateTime cutoffTime = LocalDateTime.now(clock).minusDays(settings.retentionDays());
-		return auditLogRepository.countByCreatedAtBefore(cutoffTime);
+		return auditLogMapper.countByCreatedAtBefore(cutoffTime);
 	}
 
 	@Transactional(readOnly = true)
 	public long countExpiredArchiveRuns() {
 		AuditRetentionSettings settings = getSettings();
 		LocalDateTime cutoffTime = LocalDateTime.now(clock).minusDays(settings.retentionDays());
-		return archiveRunRepository.countByStartedAtBefore(cutoffTime);
+		return archiveRunMapper.countByStartedAtBefore(cutoffTime);
 	}
 
 	private void pruneExpiredArchiveRunsQuietly(AuditRetentionSettings settings) {
 		try {
 			LocalDateTime cutoffTime = LocalDateTime.now(clock).minusDays(settings.retentionDays());
-			archiveRunRepository.deleteByStartedAtBefore(cutoffTime);
+			archiveRunMapper.deleteByStartedAtBefore(cutoffTime);
 		}
 		catch (Exception exception) {
 			log.warn("Failed to prune expired audit archive run metadata", exception);
@@ -175,21 +175,23 @@ public class AuditLogArchiveService {
 
 	private List<AuditLog> findLogsToArchive(LocalDateTime cutoffTime, int batchSize) {
 		List<AuditLog> logs = new ArrayList<>();
-		int page = 0;
+		LocalDateTime lastCreatedAt = null;
+		String lastId = null;
 		while (true) {
-			List<AuditLog> batch = auditLogRepository.findByCreatedAtBeforeOrderByCreatedAtAsc(
-					cutoffTime, PageRequest.of(page, batchSize));
+			List<AuditLog> batch = auditLogMapper.selectArchiveBatch(cutoffTime, lastCreatedAt, lastId, batchSize);
 			if (batch.isEmpty()) {
 				return logs;
 			}
 			logs.addAll(batch);
+			AuditLog last = batch.get(batch.size() - 1);
+			lastCreatedAt = last.getCreatedAt();
+			lastId = last.getId();
 			if (batch.size() < batchSize) {
 				return logs;
 			}
 			if (logs.size() >= batchSize * 10) {
 				return logs;
 			}
-			page++;
 		}
 	}
 
@@ -200,7 +202,7 @@ public class AuditLogArchiveService {
 			List<String> ids = logs.subList(start, end).stream()
 					.map(AuditLog::getId)
 					.toList();
-			auditLogRepository.deleteAllByIdInBatch(ids);
+			auditLogMapper.deleteArchiveBatchByIds(ids);
 			deletedCount += ids.size();
 		}
 		return deletedCount;

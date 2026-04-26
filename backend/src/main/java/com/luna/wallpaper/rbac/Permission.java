@@ -1,28 +1,21 @@
 package com.luna.wallpaper.rbac;
 
-import jakarta.persistence.Column;
-import jakarta.persistence.Entity;
-import jakarta.persistence.Id;
-import jakarta.persistence.Table;
+import com.baomidou.mybatisplus.annotation.IdType;
+import com.baomidou.mybatisplus.annotation.TableId;
+import com.baomidou.mybatisplus.annotation.TableName;
 
-@Entity
-@Table(name = "permissions")
+@TableName("permissions")
 class Permission {
 
-	@Id
-	@Column(nullable = false, length = 36)
+	@TableId(type = IdType.INPUT)
 	private String id;
 
-	@Column(nullable = false, unique = true, length = 120)
 	private String code;
 
-	@Column(nullable = false, length = 120)
 	private String name;
 
-	@Column(nullable = false, length = 120)
 	private String resource;
 
-	@Column(nullable = false, length = 40)
 	private String action;
 
 	protected Permission() {

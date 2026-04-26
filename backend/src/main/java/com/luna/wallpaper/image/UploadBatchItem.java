@@ -3,77 +3,58 @@ package com.luna.wallpaper.image;
 import java.time.LocalDateTime;
 import java.util.UUID;
 
-import jakarta.persistence.Column;
-import jakarta.persistence.Entity;
-import jakarta.persistence.Id;
-import jakarta.persistence.PrePersist;
-import jakarta.persistence.PreUpdate;
-import jakarta.persistence.Table;
+import com.baomidou.mybatisplus.annotation.FieldFill;
+import com.baomidou.mybatisplus.annotation.IdType;
+import com.baomidou.mybatisplus.annotation.TableField;
+import com.baomidou.mybatisplus.annotation.TableId;
+import com.baomidou.mybatisplus.annotation.TableName;
 
-@Entity
-@Table(name = "upload_batch_items")
+@TableName("upload_batch_items")
 class UploadBatchItem {
 
-	@Id
-	@Column(nullable = false, length = 36)
+	@TableId(type = IdType.INPUT)
 	private String id;
 
-	@Column(name = "batch_id", nullable = false, length = 36)
 	private String batchId;
 
-	@Column(name = "image_id", length = 36)
 	private String imageId;
 
-	@Column(name = "candidate_image_id", length = 36)
 	private String candidateImageId;
 
-	@Column(name = "original_filename", nullable = false)
 	private String originalFilename;
 
-	@Column(nullable = false, length = 64)
 	private String sha256 = "";
 
-	@Column(name = "mime_type", length = 120)
 	private String mimeType;
 
-	@Column(name = "size_bytes")
 	private Long sizeBytes;
 
 	private Integer width;
 
 	private Integer height;
 
-	@Column(length = 120)
 	private String bucket;
 
-	@Column(name = "original_object_key", length = 512)
 	private String originalObjectKey;
 
-	@Column(name = "thumbnail_object_key", length = 512)
 	private String thumbnailObjectKey;
 
-	@Column(name = "high_preview_object_key", length = 512)
 	private String highPreviewObjectKey;
 
-	@Column(name = "standard_preview_object_key", length = 512)
 	private String standardPreviewObjectKey;
 
-	@Column(nullable = false, length = 24)
 	private String status = "PROCESSING";
 
-	@Column(name = "progress_percent", nullable = false)
 	private int progressPercent;
 
-	@Column(name = "retry_count", nullable = false)
 	private int retryCount;
 
-	@Column(name = "error_message", length = 1000)
 	private String errorMessage;
 
-	@Column(name = "created_at", nullable = false)
+	@TableField(fill = FieldFill.INSERT)
 	private LocalDateTime createdAt;
 
-	@Column(name = "updated_at", nullable = false)
+	@TableField(fill = FieldFill.INSERT_UPDATE)
 	private LocalDateTime updatedAt;
 
 	protected UploadBatchItem() {
@@ -83,18 +64,6 @@ class UploadBatchItem {
 		this.id = UUID.randomUUID().toString();
 		this.batchId = batchId;
 		this.originalFilename = originalFilename;
-	}
-
-	@PrePersist
-	void prePersist() {
-		LocalDateTime now = LocalDateTime.now();
-		this.createdAt = now;
-		this.updatedAt = now;
-	}
-
-	@PreUpdate
-	void preUpdate() {
-		this.updatedAt = LocalDateTime.now();
 	}
 
 	String id() { return id; }

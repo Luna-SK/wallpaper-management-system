@@ -15,15 +15,6 @@ spring:
       host: ${REDIS_HOST}
       port: ${REDIS_PORT}
       password: ${REDIS_PASSWORD:}
-  jpa:
-    hibernate:
-      ddl-auto: validate
-    open-in-view: false
-    properties:
-      hibernate:
-        format_sql: true
-        jdbc:
-          time_zone: Asia/Shanghai
   liquibase:
     change-log: classpath:/db/changelog/db.changelog-master.yaml
   servlet:
@@ -62,3 +53,13 @@ app:
     bucket-thumbnail: ${RUSTFS_BUCKET_THUMBNAIL}
     bucket-watermark: ${RUSTFS_BUCKET_WATERMARK}
     bucket-audit: ${RUSTFS_BUCKET_AUDIT}
+
+mybatis-plus:
+  global-config:
+    banner: false
+    enable-sql-runner: false
+    db-config:
+      id-type: input
+  configuration:
+    map-underscore-to-camel-case: true
+    default-enum-type-handler: org.apache.ibatis.type.EnumTypeHandler

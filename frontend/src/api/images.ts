@@ -8,7 +8,9 @@ export interface ImageCategory {
 
 export interface ImageTag {
   id: string
-  categoryId: string
+  categoryId?: string | null
+  groupId: string
+  groupName: string | null
   name: string
 }
 

@@ -1,11 +1,10 @@
 import { defineStore } from 'pinia'
 import { computed, ref } from 'vue'
 import { login as loginApi } from '../api/auth'
-
-const TOKEN_KEY = 'wzut-wallpaper-token'
+import { clearStoredToken, getStoredToken, setStoredToken } from './authToken'
 
 export const useAuthStore = defineStore('auth', () => {
-  const token = ref(localStorage.getItem(TOKEN_KEY) ?? '')
+  const token = ref(getStoredToken())
   const username = ref('admin')
 
   const isAuthenticated = computed(() => token.value.length > 0)
@@ -14,12 +13,12 @@ export const useAuthStore = defineStore('auth', () => {
     const data = await loginApi(nextUsername, password)
     username.value = data.username
     token.value = data.accessToken
-    localStorage.setItem(TOKEN_KEY, token.value)
+    setStoredToken(token.value)
   }
 
   function logout() {
     token.value = ''
-    localStorage.removeItem(TOKEN_KEY)
+    clearStoredToken()
   }
 
   return { token, username, isAuthenticated, login, logout }

@@ -7,3 +7,9 @@ databaseChangeLog:
       file: db/changelog/003-functional-api-support.yaml
   - include:
       file: db/changelog/004-single-image-category.yaml
+  - include:
+      file: db/changelog/005-mybatis-plus-schema-refine.yaml
+  - include:
+      file: db/changelog/006-tag-groups-taxonomy-refine.yaml
+  - include:
+      file: db/changelog/007-tag-group-disable-consistency.yaml

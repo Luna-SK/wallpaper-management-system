@@ -2,67 +2,53 @@ package com.luna.wallpaper.image;
 
 import java.time.LocalDateTime;
 import java.util.Collection;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.UUID;
 
-import jakarta.persistence.Column;
-import jakarta.persistence.Entity;
-import jakarta.persistence.Id;
-import jakarta.persistence.PrePersist;
-import jakarta.persistence.PreUpdate;
-import jakarta.persistence.Table;
+import com.baomidou.mybatisplus.annotation.FieldFill;
+import com.baomidou.mybatisplus.annotation.IdType;
+import com.baomidou.mybatisplus.annotation.TableField;
+import com.baomidou.mybatisplus.annotation.TableId;
+import com.baomidou.mybatisplus.annotation.TableName;
 
-@Entity
-@Table(name = "upload_batches")
+@TableName("upload_batches")
 class UploadBatch {
 
-	@Id
-	@Column(nullable = false, length = 36)
+	@TableId(type = IdType.INPUT)
 	private String id;
 
-	@Column(nullable = false, length = 24)
 	private String status = "CREATED";
 
-	@Column(nullable = false, length = 16)
 	private String mode = "BATCH";
 
-	@Column(name = "category_id", length = 36)
 	private String categoryId;
 
-	@Column(name = "tag_ids", length = 2000)
-	private String tagIds;
+	@TableField(exist = false)
+	private List<String> tagIds = List.of();
 
-	@Column(name = "total_count", nullable = false)
 	private int totalCount;
 
-	@Column(name = "success_count", nullable = false)
 	private int successCount;
 
-	@Column(name = "failed_count", nullable = false)
 	private int failedCount;
 
-	@Column(name = "duplicate_count", nullable = false)
 	private int duplicateCount;
 
-	@Column(name = "progress_percent", nullable = false)
 	private int progressPercent;
 
-	@Column(name = "created_by", length = 36)
 	private String createdBy;
 
-	@Column(name = "created_at", nullable = false)
+	@TableField(fill = FieldFill.INSERT)
 	private LocalDateTime createdAt;
 
-	@Column(name = "updated_at", nullable = false)
+	@TableField(fill = FieldFill.INSERT_UPDATE)
 	private LocalDateTime updatedAt;
 
-	@Column(name = "finished_at")
 	private LocalDateTime finishedAt;
 
-	@Column(name = "expires_at")
 	private LocalDateTime expiresAt;
 
-	@Column(name = "confirmed_at")
 	private LocalDateTime confirmedAt;
 
 	protected UploadBatch() {
@@ -77,20 +63,8 @@ class UploadBatch {
 		this.mode = mode == null || mode.isBlank() ? "BATCH" : mode.trim().toUpperCase();
 		this.totalCount = totalCount;
 		this.categoryId = categoryId;
-		this.tagIds = tagIds == null ? "" : String.join(",", tagIds);
+		this.tagIds = normalizeTagIds(tagIds);
 		this.expiresAt = LocalDateTime.now().plusHours(24);
-	}
-
-	@PrePersist
-	void prePersist() {
-		LocalDateTime now = LocalDateTime.now();
-		this.createdAt = now;
-		this.updatedAt = now;
-	}
-
-	@PreUpdate
-	void preUpdate() {
-		this.updatedAt = LocalDateTime.now();
 	}
 
 	String id() { return id; }
@@ -98,12 +72,7 @@ class UploadBatch {
 	String mode() { return mode; }
 	String categoryId() { return categoryId; }
 	List<String> tagIds() {
-		if (tagIds == null || tagIds.isBlank()) {
-			return List.of();
-		}
-		return java.util.Arrays.stream(tagIds.split(","))
-				.filter(tagId -> !tagId.isBlank())
-				.toList();
+		return tagIds;
 	}
 	int totalCount() { return totalCount; }
 	int successCount() { return successCount; }
@@ -152,5 +121,21 @@ class UploadBatch {
 
 	boolean isTerminal() {
 		return "CONFIRMED".equals(status) || "CANCELLED".equals(status) || "EXPIRED".equals(status);
+	}
+
+	void replaceTagIds(Collection<String> tagIds) {
+		this.tagIds = normalizeTagIds(tagIds);
+	}
+
+	private static List<String> normalizeTagIds(Collection<String> tagIds) {
+		if (tagIds == null || tagIds.isEmpty()) {
+			return List.of();
+		}
+		return tagIds.stream()
+				.filter(tagId -> tagId != null && !tagId.isBlank())
+				.map(String::trim)
+				.collect(java.util.stream.Collectors.toCollection(LinkedHashSet::new))
+				.stream()
+				.toList();
 	}
 }

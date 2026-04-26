@@ -5,23 +5,21 @@ import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.util.List;
 
-import org.springframework.data.domain.Page;
-import org.springframework.data.domain.PageRequest;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 @Service
 public class AuditLogService {
 
-	private final AuditLogRepository repository;
+	private final AuditLogMapper mapper;
 
-	AuditLogService(AuditLogRepository repository) {
-		this.repository = repository;
+	AuditLogService(AuditLogMapper mapper) {
+		this.mapper = mapper;
 	}
 
 	@Transactional
 	public void record(String action, String targetType, String targetId, String detailJson) {
-		repository.save(new AuditLog(action, targetType, targetId, detailJson));
+		mapper.insert(new AuditLog(action, targetType, targetId, detailJson));
 	}
 
 	@Transactional(readOnly = true)
@@ -32,9 +30,10 @@ public class AuditLogService {
 		LocalDateTime endAt = endAt(endDate);
 		int safePage = Math.max(1, page);
 		int safeSize = Math.min(Math.max(1, size), 100);
-		Page<AuditLog> result = repository.search(query, startAt, endAt, PageRequest.of(safePage - 1, safeSize));
-		return new AuditLogPageResponse(result.getContent().stream().map(AuditLogResponse::from).toList(),
-				safePage, safeSize, result.getTotalElements());
+		long total = mapper.countSearch(query, startAt, endAt);
+		List<AuditLog> logs = total == 0 ? List.of() : mapper.search(query, startAt, endAt,
+				(long) (safePage - 1) * safeSize, safeSize);
+		return new AuditLogPageResponse(logs.stream().map(AuditLogResponse::from).toList(), safePage, safeSize, total);
 	}
 
 	@Transactional(readOnly = true)
@@ -42,7 +41,7 @@ public class AuditLogService {
 		validateDateRange(startDate, endDate);
 		LocalDateTime startAt = startAt(startDate);
 		LocalDateTime endAt = endAt(endDate);
-		List<AuditLog> logs = repository.findForExport(normalizeKeyword(keyword), startAt, endAt);
+		List<AuditLog> logs = mapper.selectForExport(normalizeKeyword(keyword), startAt, endAt);
 		return toCsv(logs).getBytes(StandardCharsets.UTF_8);
 	}
 
