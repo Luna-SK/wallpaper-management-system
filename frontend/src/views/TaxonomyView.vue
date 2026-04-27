@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, reactive, ref } from 'vue'
+import { computed, onMounted, reactive, ref, watch } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Plus, Search } from '@element-plus/icons-vue'
 import { isAxiosError } from 'axios'
@@ -40,6 +40,8 @@ const tags = ref<Tag[]>([])
 const activeGroupId = ref('')
 const categoryKeyword = ref('')
 const tagKeyword = ref('')
+const categoryPagination = reactive({ page: 1, size: 20 })
+const tagPagination = reactive({ page: 1, size: 20 })
 const categoryDialogVisible = ref(false)
 const groupDialogVisible = ref(false)
 const tagDialogVisible = ref(false)
@@ -72,6 +74,34 @@ const tagRows = computed(() => {
     const matchesQuery = !query || tag.name.includes(query) || (tag.groupName ?? '').includes(query)
     return matchesGroup && matchesScope && matchesQuery
   })
+})
+
+function maxPage(total: number, pageSize: number) {
+  return Math.max(1, Math.ceil(total / pageSize))
+}
+
+function clampPage(page: number, pageSize: number, total: number) {
+  return Math.min(Math.max(page, 1), maxPage(total, pageSize))
+}
+
+function clampCategoryPage() {
+  categoryPagination.page = clampPage(categoryPagination.page, categoryPagination.size, categoryRows.value.length)
+}
+
+function clampTagPage() {
+  tagPagination.page = clampPage(tagPagination.page, tagPagination.size, tagRows.value.length)
+}
+
+const pagedCategoryRows = computed(() => {
+  const page = clampPage(categoryPagination.page, categoryPagination.size, categoryRows.value.length)
+  const start = (page - 1) * categoryPagination.size
+  return categoryRows.value.slice(start, start + categoryPagination.size)
+})
+
+const pagedTagRows = computed(() => {
+  const page = clampPage(tagPagination.page, tagPagination.size, tagRows.value.length)
+  const start = (page - 1) * tagPagination.size
+  return tagRows.value.slice(start, start + tagPagination.size)
 })
 
 function errorMessage(error: unknown, fallback: string) {
@@ -126,6 +156,28 @@ function syncActiveGroup() {
 function selectGroup(id: string) {
   activeGroupId.value = id
   tagKeyword.value = ''
+}
+
+function handleCategoryPageSizeChange(size: number) {
+  categoryPagination.size = size
+  categoryPagination.page = 1
+  clampCategoryPage()
+}
+
+function handleCategoryPageChange(page: number) {
+  categoryPagination.page = page
+  clampCategoryPage()
+}
+
+function handleTagPageSizeChange(size: number) {
+  tagPagination.size = size
+  tagPagination.page = 1
+  clampTagPage()
+}
+
+function handleTagPageChange(page: number) {
+  tagPagination.page = page
+  clampTagPage()
 }
 
 function openCategory(row?: Category) {
@@ -300,45 +352,67 @@ function handleGroupScopeChange() {
   syncActiveGroup()
 }
 
+watch([categoryKeyword, categoryScope], () => {
+  categoryPagination.page = 1
+})
+
+watch([activeGroupId, tagKeyword, tagScope], () => {
+  tagPagination.page = 1
+})
+
+watch(() => [categoryRows.value.length, categoryPagination.size] as const, clampCategoryPage)
+watch(() => [tagRows.value.length, tagPagination.size] as const, clampTagPage)
+
 onMounted(refresh)
 </script>
 
 <template>
   <section class="workspace-page">
-    <el-tabs v-model="activeTab" class="surface surface-pad workspace-scroll-region">
+    <el-tabs v-model="activeTab" class="surface surface-pad workspace-fixed-tabs">
       <el-tab-pane label="分类" name="categories">
-        <div class="toolbar-row">
-          <el-radio-group v-model="categoryScope">
-            <el-radio-button label="ACTIVE">在用</el-radio-button>
-            <el-radio-button label="DISABLED">已停用</el-radio-button>
-          </el-radio-group>
-          <el-input v-model="categoryKeyword" placeholder="搜索分类" :prefix-icon="Search" clearable style="max-width: 320px" />
-          <el-button type="primary" :icon="Plus" @click="openCategory()">新增分类</el-button>
+        <div class="workspace-tab-panel">
+          <div class="toolbar-row">
+            <el-radio-group v-model="categoryScope">
+              <el-radio-button label="ACTIVE">启用</el-radio-button>
+              <el-radio-button label="DISABLED">已停用</el-radio-button>
+            </el-radio-group>
+            <el-input v-model="categoryKeyword" placeholder="搜索分类" :prefix-icon="Search" clearable style="max-width: 320px" />
+            <el-button type="primary" :icon="Plus" @click="openCategory()">新增分类</el-button>
+          </div>
+          <div class="workspace-table-scroll-region">
+            <el-table v-loading="loading" :data="pagedCategoryRows" stripe>
+              <el-table-column prop="name" label="分类名称" min-width="180" />
+              <el-table-column prop="code" label="编码" min-width="160" />
+              <el-table-column prop="imageCount" label="图片数" width="110" />
+              <el-table-column prop="sortOrder" label="排序" width="100" />
+              <el-table-column label="操作" width="240" fixed="right">
+                <template #default="{ row }">
+                  <template v-if="row.enabled">
+                    <el-button link type="primary" @click="openCategory(row)">编辑</el-button>
+                    <el-button link type="warning" @click="disableCategory(row)">停用</el-button>
+                  </template>
+                  <template v-else>
+                    <el-button link type="primary" @click="openCategory(row)">编辑</el-button>
+                    <el-button link type="primary" @click="restoreCategoryRow(row)">恢复</el-button>
+                    <el-button link type="danger" @click="purgeWithConfirm(`分类「${row.name}」`, (force) => purgeCategory(row.id, force))">彻底删除</el-button>
+                  </template>
+                </template>
+              </el-table-column>
+            </el-table>
+          </div>
+          <div class="pagination-row workspace-pagination-row">
+            <el-pagination
+              v-model:current-page="categoryPagination.page"
+              v-model:page-size="categoryPagination.size"
+              :page-sizes="[20, 50, 100]"
+              :total="categoryRows.length"
+              background
+              layout="total, sizes, prev, pager, next, jumper"
+              @size-change="handleCategoryPageSizeChange"
+              @current-change="handleCategoryPageChange"
+            />
+          </div>
         </div>
-        <el-table v-loading="loading" :data="categoryRows" stripe height="560">
-          <el-table-column prop="name" label="分类名称" min-width="180" />
-          <el-table-column prop="code" label="编码" min-width="160" />
-          <el-table-column prop="imageCount" label="图片数" width="110" />
-          <el-table-column prop="sortOrder" label="排序" width="100" />
-          <el-table-column label="状态" width="110">
-            <template #default="{ row }">
-              <el-tag :type="row.enabled ? 'success' : 'info'">{{ row.enabled ? '启用' : '停用' }}</el-tag>
-            </template>
-          </el-table-column>
-          <el-table-column label="操作" width="240" fixed="right">
-            <template #default="{ row }">
-              <template v-if="row.enabled">
-                <el-button link type="primary" @click="openCategory(row)">编辑</el-button>
-                <el-button link type="warning" @click="disableCategory(row)">停用</el-button>
-              </template>
-              <template v-else>
-                <el-button link type="primary" @click="openCategory(row)">编辑</el-button>
-                <el-button link type="primary" @click="restoreCategoryRow(row)">恢复</el-button>
-                <el-button link type="danger" @click="purgeWithConfirm(`分类「${row.name}」`, (force) => purgeCategory(row.id, force))">彻底删除</el-button>
-              </template>
-            </template>
-          </el-table-column>
-        </el-table>
       </el-tab-pane>
 
       <el-tab-pane label="标签" name="tags">
@@ -349,7 +423,7 @@ onMounted(refresh)
               <el-button link type="primary" @click="openGroup()">新增</el-button>
             </div>
             <el-radio-group v-model="groupScope" class="scope-toggle" @change="handleGroupScopeChange">
-              <el-radio-button label="ACTIVE">在用</el-radio-button>
+              <el-radio-button label="ACTIVE">启用</el-radio-button>
               <el-radio-button label="DISABLED">已停用</el-radio-button>
             </el-radio-group>
             <button
@@ -387,35 +461,44 @@ onMounted(refresh)
 
             <div class="toolbar-row">
               <el-radio-group v-model="tagScope">
-                <el-radio-button label="ACTIVE">在用</el-radio-button>
+                <el-radio-button label="ACTIVE">启用</el-radio-button>
                 <el-radio-button label="DISABLED">已停用</el-radio-button>
               </el-radio-group>
               <el-input v-model="tagKeyword" placeholder="搜索标签" :prefix-icon="Search" clearable style="max-width: 320px" />
             </div>
 
-            <el-table :data="tagRows" stripe height="480">
-              <el-table-column prop="name" label="标签名称" min-width="180" />
-              <el-table-column prop="groupName" label="标签组" min-width="140" />
-              <el-table-column prop="sortOrder" label="排序" width="100" />
-              <el-table-column label="状态" width="110">
-                <template #default="{ row }">
-                  <el-tag :type="row.enabled ? 'success' : 'info'">{{ row.enabled ? '启用' : '停用' }}</el-tag>
-                </template>
-              </el-table-column>
-              <el-table-column label="操作" width="220" fixed="right">
-                <template #default="{ row }">
-                  <template v-if="row.enabled">
-                    <el-button link type="primary" @click="openTag(row)">编辑</el-button>
-                    <el-button link type="warning" @click="disableTag(row)">停用</el-button>
+            <div class="workspace-table-scroll-region">
+              <el-table :data="pagedTagRows" stripe>
+                <el-table-column prop="name" label="标签名称" min-width="180" />
+                <el-table-column prop="groupName" label="标签组" min-width="140" />
+                <el-table-column prop="sortOrder" label="排序" width="100" />
+                <el-table-column label="操作" width="220" fixed="right">
+                  <template #default="{ row }">
+                    <template v-if="row.enabled">
+                      <el-button link type="primary" @click="openTag(row)">编辑</el-button>
+                      <el-button link type="warning" @click="disableTag(row)">停用</el-button>
+                    </template>
+                    <template v-else>
+                      <el-button link type="primary" @click="openTag(row)">编辑</el-button>
+                      <el-button link type="primary" @click="restoreTagRow(row)">恢复</el-button>
+                      <el-button link type="danger" @click="purgeWithConfirm(`标签「${row.name}」`, (force) => purgeTag(row.id, force))">彻底删除</el-button>
+                    </template>
                   </template>
-                  <template v-else>
-                    <el-button link type="primary" @click="openTag(row)">编辑</el-button>
-                    <el-button link type="primary" @click="restoreTagRow(row)">恢复</el-button>
-                    <el-button link type="danger" @click="purgeWithConfirm(`标签「${row.name}」`, (force) => purgeTag(row.id, force))">彻底删除</el-button>
-                  </template>
-                </template>
-              </el-table-column>
-            </el-table>
+                </el-table-column>
+              </el-table>
+            </div>
+            <div class="pagination-row workspace-pagination-row">
+              <el-pagination
+                v-model:current-page="tagPagination.page"
+                v-model:page-size="tagPagination.size"
+                :page-sizes="[20, 50, 100]"
+                :total="tagRows.length"
+                background
+                layout="total, sizes, prev, pager, next, jumper"
+                @size-change="handleTagPageSizeChange"
+                @current-change="handleTagPageChange"
+              />
+            </div>
           </div>
         </div>
       </el-tab-pane>
@@ -470,5 +553,114 @@ onMounted(refresh)
 .scope-toggle {
   width: 100%;
   margin-bottom: 12px;
+}
+
+.taxonomy-workspace {
+  display: flex;
+  height: 100%;
+  min-height: 0;
+  gap: 16px;
+  overflow: hidden;
+}
+
+.taxonomy-categories {
+  display: flex;
+  flex: 0 0 260px;
+  flex-direction: column;
+  min-height: 0;
+  overflow-y: auto;
+  padding-right: 4px;
+}
+
+.taxonomy-tags {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.taxonomy-detail-head {
+  flex: 0 0 auto;
+}
+
+.taxonomy-pane-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 12px;
+}
+
+.category-option {
+  display: flex;
+  width: 100%;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  border: 0;
+  border-radius: 8px;
+  padding: 10px 12px;
+  background: transparent;
+  color: #17201f;
+  cursor: pointer;
+  text-align: left;
+}
+
+.category-option.active {
+  background: #eaf5f2;
+  color: #0d433c;
+}
+
+.category-option span {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+}
+
+.category-option strong,
+.category-option small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.category-option small {
+  color: #66736f;
+}
+
+.category-option em {
+  flex: 0 0 auto;
+  font-style: normal;
+  color: #66736f;
+}
+
+.taxonomy-detail-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 14px;
+}
+
+.taxonomy-detail-head h2 {
+  margin: 0;
+  font-size: 20px;
+}
+
+.taxonomy-detail-head p {
+  margin: 4px 0 0;
+  color: #66736f;
+}
+
+@media (max-width: 900px) {
+  .taxonomy-workspace {
+    flex-direction: column;
+  }
+
+  .taxonomy-categories {
+    flex: 0 0 auto;
+    max-height: 220px;
+  }
 }
 </style>

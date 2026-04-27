@@ -294,18 +294,6 @@ function formatDimensions(row: ImageRecord) {
   return '未知'
 }
 
-function statusLabel(status: ImageStatus | 'DISABLED') {
-  if (status === 'DELETED') return '已停用'
-  if (status === 'DISABLED') return '停用'
-  return '启用'
-}
-
-function statusTagType(status: ImageStatus | 'DISABLED') {
-  if (status === 'DELETED') return 'info'
-  if (status === 'DISABLED') return 'warning'
-  return 'success'
-}
-
 function categoryText(row: ImageRecord) {
   return row.category?.name ?? '-'
 }
@@ -1979,7 +1967,7 @@ onBeforeUnmount(() => {
     <div class="surface surface-pad image-library-panel">
       <div class="image-scope-row">
         <el-radio-group v-model="imageScope" @change="handleImageScopeChange">
-          <el-radio-button label="ACTIVE">在库图片</el-radio-button>
+          <el-radio-button label="ACTIVE">启用</el-radio-button>
           <el-radio-button label="DELETED">已停用</el-radio-button>
         </el-radio-group>
         <el-button v-if="canUpload" type="primary" :icon="UploadFilled" @click="openUploadDialog">上传图片</el-button>
@@ -2098,7 +2086,6 @@ onBeforeUnmount(() => {
               <div class="image-grid-body">
                 <div class="image-grid-title">
                   <strong :title="row.title">{{ row.title }}</strong>
-                  <el-tag :type="statusTagType(row.status)" effect="light">{{ statusLabel(row.status) }}</el-tag>
                 </div>
                 <span class="image-grid-file" :title="row.originalFilename">{{ row.originalFilename }} · {{ formatBytes(row.sizeBytes) }}</span>
                 <div
@@ -2238,11 +2225,6 @@ onBeforeUnmount(() => {
             <template #default="{ row }">
               <el-tag v-for="tag in row.tags" :key="tag.id" class="tag-chip" effect="light">{{ tag.name }}</el-tag>
               <span v-if="row.tags.length === 0">-</span>
-            </template>
-          </el-table-column>
-          <el-table-column label="状态" width="110">
-            <template #default="{ row }">
-              <el-tag :type="statusTagType(row.status)" effect="light">{{ statusLabel(row.status) }}</el-tag>
             </template>
           </el-table-column>
           <el-table-column label="数据" width="130">

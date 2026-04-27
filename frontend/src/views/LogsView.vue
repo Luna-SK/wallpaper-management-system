@@ -328,19 +328,6 @@ onMounted(refreshAuditState)
             <el-table-column prop="time" label="时间" width="180" />
             <el-table-column prop="detailJson" label="详情" min-width="220" show-overflow-tooltip />
           </el-table>
-
-          <div class="pagination-row">
-            <el-pagination
-              v-model:current-page="auditPagination.page"
-              v-model:page-size="auditPagination.size"
-              :page-sizes="[20, 50, 100]"
-              :total="auditPagination.total"
-              background
-              layout="total, sizes, prev, pager, next, jumper"
-              @size-change="handleAuditPageSizeChange"
-              @current-change="handleAuditPageChange"
-            />
-          </div>
         </div>
 
         <div v-else class="audit-panel">
@@ -359,20 +346,32 @@ onMounted(refreshAuditState)
             </el-table-column>
             <el-table-column prop="objectKey" label="归档对象" min-width="360" show-overflow-tooltip />
           </el-table>
-
-          <div class="pagination-row">
-            <el-pagination
-              v-model:current-page="archivePagination.page"
-              v-model:page-size="archivePagination.size"
-              :page-sizes="[20, 50, 100]"
-              :total="archivePagination.total"
-              background
-              layout="total, sizes, prev, pager, next, jumper"
-              @size-change="handleArchivePageSizeChange"
-              @current-change="handleArchivePageChange"
-            />
-          </div>
         </div>
+      </div>
+
+      <div v-if="auditTab === 'logs'" class="pagination-row workspace-pagination-row">
+        <el-pagination
+          v-model:current-page="auditPagination.page"
+          v-model:page-size="auditPagination.size"
+          :page-sizes="[20, 50, 100]"
+          :total="auditPagination.total"
+          background
+          layout="total, sizes, prev, pager, next, jumper"
+          @size-change="handleAuditPageSizeChange"
+          @current-change="handleAuditPageChange"
+        />
+      </div>
+      <div v-else class="pagination-row workspace-pagination-row">
+        <el-pagination
+          v-model:current-page="archivePagination.page"
+          v-model:page-size="archivePagination.size"
+          :page-sizes="[20, 50, 100]"
+          :total="archivePagination.total"
+          background
+          layout="total, sizes, prev, pager, next, jumper"
+          @size-change="handleArchivePageSizeChange"
+          @current-change="handleArchivePageChange"
+        />
       </div>
     </div>
   </section>

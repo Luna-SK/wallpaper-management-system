@@ -33,15 +33,15 @@ interface ApiErrorBody {
   data?: RbacReferenceImpact
 }
 
-type UserStatusFilter = 'ALL' | UserStatus
-type RoleStatusFilter = 'ALL' | 'ENABLED' | 'DISABLED'
+type UserStatusFilter = UserStatus
+type RoleStatusFilter = 'ENABLED' | 'DISABLED'
 
 const auth = useAuthStore()
 const loading = ref(false)
 const userKeyword = ref('')
 const roleKeyword = ref('')
-const userStatusFilter = ref<UserStatusFilter>('ALL')
-const roleStatusFilter = ref<RoleStatusFilter>('ALL')
+const userStatusFilter = ref<UserStatusFilter>('ACTIVE')
+const roleStatusFilter = ref<RoleStatusFilter>('ENABLED')
 const users = ref<User[]>([])
 const roles = ref<Role[]>([])
 const permissions = ref<Permission[]>([])
@@ -71,7 +71,7 @@ const canManageRoles = computed(() => auth.hasPermission('role:manage'))
 const filteredUsers = computed(() => {
   const query = userKeyword.value.trim()
   return users.value.filter((user) => {
-    const matchesStatus = userStatusFilter.value === 'ALL' || user.status === userStatusFilter.value
+    const matchesStatus = user.status === userStatusFilter.value
     const matchesKeyword = !query || [user.username, user.displayName, user.roles.map((role) => role.name).join(',')].join(' ').includes(query)
     return matchesStatus && matchesKeyword
   })
@@ -80,8 +80,7 @@ const filteredUsers = computed(() => {
 const filteredRoles = computed(() => {
   const query = roleKeyword.value.trim()
   return roles.value.filter((role) => {
-    const matchesStatus = roleStatusFilter.value === 'ALL'
-      || (roleStatusFilter.value === 'ENABLED' ? role.enabled : !role.enabled)
+    const matchesStatus = roleStatusFilter.value === 'ENABLED' ? role.enabled : !role.enabled
     const matchesKeyword = !query || `${role.code} ${role.name}`.includes(query)
     return matchesStatus && matchesKeyword
   })
@@ -438,45 +437,42 @@ onMounted(refresh)
 
 <template>
   <section class="workspace-page">
-    <div v-loading="loading" class="surface surface-pad workspace-scroll-region">
-      <el-tabs>
+    <div v-loading="loading" class="surface surface-pad workspace-fixed-panel user-permission-panel">
+      <el-tabs class="workspace-fixed-tabs">
         <el-tab-pane v-if="canManageUsers" label="用户">
-          <div class="toolbar-row">
-            <el-radio-group v-model="userStatusFilter">
-              <el-radio-button label="ALL">全部</el-radio-button>
-              <el-radio-button label="ACTIVE">启用</el-radio-button>
-              <el-radio-button label="DISABLED">停用</el-radio-button>
-            </el-radio-group>
-            <el-input v-model="userKeyword" placeholder="搜索用户名、姓名或角色" :prefix-icon="Search" style="max-width: 320px" />
-            <el-button type="primary" :icon="Plus" @click="openUser()">新增用户</el-button>
-          </div>
+          <div class="workspace-tab-panel">
+            <div class="toolbar-row">
+              <el-radio-group v-model="userStatusFilter">
+                <el-radio-button label="ACTIVE">启用</el-radio-button>
+                <el-radio-button label="DISABLED">已停用</el-radio-button>
+              </el-radio-group>
+              <el-input v-model="userKeyword" placeholder="搜索用户名、姓名或角色" :prefix-icon="Search" style="max-width: 320px" />
+              <el-button type="primary" :icon="Plus" @click="openUser()">新增用户</el-button>
+            </div>
 
-          <el-table :data="pagedUsers" stripe>
-            <el-table-column prop="username" label="用户名" width="160" />
-            <el-table-column prop="displayName" label="姓名" width="160" />
-            <el-table-column label="角色" min-width="220">
-              <template #default="{ row }">
-                <el-tag v-for="role in row.roles" :key="role.id" style="margin-right: 6px">{{ role.name }}</el-tag>
-              </template>
-            </el-table-column>
-            <el-table-column label="状态" width="120">
-              <template #default="{ row }">
-                <el-tag :type="row.status === 'ACTIVE' ? 'success' : 'info'">{{ row.status === 'ACTIVE' ? '启用' : '停用' }}</el-tag>
-              </template>
-            </el-table-column>
-            <el-table-column label="操作" width="380" fixed="right">
-              <template #default="{ row }">
-                <el-button link type="primary" @click="openUser(row)">编辑</el-button>
-                <el-button link type="primary" @click="openAssignRoles(row)">分配角色</el-button>
-                <el-button link type="primary" @click="openResetPassword(row)">重置密码</el-button>
-                <el-button link :type="row.status === 'ACTIVE' ? 'warning' : 'success'" @click="toggleUser(row)">
-                  {{ row.status === 'ACTIVE' ? '停用' : '启用' }}
-                </el-button>
-                <el-button v-if="row.status === 'DISABLED'" link type="danger" @click="purgeUserRow(row)">彻底删除</el-button>
-              </template>
-            </el-table-column>
-          </el-table>
-          <div class="pagination-row">
+            <div class="workspace-table-scroll-region">
+              <el-table :data="pagedUsers" stripe>
+                <el-table-column prop="username" label="用户名" width="160" />
+                <el-table-column prop="displayName" label="姓名" width="160" />
+                <el-table-column label="角色" min-width="220">
+                  <template #default="{ row }">
+                    <el-tag v-for="role in row.roles" :key="role.id" style="margin-right: 6px">{{ role.name }}</el-tag>
+                  </template>
+                </el-table-column>
+                <el-table-column label="操作" width="380" fixed="right">
+                  <template #default="{ row }">
+                    <el-button link type="primary" @click="openUser(row)">编辑</el-button>
+                    <el-button link type="primary" @click="openAssignRoles(row)">分配角色</el-button>
+                    <el-button link type="primary" @click="openResetPassword(row)">重置密码</el-button>
+                    <el-button link :type="row.status === 'ACTIVE' ? 'warning' : 'success'" @click="toggleUser(row)">
+                      {{ row.status === 'ACTIVE' ? '停用' : '启用' }}
+                    </el-button>
+                    <el-button v-if="row.status === 'DISABLED'" link type="danger" @click="purgeUserRow(row)">彻底删除</el-button>
+                  </template>
+                </el-table-column>
+              </el-table>
+            </div>
+            <div class="pagination-row workspace-pagination-row">
             <el-pagination
               v-model:current-page="userPagination.page"
               v-model:page-size="userPagination.size"
@@ -487,65 +483,73 @@ onMounted(refresh)
               @size-change="handleUserPageSizeChange"
               @current-change="handleUserPageChange"
             />
+            </div>
           </div>
         </el-tab-pane>
 
         <el-tab-pane v-if="canManageRoles" label="角色">
-          <div class="toolbar-row">
-            <el-radio-group v-model="roleStatusFilter">
-              <el-radio-button label="ALL">全部</el-radio-button>
-              <el-radio-button label="ENABLED">启用</el-radio-button>
-              <el-radio-button label="DISABLED">停用</el-radio-button>
-            </el-radio-group>
-            <el-input v-model="roleKeyword" placeholder="搜索角色编码或名称" :prefix-icon="Search" style="max-width: 320px" />
-            <el-button type="primary" :icon="Plus" @click="openRole()">新增角色</el-button>
-          </div>
+          <div class="workspace-tab-panel">
+            <div class="toolbar-row">
+              <el-radio-group v-model="roleStatusFilter">
+                <el-radio-button label="ENABLED">启用</el-radio-button>
+                <el-radio-button label="DISABLED">已停用</el-radio-button>
+              </el-radio-group>
+              <el-input v-model="roleKeyword" placeholder="搜索角色编码或名称" :prefix-icon="Search" style="max-width: 320px" />
+              <el-button type="primary" :icon="Plus" @click="openRole()">新增角色</el-button>
+            </div>
 
-          <el-table :data="pagedRoles" stripe>
-            <el-table-column prop="code" label="角色编码" width="160" />
-            <el-table-column prop="name" label="角色名称" width="160" />
-            <el-table-column label="权限摘要" min-width="420">
-              <template #default="{ row }">
-                <div class="permission-summary">
-                  <el-tag v-for="group in permissionSummaryGroups(row)" :key="group.resource" :type="group.type" effect="light" class="permission-summary-tag">
-                    <span class="permission-summary-resource">{{ group.label }}</span>
-                    <span class="permission-summary-actions">{{ group.actions.join(' / ') }}</span>
-                  </el-tag>
-                  <el-tag v-if="row.permissions.length === 0" type="info" effect="plain">未配置权限</el-tag>
-                </div>
-              </template>
-            </el-table-column>
-            <el-table-column prop="userCount" label="用户数" width="100" />
-            <el-table-column label="操作" width="280" fixed="right">
-              <template #default="{ row }">
-                <el-button link type="primary" @click="openRole(row)">编辑</el-button>
-                <el-button link type="primary" @click="openRolePermissions(row)">配置权限</el-button>
-                <el-button link :type="row.enabled ? 'warning' : 'success'" @click="toggleRole(row)">{{ row.enabled ? '停用' : '启用' }}</el-button>
-                <el-button v-if="!row.enabled" link type="danger" @click="purgeRoleRow(row)">彻底删除</el-button>
-              </template>
-            </el-table-column>
-          </el-table>
-          <div class="pagination-row">
-            <el-pagination
-              v-model:current-page="rolePagination.page"
-              v-model:page-size="rolePagination.size"
-              :page-sizes="[20, 50, 100]"
-              :total="filteredRoles.length"
-              background
-              layout="total, sizes, prev, pager, next, jumper"
-              @size-change="handleRolePageSizeChange"
-              @current-change="handleRolePageChange"
-            />
+            <div class="workspace-table-scroll-region">
+              <el-table :data="pagedRoles" stripe>
+                <el-table-column prop="code" label="角色编码" width="160" />
+                <el-table-column prop="name" label="角色名称" width="160" />
+                <el-table-column label="权限摘要" min-width="420">
+                  <template #default="{ row }">
+                    <div class="permission-summary">
+                      <el-tag v-for="group in permissionSummaryGroups(row)" :key="group.resource" :type="group.type" effect="light" class="permission-summary-tag">
+                        <span class="permission-summary-resource">{{ group.label }}</span>
+                        <span class="permission-summary-actions">{{ group.actions.join(' / ') }}</span>
+                      </el-tag>
+                      <el-tag v-if="row.permissions.length === 0" type="info" effect="plain">未配置权限</el-tag>
+                    </div>
+                  </template>
+                </el-table-column>
+                <el-table-column prop="userCount" label="用户数" width="100" />
+                <el-table-column label="操作" width="280" fixed="right">
+                  <template #default="{ row }">
+                    <el-button link type="primary" @click="openRole(row)">编辑</el-button>
+                    <el-button link type="primary" @click="openRolePermissions(row)">配置权限</el-button>
+                    <el-button link :type="row.enabled ? 'warning' : 'success'" @click="toggleRole(row)">{{ row.enabled ? '停用' : '启用' }}</el-button>
+                    <el-button v-if="!row.enabled" link type="danger" @click="purgeRoleRow(row)">彻底删除</el-button>
+                  </template>
+                </el-table-column>
+              </el-table>
+            </div>
+            <div class="pagination-row workspace-pagination-row">
+              <el-pagination
+                v-model:current-page="rolePagination.page"
+                v-model:page-size="rolePagination.size"
+                :page-sizes="[20, 50, 100]"
+                :total="filteredRoles.length"
+                background
+                layout="total, sizes, prev, pager, next, jumper"
+                @size-change="handleRolePageSizeChange"
+                @current-change="handleRolePageChange"
+              />
+            </div>
           </div>
         </el-tab-pane>
 
         <el-tab-pane v-if="canManageRoles" label="权限">
-          <el-table :data="permissions" stripe>
-            <el-table-column prop="code" label="权限编码" width="180" />
-            <el-table-column prop="name" label="权限名称" width="160" />
-            <el-table-column prop="resource" label="资源" width="140" />
-            <el-table-column prop="action" label="动作" width="140" />
-          </el-table>
+          <div class="workspace-tab-panel">
+            <div class="workspace-table-scroll-region">
+              <el-table :data="permissions" stripe>
+                <el-table-column prop="code" label="权限编码" width="180" />
+                <el-table-column prop="name" label="权限名称" width="160" />
+                <el-table-column prop="resource" label="资源" width="140" />
+                <el-table-column prop="action" label="动作" width="140" />
+              </el-table>
+            </div>
+          </div>
         </el-tab-pane>
       </el-tabs>
       <el-empty v-if="!canManageUsers && !canManageRoles" description="当前用户没有用户或角色管理权限" />

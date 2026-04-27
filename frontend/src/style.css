@@ -282,6 +282,67 @@ textarea {
   overflow-y: auto;
 }
 
+.workspace-fixed-panel {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.workspace-fixed-tabs {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.workspace-fixed-tabs > .el-tabs__header {
+  flex: 0 0 auto;
+}
+
+.workspace-fixed-tabs > .el-tabs__content {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.workspace-fixed-tabs > .el-tabs__content > .el-tab-pane {
+  height: 100%;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.workspace-tab-panel {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.workspace-table-scroll-region {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-x: hidden;
+  overflow-y: auto;
+  padding-right: 4px;
+}
+
+.workspace-table-scroll-region > .el-table {
+  width: 100%;
+}
+
+.workspace-pagination-row {
+  border-top: 1px solid #e2e8f0;
+  display: flex;
+  flex: 0 0 auto;
+  justify-content: flex-end;
+  margin-top: 12px;
+  padding-top: 12px;
+}
+
 .page-head {
   display: flex;
   align-items: flex-end;
@@ -318,6 +379,12 @@ textarea {
   align-items: center;
   justify-content: space-between;
   margin-bottom: 18px;
+}
+
+@media (max-width: 720px) {
+  .workspace-pagination-row {
+    justify-content: flex-start;
+  }
 }
 
 .metric-grid {
