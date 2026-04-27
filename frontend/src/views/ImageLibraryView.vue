@@ -2,7 +2,20 @@
 import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import type { TableInstance, UploadFile, UploadFiles, UploadUserFile } from 'element-plus'
-import { ArrowLeft, ArrowRight, Crop, Delete, Download, EditPen, RefreshLeft, RefreshRight, Search, UploadFilled, ZoomIn } from '@element-plus/icons-vue'
+import {
+  ArrowLeft,
+  ArrowRight,
+  Crop,
+  Delete,
+  Download,
+  EditPen,
+  RefreshLeft,
+  RefreshRight,
+  Search,
+  UploadFilled,
+  Warning,
+  ZoomIn,
+} from '@element-plus/icons-vue'
 import { isAxiosError } from 'axios'
 import {
   batchDisableImages,
@@ -1963,19 +1976,13 @@ onBeforeUnmount(() => {
 
 <template>
   <section class="workspace-page">
-    <div class="page-head">
-      <div>
-        <p>按关键词、分类、标签、上传者和时间范围检索图片。</p>
-      </div>
-      <el-button v-if="canUpload" type="primary" :icon="UploadFilled" @click="openUploadDialog">上传图片</el-button>
-    </div>
-
-    <div class="surface surface-pad workspace-scroll-region">
+    <div class="surface surface-pad image-library-panel">
       <div class="image-scope-row">
         <el-radio-group v-model="imageScope" @change="handleImageScopeChange">
           <el-radio-button label="ACTIVE">在库图片</el-radio-button>
           <el-radio-button label="DELETED">已停用</el-radio-button>
         </el-radio-group>
+        <el-button v-if="canUpload" type="primary" :icon="UploadFilled" @click="openUploadDialog">上传图片</el-button>
       </div>
 
       <div class="toolbar-row image-toolbar">
@@ -1995,10 +2002,12 @@ onBeforeUnmount(() => {
             <el-button @click="resetFilters">重置</el-button>
           </div>
         </div>
-        <el-radio-group v-model="displayMode" class="display-mode-toggle" @change="handleDisplayModeChange">
-          <el-radio-button label="grid">网格</el-radio-button>
-          <el-radio-button label="list">列表</el-radio-button>
-        </el-radio-group>
+        <div class="image-toolbar-actions">
+          <el-radio-group v-model="displayMode" class="display-mode-toggle" @change="handleDisplayModeChange">
+            <el-radio-button label="grid">网格</el-radio-button>
+            <el-radio-button label="list">列表</el-radio-button>
+          </el-radio-group>
+        </div>
       </div>
 
       <div class="batch-toolbar">
@@ -2028,9 +2037,9 @@ onBeforeUnmount(() => {
           </el-button>
           <el-button
             v-if="canDelete"
-            type="danger"
+            type="warning"
             plain
-            :icon="Delete"
+            :icon="Warning"
             :disabled="selectedRows.length === 0 || batchDownloadLoading"
             :loading="batchDisableLoading"
             @click="batchDisableSelected"
@@ -2071,156 +2080,240 @@ onBeforeUnmount(() => {
         </div>
       </div>
 
-      <div v-if="displayMode === 'grid'" v-loading="loading" class="image-grid-view">
-        <div v-if="rows.length" class="image-grid">
-          <article v-for="row in rows" :key="row.id" class="image-grid-card" :class="{ 'is-selected': isRowSelected(row) }">
-            <el-checkbox
-              class="image-grid-check"
-              :model-value="isRowSelected(row)"
-              :aria-label="`选择 ${row.title}`"
-              @click.stop
-              @change="handleGridSelectionChange(row, $event)"
-            />
-            <button class="image-grid-thumb" type="button" :aria-label="`预览 ${row.title}`" @click="preview(row)">
-              <img v-if="thumbnailUrls[row.id]" :src="thumbnailUrls[row.id]" alt="" />
-              <span v-else>预览</span>
-            </button>
-            <div class="image-grid-body">
-              <div class="image-grid-title">
-                <strong :title="row.title">{{ row.title }}</strong>
-                <el-tag :type="statusTagType(row.status)" effect="light">{{ statusLabel(row.status) }}</el-tag>
-              </div>
-              <span class="image-grid-file" :title="row.originalFilename">{{ row.originalFilename }} · {{ formatBytes(row.sizeBytes) }}</span>
-              <span class="image-grid-counts">
-                浏览 {{ row.viewCount }} · 下载 {{ row.downloadCount }} · 收藏 {{ row.favoriteCount }} · 点赞 {{ row.likeCount }}
-              </span>
-              <div class="image-grid-taxonomy">
-                <div class="image-grid-taxonomy-row">
-                  <span class="image-grid-taxonomy-label">分类</span>
-                  <span class="image-grid-category" :title="categoryText(row)">
-                    {{ row.category?.name ?? '未分类' }}
-                  </span>
+      <div class="image-results-scroll-region">
+        <div v-if="displayMode === 'grid'" v-loading="loading" class="image-grid-view">
+          <div v-if="rows.length" class="image-grid">
+            <article v-for="row in rows" :key="row.id" class="image-grid-card" :class="{ 'is-selected': isRowSelected(row) }">
+              <el-checkbox
+                class="image-grid-check"
+                :model-value="isRowSelected(row)"
+                :aria-label="`选择 ${row.title}`"
+                @click.stop
+                @change="handleGridSelectionChange(row, $event)"
+              />
+              <button class="image-grid-thumb" type="button" :aria-label="`预览 ${row.title}`" @click="preview(row)">
+                <img v-if="thumbnailUrls[row.id]" :src="thumbnailUrls[row.id]" alt="" />
+                <span v-else>预览</span>
+              </button>
+              <div class="image-grid-body">
+                <div class="image-grid-title">
+                  <strong :title="row.title">{{ row.title }}</strong>
+                  <el-tag :type="statusTagType(row.status)" effect="light">{{ statusLabel(row.status) }}</el-tag>
                 </div>
-                <div class="image-grid-taxonomy-row">
-                  <span class="image-grid-taxonomy-label">标签</span>
-                  <div class="image-grid-chip-row">
-                    <el-tag v-for="tag in visibleGridTags(row)" :key="tag.id" class="image-grid-chip" size="small" effect="light">
-                      {{ tag.name }}
-                    </el-tag>
-                    <el-popover
-                      v-if="hiddenGridTagCount(row)"
-                      trigger="hover"
-                      placement="top"
-                      :width="260"
-                      popper-class="image-grid-hidden-tags-popper"
-                    >
-                      <template #reference>
-                        <el-tag class="image-grid-chip image-grid-more-chip" size="small" effect="plain">
-                          +{{ hiddenGridTagCount(row) }}
-                        </el-tag>
-                      </template>
-                      <div class="image-grid-hidden-tags-panel" :aria-label="`剩余 ${hiddenGridTagCount(row)} 个标签`">
-                        <div class="image-grid-hidden-tags-title">剩余 {{ hiddenGridTagCount(row) }} 个标签</div>
-                        <div class="image-grid-hidden-tags">
-                          <el-tag
-                            v-for="tag in hiddenGridTags(row)"
-                            :key="tag.id"
-                            class="image-grid-hidden-tag"
-                            size="small"
-                            effect="light"
-                          >
-                            {{ tag.name }}
+                <span class="image-grid-file" :title="row.originalFilename">{{ row.originalFilename }} · {{ formatBytes(row.sizeBytes) }}</span>
+                <div
+                  class="image-grid-counts"
+                  :aria-label="`浏览 ${row.viewCount}，下载 ${row.downloadCount}，收藏 ${row.favoriteCount}，点赞 ${row.likeCount}`"
+                >
+                  <span :title="`浏览 ${row.viewCount}`"><span aria-hidden="true">👁</span>{{ row.viewCount }}</span>
+                  <span :title="`下载 ${row.downloadCount}`"><span aria-hidden="true">⬇️</span>{{ row.downloadCount }}</span>
+                  <span :title="`收藏 ${row.favoriteCount}`"><span aria-hidden="true">⭐</span>{{ row.favoriteCount }}</span>
+                  <span :title="`点赞 ${row.likeCount}`"><span aria-hidden="true">👍</span>{{ row.likeCount }}</span>
+                </div>
+                <div class="image-grid-taxonomy">
+                  <div class="image-grid-taxonomy-row">
+                    <span class="image-grid-taxonomy-label">分类</span>
+                    <span class="image-grid-category" :title="categoryText(row)">
+                      {{ row.category?.name ?? '未分类' }}
+                    </span>
+                  </div>
+                  <div class="image-grid-taxonomy-row">
+                    <span class="image-grid-taxonomy-label">标签</span>
+                    <div class="image-grid-chip-row">
+                      <el-tag v-for="tag in visibleGridTags(row)" :key="tag.id" class="image-grid-chip" size="small" effect="light">
+                        {{ tag.name }}
+                      </el-tag>
+                      <el-popover
+                        v-if="hiddenGridTagCount(row)"
+                        trigger="hover"
+                        placement="top"
+                        :width="260"
+                        popper-class="image-grid-hidden-tags-popper"
+                      >
+                        <template #reference>
+                          <el-tag class="image-grid-chip image-grid-more-chip" size="small" effect="plain">
+                            +{{ hiddenGridTagCount(row) }}
                           </el-tag>
+                        </template>
+                        <div class="image-grid-hidden-tags-panel" :aria-label="`剩余 ${hiddenGridTagCount(row)} 个标签`">
+                          <div class="image-grid-hidden-tags-title">剩余 {{ hiddenGridTagCount(row) }} 个标签</div>
+                          <div class="image-grid-hidden-tags">
+                            <el-tag
+                              v-for="tag in hiddenGridTags(row)"
+                              :key="tag.id"
+                              class="image-grid-hidden-tag"
+                              size="small"
+                              effect="light"
+                            >
+                              {{ tag.name }}
+                            </el-tag>
+                          </div>
                         </div>
-                      </div>
-                    </el-popover>
-                    <span v-if="row.tags.length === 0" class="taxonomy-empty">暂无标签</span>
+                      </el-popover>
+                      <span v-if="row.tags.length === 0" class="taxonomy-empty">暂无标签</span>
+                    </div>
                   </div>
                 </div>
               </div>
-            </div>
-            <div v-if="!showingDeletedImages || canDelete" class="image-grid-actions">
+              <div v-if="!showingDeletedImages || canDelete" class="image-grid-actions">
+                <template v-if="!showingDeletedImages">
+                  <div class="image-action-group" aria-label="图片操作">
+                    <div class="image-action-cluster">
+                      <el-tooltip v-if="canView" :content="row.favoritedByMe ? '取消收藏' : '收藏'" placement="top">
+                        <el-button
+                          class="image-action-button image-action-emoji-button"
+                          :class="{ 'is-active': row.favoritedByMe }"
+                          :aria-label="row.favoritedByMe ? '取消收藏' : '收藏'"
+                          circle
+                          @click="toggleFavorite(row)"
+                        >
+                          <span aria-hidden="true">⭐</span>
+                        </el-button>
+                      </el-tooltip>
+                      <el-tooltip v-if="canView" :content="row.likedByMe ? '取消点赞' : '点赞'" placement="top">
+                        <el-button
+                          class="image-action-button image-action-emoji-button"
+                          :class="{ 'is-active': row.likedByMe }"
+                          :aria-label="row.likedByMe ? '取消点赞' : '点赞'"
+                          circle
+                          @click="toggleLike(row)"
+                        >
+                          <span aria-hidden="true">👍</span>
+                        </el-button>
+                      </el-tooltip>
+                    </div>
+                    <div class="image-action-cluster">
+                      <el-tooltip v-if="canEdit" content="编辑" placement="top">
+                        <el-button class="image-action-button" :icon="EditPen" aria-label="编辑" circle @click="openEdit(row)" />
+                      </el-tooltip>
+                      <el-tooltip v-if="canView" content="下载" placement="top">
+                        <el-button class="image-action-button" :icon="Download" aria-label="下载" circle @click="download(row)" />
+                      </el-tooltip>
+                    </div>
+                    <div class="image-action-cluster image-action-cluster-single">
+                      <el-tooltip v-if="canDelete" content="停用" placement="top">
+                        <el-button
+                          class="image-action-button is-warning"
+                          type="warning"
+                          plain
+                          :icon="Warning"
+                          aria-label="停用"
+                          circle
+                          @click="remove(row)"
+                        />
+                      </el-tooltip>
+                    </div>
+                  </div>
+                </template>
+                <template v-else>
+                  <el-button v-if="canDelete" link type="primary" @click="restore(row)">恢复</el-button>
+                  <el-button v-if="canDelete" link type="danger" @click="purge(row)">彻底删除</el-button>
+                </template>
+              </div>
+            </article>
+          </div>
+          <el-empty v-else description="暂无图片" />
+        </div>
+
+        <el-table v-else ref="imageTableRef" v-loading="loading" :data="rows" stripe @selection-change="handleSelectionChange">
+          <el-table-column type="selection" width="44" />
+          <el-table-column label="图片" min-width="260">
+            <template #default="{ row }">
+              <div class="image-cell">
+                <button class="thumbnail-button" type="button" :aria-label="`预览 ${row.title}`" @click="preview(row)">
+                  <img v-if="thumbnailUrls[row.id]" :src="thumbnailUrls[row.id]" alt="" />
+                  <span v-else>预览</span>
+                </button>
+                <div class="image-meta">
+                  <strong>{{ row.title }}</strong>
+                  <span>{{ row.originalFilename }} · {{ formatBytes(row.sizeBytes) }}</span>
+                </div>
+              </div>
+            </template>
+          </el-table-column>
+          <el-table-column label="分类" width="150">
+            <template #default="{ row }">{{ categoryText(row) }}</template>
+          </el-table-column>
+          <el-table-column label="标签" min-width="180">
+            <template #default="{ row }">
+              <el-tag v-for="tag in row.tags" :key="tag.id" class="tag-chip" effect="light">{{ tag.name }}</el-tag>
+              <span v-if="row.tags.length === 0">-</span>
+            </template>
+          </el-table-column>
+          <el-table-column label="状态" width="110">
+            <template #default="{ row }">
+              <el-tag :type="statusTagType(row.status)" effect="light">{{ statusLabel(row.status) }}</el-tag>
+            </template>
+          </el-table-column>
+          <el-table-column label="数据" width="130">
+            <template #default="{ row }">
+              <div class="image-counts-cell">
+                <span>浏览 {{ row.viewCount }}</span>
+                <span>下载 {{ row.downloadCount }}</span>
+                <span>收藏 {{ row.favoriteCount }}</span>
+                <span>点赞 {{ row.likeCount }}</span>
+              </div>
+            </template>
+          </el-table-column>
+          <el-table-column v-if="!showingDeletedImages || canDelete" label="操作" width="210" fixed="right">
+            <template #default="{ row }">
               <template v-if="!showingDeletedImages">
-                <el-button v-if="canView" link type="primary" @click="toggleFavorite(row)">
-                  {{ row.favoritedByMe ? '已收藏' : '收藏' }}
-                </el-button>
-                <el-button v-if="canView" link type="primary" @click="toggleLike(row)">
-                  {{ row.likedByMe ? '已点赞' : '点赞' }}
-                </el-button>
-                <el-button v-if="canEdit" link type="primary" @click="openEdit(row)">编辑</el-button>
-                <el-button v-if="canView" link type="primary" :icon="Download" @click="download(row)">下载</el-button>
-                <el-button v-if="canDelete" link type="danger" @click="remove(row)">停用</el-button>
+                <div class="image-action-group" aria-label="图片操作">
+                  <div class="image-action-cluster">
+                    <el-tooltip v-if="canView" :content="row.favoritedByMe ? '取消收藏' : '收藏'" placement="top">
+                      <el-button
+                        class="image-action-button image-action-emoji-button"
+                        :class="{ 'is-active': row.favoritedByMe }"
+                        :aria-label="row.favoritedByMe ? '取消收藏' : '收藏'"
+                        circle
+                        @click="toggleFavorite(row)"
+                      >
+                        <span aria-hidden="true">⭐</span>
+                      </el-button>
+                    </el-tooltip>
+                    <el-tooltip v-if="canView" :content="row.likedByMe ? '取消点赞' : '点赞'" placement="top">
+                      <el-button
+                        class="image-action-button image-action-emoji-button"
+                        :class="{ 'is-active': row.likedByMe }"
+                        :aria-label="row.likedByMe ? '取消点赞' : '点赞'"
+                        circle
+                        @click="toggleLike(row)"
+                      >
+                        <span aria-hidden="true">👍</span>
+                      </el-button>
+                    </el-tooltip>
+                  </div>
+                  <div class="image-action-cluster">
+                    <el-tooltip v-if="canEdit" content="编辑" placement="top">
+                      <el-button class="image-action-button" :icon="EditPen" aria-label="编辑" circle @click="openEdit(row)" />
+                    </el-tooltip>
+                    <el-tooltip v-if="canView" content="下载" placement="top">
+                      <el-button class="image-action-button" :icon="Download" aria-label="下载" circle @click="download(row)" />
+                    </el-tooltip>
+                  </div>
+                  <div class="image-action-cluster image-action-cluster-single">
+                    <el-tooltip v-if="canDelete" content="停用" placement="top">
+                      <el-button
+                        class="image-action-button is-warning"
+                        type="warning"
+                        plain
+                        :icon="Warning"
+                        aria-label="停用"
+                        circle
+                        @click="remove(row)"
+                      />
+                    </el-tooltip>
+                  </div>
+                </div>
               </template>
               <template v-else>
                 <el-button v-if="canDelete" link type="primary" @click="restore(row)">恢复</el-button>
                 <el-button v-if="canDelete" link type="danger" @click="purge(row)">彻底删除</el-button>
               </template>
-            </div>
-          </article>
-        </div>
-        <el-empty v-else description="暂无图片" />
+            </template>
+          </el-table-column>
+        </el-table>
       </div>
-
-      <el-table v-else ref="imageTableRef" v-loading="loading" :data="rows" stripe @selection-change="handleSelectionChange">
-        <el-table-column type="selection" width="44" />
-        <el-table-column label="图片" min-width="260">
-          <template #default="{ row }">
-            <div class="image-cell">
-              <button class="thumbnail-button" type="button" :aria-label="`预览 ${row.title}`" @click="preview(row)">
-                <img v-if="thumbnailUrls[row.id]" :src="thumbnailUrls[row.id]" alt="" />
-                <span v-else>预览</span>
-              </button>
-              <div class="image-meta">
-                <strong>{{ row.title }}</strong>
-                <span>{{ row.originalFilename }} · {{ formatBytes(row.sizeBytes) }}</span>
-              </div>
-            </div>
-          </template>
-        </el-table-column>
-        <el-table-column label="分类" width="150">
-          <template #default="{ row }">{{ categoryText(row) }}</template>
-        </el-table-column>
-        <el-table-column label="标签" min-width="180">
-          <template #default="{ row }">
-            <el-tag v-for="tag in row.tags" :key="tag.id" class="tag-chip" effect="light">{{ tag.name }}</el-tag>
-            <span v-if="row.tags.length === 0">-</span>
-          </template>
-        </el-table-column>
-        <el-table-column label="状态" width="110">
-          <template #default="{ row }">
-            <el-tag :type="statusTagType(row.status)" effect="light">{{ statusLabel(row.status) }}</el-tag>
-          </template>
-        </el-table-column>
-        <el-table-column label="数据" width="130">
-          <template #default="{ row }">
-            <div class="image-counts-cell">
-              <span>浏览 {{ row.viewCount }}</span>
-              <span>下载 {{ row.downloadCount }}</span>
-              <span>收藏 {{ row.favoriteCount }}</span>
-              <span>点赞 {{ row.likeCount }}</span>
-            </div>
-          </template>
-        </el-table-column>
-        <el-table-column v-if="!showingDeletedImages || canDelete" label="操作" width="250" fixed="right">
-          <template #default="{ row }">
-            <template v-if="!showingDeletedImages">
-              <el-button v-if="canView" link type="primary" @click="toggleFavorite(row)">
-                {{ row.favoritedByMe ? '已收藏' : '收藏' }}
-              </el-button>
-              <el-button v-if="canView" link type="primary" @click="toggleLike(row)">
-                {{ row.likedByMe ? '已点赞' : '点赞' }}
-              </el-button>
-              <el-button v-if="canEdit" link type="primary" @click="openEdit(row)">编辑</el-button>
-              <el-button v-if="canView" link type="primary" :icon="Download" @click="download(row)">下载</el-button>
-              <el-button v-if="canDelete" link type="danger" @click="remove(row)">停用</el-button>
-            </template>
-            <template v-else>
-              <el-button v-if="canDelete" link type="primary" @click="restore(row)">恢复</el-button>
-              <el-button v-if="canDelete" link type="danger" @click="purge(row)">彻底删除</el-button>
-            </template>
-          </template>
-        </el-table-column>
-      </el-table>
 
       <div class="pagination-row">
         <el-pagination
@@ -2677,8 +2770,20 @@ onBeforeUnmount(() => {
 </template>
 
 <style scoped>
+.image-library-panel {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-height: 0;
+  overflow: hidden;
+}
+
 .image-toolbar {
   align-items: flex-start;
+  flex: 0 0 auto;
+  gap: 10px 12px;
+  justify-content: space-between;
+  margin-bottom: 0;
 }
 
 .image-filter-group {
@@ -2690,8 +2795,12 @@ onBeforeUnmount(() => {
 }
 
 .image-scope-row {
+  align-items: center;
   display: flex;
-  margin-bottom: 14px;
+  flex: 0 0 auto;
+  gap: 12px;
+  justify-content: space-between;
+  margin-bottom: 10px;
 }
 
 .image-filter-group .el-input,
@@ -2708,16 +2817,25 @@ onBeforeUnmount(() => {
   flex: 0 0 auto;
 }
 
+.image-toolbar-actions {
+  align-items: center;
+  display: flex;
+  flex: 0 0 auto;
+  gap: 10px;
+  justify-content: flex-end;
+}
+
 .batch-toolbar {
   align-items: center;
   border-top: 1px solid #e2e8f0;
   color: #64748b;
   display: flex;
+  flex: 0 0 auto;
   font-size: 13px;
   justify-content: space-between;
-  margin-bottom: 16px;
-  margin-top: 14px;
-  padding-top: 12px;
+  margin-bottom: 12px;
+  margin-top: 10px;
+  padding-top: 10px;
 }
 
 .batch-toolbar-summary {
@@ -2737,14 +2855,26 @@ onBeforeUnmount(() => {
   gap: 8px;
 }
 
+.image-results-scroll-region {
+  flex: 1;
+  min-height: 0;
+  overflow-x: hidden;
+  overflow-y: auto;
+  padding-right: 4px;
+}
+
+.image-results-scroll-region > .el-table {
+  width: 100%;
+}
+
 .image-grid-view {
-  min-height: 220px;
+  min-height: 100%;
 }
 
 .image-grid {
   display: grid;
   gap: 14px;
-  grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
 }
 
 .image-grid-card {
@@ -2852,8 +2982,7 @@ onBeforeUnmount(() => {
 }
 
 .image-grid-title strong,
-.image-grid-file,
-.image-grid-counts {
+.image-grid-file {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -2876,9 +3005,26 @@ onBeforeUnmount(() => {
 }
 
 .image-grid-counts {
+  align-items: center;
   color: #475569;
+  display: flex;
+  flex-wrap: wrap;
   font-size: 12px;
+  gap: 4px;
   min-width: 0;
+}
+
+.image-grid-counts > span {
+  align-items: center;
+  background: #f8fafc;
+  border: 1px solid #e2e8f0;
+  border-radius: 999px;
+  display: inline-flex;
+  gap: 3px;
+  line-height: 1.2;
+  min-width: 0;
+  padding: 2px 6px;
+  white-space: nowrap;
 }
 
 .image-grid-taxonomy {
@@ -2978,11 +3124,87 @@ onBeforeUnmount(() => {
   align-items: center;
   border-top: 1px solid #eef2f7;
   display: flex;
-  flex-wrap: wrap;
-  gap: 4px 8px;
+  flex-wrap: nowrap;
+  gap: 6px;
+  justify-content: flex-start;
   margin-top: auto;
   min-height: 40px;
   padding: 6px 10px 8px;
+}
+
+.image-action-group {
+  align-items: center;
+  display: flex;
+  flex-wrap: nowrap;
+  gap: 10px;
+  min-width: 0;
+}
+
+.image-action-cluster {
+  align-items: center;
+  display: flex;
+  flex-wrap: nowrap;
+  gap: 3px;
+}
+
+.image-action-cluster-single {
+  justify-content: center;
+}
+
+.image-action-button {
+  background: #ffffff;
+  border-color: #d7dee8;
+  color: #475569;
+  height: 32px;
+  margin-left: 0;
+  transition:
+    background-color 0.16s ease,
+    border-color 0.16s ease,
+    color 0.16s ease,
+    box-shadow 0.16s ease;
+  width: 32px;
+}
+
+.image-action-button + .image-action-button {
+  margin-left: 0;
+}
+
+.image-action-button:hover,
+.image-action-button:focus-visible {
+  background: #f8fafc;
+  border-color: #93c5fd;
+  color: #2563eb;
+}
+
+.image-action-button.is-active {
+  background: #eff6ff;
+  border-color: #bfdbfe;
+  color: #2563eb;
+}
+
+.image-action-emoji-button {
+  font-size: 15px;
+}
+
+.image-action-emoji-button span {
+  line-height: 1;
+}
+
+.image-action-button.is-warning {
+  background: #fffbeb;
+  border-color: #fbbf24;
+  color: #d97706;
+}
+
+.image-action-button.is-warning:hover,
+.image-action-button.is-warning:focus-visible {
+  background: #fffbeb;
+  border-color: #fbbf24;
+  color: #b45309;
+}
+
+.image-action-button :deep(.el-icon) {
+  font-size: 15px;
 }
 
 .image-cell {
@@ -3488,9 +3710,12 @@ onBeforeUnmount(() => {
 }
 
 .pagination-row {
+  border-top: 1px solid #e2e8f0;
   display: flex;
+  flex: 0 0 auto;
   justify-content: flex-end;
-  margin-top: 16px;
+  margin-top: 12px;
+  padding-top: 12px;
 }
 
 .full-tag-select {
@@ -3745,12 +3970,26 @@ onBeforeUnmount(() => {
     align-items: stretch;
   }
 
+  .image-scope-row {
+    align-items: flex-start;
+    flex-wrap: wrap;
+  }
+
   .image-filter-group,
-  .display-mode-toggle,
+  .image-toolbar-actions,
   .batch-toolbar,
   .batch-toolbar-summary,
   .batch-toolbar-actions {
     width: 100%;
+  }
+
+  .image-toolbar-actions {
+    align-items: flex-start;
+    justify-content: flex-start;
+  }
+
+  .image-toolbar-actions .display-mode-toggle {
+    width: auto;
   }
 
   .image-filter-group .el-input,
@@ -3770,7 +4009,7 @@ onBeforeUnmount(() => {
   }
 
   .image-grid {
-    grid-template-columns: repeat(auto-fill, minmax(156px, 1fr));
+    grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
   }
 
   .preview-detail-grid {

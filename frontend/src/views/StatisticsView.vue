@@ -172,109 +172,108 @@ onBeforeUnmount(() => {
 
 <template>
   <section class="workspace-page">
-    <div class="page-head">
-      <div>
-        <p>图片数量、访问量、下载量和存储占用。</p>
-      </div>
-      <el-button @click="load">刷新</el-button>
-    </div>
-
-    <div v-loading="loading" class="stats-dashboard workspace-scroll-region">
-      <div class="metric-grid">
-        <div class="metric stat-metric">
-          <span>图片总量</span>
-          <strong>{{ formatNumber(stats.imageTotal) }}</strong>
-          <small>不含已停用图片</small>
-        </div>
-        <div class="metric stat-metric">
-          <span>今日上传</span>
-          <strong>{{ formatNumber(stats.todayUploaded) }}</strong>
-          <small>自然日新增入库</small>
-        </div>
-        <div class="metric stat-metric">
-          <span>浏览次数</span>
-          <strong>{{ formatNumber(stats.viewCount) }}</strong>
-          <div class="metric-bar"><i :style="{ width: `${viewShare}%` }" /></div>
-        </div>
-        <div class="metric stat-metric">
-          <span>下载次数</span>
-          <strong>{{ formatNumber(stats.downloadCount) }}</strong>
-          <div class="metric-bar metric-bar-alt"><i :style="{ width: `${downloadShare}%` }" /></div>
-        </div>
+    <div v-loading="loading" class="stats-dashboard">
+      <div class="stats-dashboard-toolbar">
+        <el-button @click="load">刷新</el-button>
       </div>
 
-      <div class="chart-grid">
-        <section class="surface surface-pad chart-panel">
-          <div class="panel-head">
-            <div>
-              <h2>近 30 天上传趋势</h2>
-              <p>按图片入库日期统计，每天补齐 0 值。</p>
-            </div>
+      <div class="stats-dashboard-scroll workspace-scroll-region">
+        <div class="metric-grid">
+          <div class="metric stat-metric">
+            <span>图片总量</span>
+            <strong>{{ formatNumber(stats.imageTotal) }}</strong>
+            <small>不含已停用图片</small>
           </div>
-          <div ref="trendChartEl" class="chart-canvas" />
-          <div v-if="!hasUploadTrendActivity" class="chart-empty">近 30 天暂无上传记录</div>
-        </section>
+          <div class="metric stat-metric">
+            <span>今日上传</span>
+            <strong>{{ formatNumber(stats.todayUploaded) }}</strong>
+            <small>自然日新增入库</small>
+          </div>
+          <div class="metric stat-metric">
+            <span>浏览次数</span>
+            <strong>{{ formatNumber(stats.viewCount) }}</strong>
+            <div class="metric-bar"><i :style="{ width: `${viewShare}%` }" /></div>
+          </div>
+          <div class="metric stat-metric">
+            <span>下载次数</span>
+            <strong>{{ formatNumber(stats.downloadCount) }}</strong>
+            <div class="metric-bar metric-bar-alt"><i :style="{ width: `${downloadShare}%` }" /></div>
+          </div>
+        </div>
 
-        <section class="surface surface-pad chart-panel">
-          <div class="panel-head">
-            <div>
-              <h2>分类分布</h2>
-              <p>按图片关联分类统计，未分类单独归集。</p>
-            </div>
-          </div>
-          <div ref="categoryChartEl" class="chart-canvas" />
-          <div v-if="!hasCategoryDistribution" class="chart-empty">暂无分类统计数据</div>
-        </section>
-      </div>
-
-      <div class="insight-grid">
-        <section class="surface surface-pad storage-panel">
-          <div>
-            <span>当前图片原图存储占用</span>
-            <strong>{{ formatBytes(stats.storageBytes) }}</strong>
-          </div>
-          <div class="storage-track">
-            <i />
-          </div>
-        </section>
-
-        <section class="surface surface-pad ranking-panel">
-          <div class="panel-head">
-            <div>
-              <h2>访问 Top 5</h2>
-              <p>按累计浏览次数排序。</p>
-            </div>
-          </div>
-          <div v-if="stats.topViewedImages.length" class="ranking-list">
-            <div v-for="item in stats.topViewedImages" :key="item.id" class="ranking-row">
-              <div class="ranking-main">
-                <span>{{ item.title }}</span>
-                <strong>{{ formatNumber(item.viewCount) }}</strong>
+        <div class="chart-grid">
+          <section class="surface surface-pad chart-panel">
+            <div class="panel-head">
+              <div>
+                <h2>近 30 天上传趋势</h2>
+                <p>按图片入库日期统计，每天补齐 0 值。</p>
               </div>
-              <div class="ranking-track"><i :style="{ width: rankingWidth(item, 'view') }" /></div>
             </div>
-          </div>
-          <div v-else class="list-empty">暂无访问数据</div>
-        </section>
+            <div ref="trendChartEl" class="chart-canvas" />
+            <div v-if="!hasUploadTrendActivity" class="chart-empty">近 30 天暂无上传记录</div>
+          </section>
 
-        <section class="surface surface-pad ranking-panel">
-          <div class="panel-head">
-            <div>
-              <h2>下载 Top 5</h2>
-              <p>按累计下载次数排序。</p>
-            </div>
-          </div>
-          <div v-if="stats.topDownloadedImages.length" class="ranking-list">
-            <div v-for="item in stats.topDownloadedImages" :key="item.id" class="ranking-row">
-              <div class="ranking-main">
-                <span>{{ item.title }}</span>
-                <strong>{{ formatNumber(item.downloadCount) }}</strong>
+          <section class="surface surface-pad chart-panel">
+            <div class="panel-head">
+              <div>
+                <h2>分类分布</h2>
+                <p>按图片关联分类统计，未分类单独归集。</p>
               </div>
-              <div class="ranking-track ranking-track-alt"><i :style="{ width: rankingWidth(item, 'download') }" /></div>
             </div>
-          </div>
-          <div v-else class="list-empty">暂无下载数据</div>
-        </section>
+            <div ref="categoryChartEl" class="chart-canvas" />
+            <div v-if="!hasCategoryDistribution" class="chart-empty">暂无分类统计数据</div>
+          </section>
+        </div>
+
+        <div class="insight-grid">
+          <section class="surface surface-pad storage-panel">
+            <div>
+              <span>当前图片原图存储占用</span>
+              <strong>{{ formatBytes(stats.storageBytes) }}</strong>
+            </div>
+            <div class="storage-track">
+              <i />
+            </div>
+          </section>
+
+          <section class="surface surface-pad ranking-panel">
+            <div class="panel-head">
+              <div>
+                <h2>访问 Top 5</h2>
+                <p>按累计浏览次数排序。</p>
+              </div>
+            </div>
+            <div v-if="stats.topViewedImages.length" class="ranking-list">
+              <div v-for="item in stats.topViewedImages" :key="item.id" class="ranking-row">
+                <div class="ranking-main">
+                  <span>{{ item.title }}</span>
+                  <strong>{{ formatNumber(item.viewCount) }}</strong>
+                </div>
+                <div class="ranking-track"><i :style="{ width: rankingWidth(item, 'view') }" /></div>
+              </div>
+            </div>
+            <div v-else class="list-empty">暂无访问数据</div>
+          </section>
+
+          <section class="surface surface-pad ranking-panel">
+            <div class="panel-head">
+              <div>
+                <h2>下载 Top 5</h2>
+                <p>按累计下载次数排序。</p>
+              </div>
+            </div>
+            <div v-if="stats.topDownloadedImages.length" class="ranking-list">
+              <div v-for="item in stats.topDownloadedImages" :key="item.id" class="ranking-row">
+                <div class="ranking-main">
+                  <span>{{ item.title }}</span>
+                  <strong>{{ formatNumber(item.downloadCount) }}</strong>
+                </div>
+                <div class="ranking-track ranking-track-alt"><i :style="{ width: rankingWidth(item, 'download') }" /></div>
+              </div>
+            </div>
+            <div v-else class="list-empty">暂无下载数据</div>
+          </section>
+        </div>
       </div>
     </div>
   </section>
@@ -282,7 +281,23 @@ onBeforeUnmount(() => {
 
 <style scoped>
 .stats-dashboard {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-height: 0;
   min-width: 0;
+  overflow: hidden;
+}
+
+.stats-dashboard-toolbar {
+  display: flex;
+  flex: 0 0 auto;
+  justify-content: flex-end;
+  margin-bottom: 10px;
+}
+
+.stats-dashboard-scroll {
+  padding-right: 4px;
 }
 
 .stat-metric {

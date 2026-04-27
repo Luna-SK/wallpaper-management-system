@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, reactive, ref } from 'vue'
+import { computed, onMounted, reactive, ref, watch } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Plus, Search } from '@element-plus/icons-vue'
 import { isAxiosError } from 'axios'
@@ -45,6 +45,8 @@ const roleStatusFilter = ref<RoleStatusFilter>('ALL')
 const users = ref<User[]>([])
 const roles = ref<Role[]>([])
 const permissions = ref<Permission[]>([])
+const userPagination = reactive({ page: 1, size: 20 })
+const rolePagination = reactive({ page: 1, size: 20 })
 const userDialogVisible = ref(false)
 const roleDialogVisible = ref(false)
 const assignDialogVisible = ref(false)
@@ -83,6 +85,34 @@ const filteredRoles = computed(() => {
     const matchesKeyword = !query || `${role.code} ${role.name}`.includes(query)
     return matchesStatus && matchesKeyword
   })
+})
+
+function maxPage(total: number, pageSize: number) {
+  return Math.max(1, Math.ceil(total / pageSize))
+}
+
+function clampPage(page: number, pageSize: number, total: number) {
+  return Math.min(Math.max(page, 1), maxPage(total, pageSize))
+}
+
+function clampUserPage() {
+  userPagination.page = clampPage(userPagination.page, userPagination.size, filteredUsers.value.length)
+}
+
+function clampRolePage() {
+  rolePagination.page = clampPage(rolePagination.page, rolePagination.size, filteredRoles.value.length)
+}
+
+const pagedUsers = computed(() => {
+  const page = clampPage(userPagination.page, userPagination.size, filteredUsers.value.length)
+  const start = (page - 1) * userPagination.size
+  return filteredUsers.value.slice(start, start + userPagination.size)
+})
+
+const pagedRoles = computed(() => {
+  const page = clampPage(rolePagination.page, rolePagination.size, filteredRoles.value.length)
+  const start = (page - 1) * rolePagination.size
+  return filteredRoles.value.slice(start, start + rolePagination.size)
 })
 
 const resourceLabels: Record<string, string> = {
@@ -147,6 +177,28 @@ function ensurePermission(allowed: boolean) {
     return false
   }
   return true
+}
+
+function handleUserPageSizeChange(size: number) {
+  userPagination.size = size
+  userPagination.page = 1
+  clampUserPage()
+}
+
+function handleUserPageChange(page: number) {
+  userPagination.page = page
+  clampUserPage()
+}
+
+function handleRolePageSizeChange(size: number) {
+  rolePagination.size = size
+  rolePagination.page = 1
+  clampRolePage()
+}
+
+function handleRolePageChange(page: number) {
+  rolePagination.page = page
+  clampRolePage()
 }
 
 async function refresh() {
@@ -370,17 +422,22 @@ useDialogEnterSubmit(roleDialogVisible, submitRole)
 useDialogEnterSubmit(permissionDialogVisible, submitRolePermissions)
 useDialogEnterSubmit(resetPasswordVisible, submitResetPassword)
 
+watch([userKeyword, userStatusFilter], () => {
+  userPagination.page = 1
+})
+
+watch([roleKeyword, roleStatusFilter], () => {
+  rolePagination.page = 1
+})
+
+watch(() => [filteredUsers.value.length, userPagination.size] as const, clampUserPage)
+watch(() => [filteredRoles.value.length, rolePagination.size] as const, clampRolePage)
+
 onMounted(refresh)
 </script>
 
 <template>
   <section class="workspace-page">
-    <div class="page-head">
-      <div>
-        <p>用户、角色、权限和访问范围管理。</p>
-      </div>
-    </div>
-
     <div v-loading="loading" class="surface surface-pad workspace-scroll-region">
       <el-tabs>
         <el-tab-pane v-if="canManageUsers" label="用户">
@@ -394,7 +451,7 @@ onMounted(refresh)
             <el-button type="primary" :icon="Plus" @click="openUser()">新增用户</el-button>
           </div>
 
-          <el-table :data="filteredUsers" stripe>
+          <el-table :data="pagedUsers" stripe>
             <el-table-column prop="username" label="用户名" width="160" />
             <el-table-column prop="displayName" label="姓名" width="160" />
             <el-table-column label="角色" min-width="220">
@@ -419,6 +476,18 @@ onMounted(refresh)
               </template>
             </el-table-column>
           </el-table>
+          <div class="pagination-row">
+            <el-pagination
+              v-model:current-page="userPagination.page"
+              v-model:page-size="userPagination.size"
+              :page-sizes="[20, 50, 100]"
+              :total="filteredUsers.length"
+              background
+              layout="total, sizes, prev, pager, next, jumper"
+              @size-change="handleUserPageSizeChange"
+              @current-change="handleUserPageChange"
+            />
+          </div>
         </el-tab-pane>
 
         <el-tab-pane v-if="canManageRoles" label="角色">
@@ -432,7 +501,7 @@ onMounted(refresh)
             <el-button type="primary" :icon="Plus" @click="openRole()">新增角色</el-button>
           </div>
 
-          <el-table :data="filteredRoles" stripe>
+          <el-table :data="pagedRoles" stripe>
             <el-table-column prop="code" label="角色编码" width="160" />
             <el-table-column prop="name" label="角色名称" width="160" />
             <el-table-column label="权限摘要" min-width="420">
@@ -456,6 +525,18 @@ onMounted(refresh)
               </template>
             </el-table-column>
           </el-table>
+          <div class="pagination-row">
+            <el-pagination
+              v-model:current-page="rolePagination.page"
+              v-model:page-size="rolePagination.size"
+              :page-sizes="[20, 50, 100]"
+              :total="filteredRoles.length"
+              background
+              layout="total, sizes, prev, pager, next, jumper"
+              @size-change="handleRolePageSizeChange"
+              @current-change="handleRolePageChange"
+            />
+          </div>
         </el-tab-pane>
 
         <el-tab-pane v-if="canManageRoles" label="权限">
@@ -545,5 +626,17 @@ onMounted(refresh)
 .permission-checks {
   display: grid;
   gap: 10px;
+}
+
+.pagination-row {
+  display: flex;
+  justify-content: flex-end;
+  margin-top: 16px;
+}
+
+@media (max-width: 720px) {
+  .pagination-row {
+    justify-content: flex-start;
+  }
 }
 </style>

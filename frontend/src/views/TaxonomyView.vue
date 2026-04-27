@@ -305,12 +305,6 @@ onMounted(refresh)
 
 <template>
   <section class="workspace-page">
-    <div class="page-head">
-      <div>
-        <p>维护图片分类、标签组和标签。</p>
-      </div>
-    </div>
-
     <el-tabs v-model="activeTab" class="surface surface-pad workspace-scroll-region">
       <el-tab-pane label="分类" name="categories">
         <div class="toolbar-row">
@@ -335,7 +329,7 @@ onMounted(refresh)
             <template #default="{ row }">
               <template v-if="row.enabled">
                 <el-button link type="primary" @click="openCategory(row)">编辑</el-button>
-                <el-button link type="danger" @click="disableCategory(row)">停用</el-button>
+                <el-button link type="warning" @click="disableCategory(row)">停用</el-button>
               </template>
               <template v-else>
                 <el-button link type="primary" @click="openCategory(row)">编辑</el-button>
@@ -383,7 +377,7 @@ onMounted(refresh)
               <div>
                 <el-button v-if="activeGroup" @click="openGroup(activeGroup)">编辑标签组</el-button>
                 <el-button v-if="activeGroup?.enabled" type="primary" :icon="Plus" @click="openTag()">新增标签</el-button>
-                <el-button v-if="activeGroup && activeGroup.enabled" type="danger" plain @click="disableGroup(activeGroup)">停用标签组</el-button>
+                <el-button v-if="activeGroup && activeGroup.enabled" type="warning" plain @click="disableGroup(activeGroup)">停用标签组</el-button>
                 <template v-if="activeGroup && !activeGroup.enabled">
                   <el-button type="primary" plain @click="restoreActiveGroup">恢复标签组</el-button>
                   <el-button type="danger" @click="purgeActiveGroup">彻底删除</el-button>
@@ -412,7 +406,7 @@ onMounted(refresh)
                 <template #default="{ row }">
                   <template v-if="row.enabled">
                     <el-button link type="primary" @click="openTag(row)">编辑</el-button>
-                    <el-button link type="danger" @click="disableTag(row)">停用</el-button>
+                    <el-button link type="warning" @click="disableTag(row)">停用</el-button>
                   </template>
                   <template v-else>
                     <el-button link type="primary" @click="openTag(row)">编辑</el-button>

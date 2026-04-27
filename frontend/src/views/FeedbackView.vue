@@ -11,6 +11,7 @@ import {
   type FeedbackRecord,
   type FeedbackStatus,
 } from '../api/interactions'
+import { getImages, type ImageRecord } from '../api/images'
 import { useAuthStore } from '../stores/auth'
 
 const auth = useAuthStore()
@@ -26,6 +27,9 @@ const pagination = reactive({ page: 1, size: 20, total: 0 })
 const adminPagination = reactive({ page: 1, size: 20, total: 0 })
 const form = reactive({ type: 'GENERAL', title: '', content: '', imageId: '' })
 const submitting = ref(false)
+const imageOptions = ref<ImageRecord[]>([])
+const imageSearchLoading = ref(false)
+let imageSearchToken = 0
 const handlingId = ref('')
 const handleForm = reactive<{ status: FeedbackStatus; response: string }>({ status: 'IN_PROGRESS', response: '' })
 const handleDialogVisible = ref(false)
@@ -59,6 +63,54 @@ function statusTagType(status: FeedbackStatus) {
 function formatDateTime(value: string | null) {
   if (!value) return '-'
   return value.replace('T', ' ').slice(0, 19)
+}
+
+function formatBytes(value: number | null | undefined) {
+  if (!value) return '0 B'
+  const units = ['B', 'KB', 'MB', 'GB', 'TB']
+  let size = value
+  let unitIndex = 0
+  while (size >= 1024 && unitIndex < units.length - 1) {
+    size /= 1024
+    unitIndex += 1
+  }
+  return `${size >= 10 || unitIndex === 0 ? size.toFixed(0) : size.toFixed(1)} ${units[unitIndex]}`
+}
+
+function imageOptionMeta(image: ImageRecord) {
+  const category = image.category?.name ?? '未分类'
+  return `${image.originalFilename} · ${category} · ${formatBytes(image.sizeBytes)}`
+}
+
+async function searchFeedbackImages(query: string) {
+  const token = ++imageSearchToken
+  imageSearchLoading.value = true
+  try {
+    const page = await getImages({
+      keyword: query?.trim() || undefined,
+      status: 'ACTIVE',
+      page: 1,
+      size: 20,
+    })
+    if (token === imageSearchToken) {
+      imageOptions.value = page.items
+    }
+  } catch (error) {
+    if (token === imageSearchToken) {
+      imageOptions.value = []
+      ElMessage.error(errorMessage(error, '图片候选加载失败'))
+    }
+  } finally {
+    if (token === imageSearchToken) {
+      imageSearchLoading.value = false
+    }
+  }
+}
+
+function handleImageSelectVisibleChange(visible: boolean) {
+  if (visible && imageOptions.value.length === 0) {
+    void searchFeedbackImages('')
+  }
 }
 
 async function loadMine() {
@@ -101,6 +153,47 @@ async function loadAdmin() {
   }
 }
 
+function feedbackMatchesStatus(record: FeedbackRecord, status: FeedbackStatus | '') {
+  return !status || record.status === status
+}
+
+function feedbackMatchesKeyword(record: FeedbackRecord, keyword: string) {
+  const query = keyword.trim().toLowerCase()
+  if (!query) return true
+  return [record.title, record.content, record.username, record.displayName]
+    .filter(Boolean)
+    .some((value) => value.toLowerCase().includes(query))
+}
+
+function feedbackMatchesAdminFilters(record: FeedbackRecord) {
+  return feedbackMatchesStatus(record, adminStatusFilter.value) && feedbackMatchesKeyword(record, adminKeyword.value)
+}
+
+function prependMineFeedback(record: FeedbackRecord, incrementTotal = true) {
+  const existed = rows.value.some((item) => item.id === record.id)
+  rows.value = [record, ...rows.value.filter((item) => item.id !== record.id)].slice(0, pagination.size)
+  if (!existed && incrementTotal) {
+    pagination.total += 1
+  }
+}
+
+function prependAdminFeedback(record: FeedbackRecord, incrementTotal = true) {
+  if (!canManage.value || !feedbackMatchesAdminFilters(record)) return
+  const existed = adminRows.value.some((item) => item.id === record.id)
+  adminRows.value = [record, ...adminRows.value.filter((item) => item.id !== record.id)].slice(0, adminPagination.size)
+  if (!existed && incrementTotal) {
+    adminPagination.total += 1
+  }
+}
+
+async function refreshAdminIfAllowed(record?: FeedbackRecord) {
+  if (!canManage.value) return
+  await loadAdmin()
+  if (record) {
+    prependAdminFeedback(record, false)
+  }
+}
+
 async function submitFeedback() {
   if (!form.title.trim() || !form.content.trim()) {
     ElMessage.warning('请填写反馈标题和内容')
@@ -108,7 +201,7 @@ async function submitFeedback() {
   }
   submitting.value = true
   try {
-    await createFeedback({
+    const created = await createFeedback({
       type: form.type,
       title: form.title,
       content: form.content,
@@ -118,8 +211,14 @@ async function submitFeedback() {
     form.title = ''
     form.content = ''
     form.imageId = ''
+    imageOptions.value = []
+    statusFilter.value = ''
     pagination.page = 1
+    prependMineFeedback(created)
+    prependAdminFeedback(created)
     await loadMine()
+    prependMineFeedback(created, false)
+    await refreshAdminIfAllowed(created)
   } catch (error) {
     ElMessage.error(errorMessage(error, '反馈提交失败'))
   } finally {
@@ -132,6 +231,7 @@ async function closeMine(row: FeedbackRecord) {
     await closeFeedback(row.id)
     ElMessage.success('反馈已关闭')
     await loadMine()
+    await refreshAdminIfAllowed()
   } catch (error) {
     ElMessage.error(errorMessage(error, '反馈关闭失败'))
   }
@@ -168,9 +268,41 @@ function applyMineFilter() {
   void loadMine()
 }
 
+function handleMinePageSizeChange(size: number) {
+  pagination.size = size
+  pagination.page = 1
+  void loadMine()
+}
+
+function handleMinePageChange(page: number) {
+  pagination.page = page
+  void loadMine()
+}
+
 function applyAdminFilter() {
   adminPagination.page = 1
   void loadAdmin()
+}
+
+function handleAdminPageSizeChange(size: number) {
+  adminPagination.size = size
+  adminPagination.page = 1
+  void loadAdmin()
+}
+
+function handleAdminPageChange(page: number) {
+  adminPagination.page = page
+  void loadAdmin()
+}
+
+function handleTabChange(name: string | number) {
+  if (name === 'mine') {
+    void loadMine()
+    return
+  }
+  if (name === 'admin') {
+    void loadAdmin()
+  }
 }
 
 onMounted(async () => {
@@ -183,14 +315,8 @@ onMounted(async () => {
 
 <template>
   <section class="workspace-page">
-    <div class="page-head">
-      <div>
-        <p>提交问题、建议或图片相关反馈，并跟踪处理状态。</p>
-      </div>
-    </div>
-
     <div class="surface surface-pad workspace-scroll-region feedback-page">
-      <el-tabs v-model="activeTab">
+      <el-tabs v-model="activeTab" @tab-change="handleTabChange">
         <el-tab-pane label="我的反馈" name="mine">
           <section class="feedback-submit-panel">
             <el-form label-width="86px">
@@ -203,7 +329,27 @@ onMounted(async () => {
                 </el-select>
               </el-form-item>
               <el-form-item label="关联图片">
-                <el-input v-model="form.imageId" clearable placeholder="可选，填写图片 ID" />
+                <el-select
+                  v-model="form.imageId"
+                  class="feedback-image-select"
+                  clearable
+                  filterable
+                  remote
+                  reserve-keyword
+                  :remote-method="searchFeedbackImages"
+                  :loading="imageSearchLoading"
+                  placeholder="可选，搜索并选择图片"
+                  no-data-text="暂无可选图片"
+                  no-match-text="未找到匹配图片"
+                  @visible-change="handleImageSelectVisibleChange"
+                >
+                  <el-option v-for="image in imageOptions" :key="image.id" :label="image.title" :value="image.id">
+                    <div class="feedback-image-option">
+                      <strong>{{ image.title }}</strong>
+                      <span>{{ imageOptionMeta(image) }}</span>
+                    </div>
+                  </el-option>
+                </el-select>
               </el-form-item>
               <el-form-item label="标题">
                 <el-input v-model="form.title" maxlength="160" show-word-limit />
@@ -240,6 +386,11 @@ onMounted(async () => {
                 <el-tag :type="statusTagType(row.status)" effect="light">{{ statusLabel(row.status) }}</el-tag>
               </template>
             </el-table-column>
+            <el-table-column label="关联图片" min-width="180">
+              <template #default="{ row }">
+                <span class="feedback-linked-image" :title="row.imageTitle || ''">{{ row.imageTitle || '-' }}</span>
+              </template>
+            </el-table-column>
             <el-table-column label="回复" min-width="220">
               <template #default="{ row }">{{ row.response || '-' }}</template>
             </el-table-column>
@@ -256,10 +407,12 @@ onMounted(async () => {
             <el-pagination
               v-model:current-page="pagination.page"
               v-model:page-size="pagination.size"
+              :page-sizes="[20, 50, 100]"
               :total="pagination.total"
               background
-              layout="total, prev, pager, next"
-              @current-change="loadMine"
+              layout="total, sizes, prev, pager, next, jumper"
+              @size-change="handleMinePageSizeChange"
+              @current-change="handleMinePageChange"
             />
           </div>
         </el-tab-pane>
@@ -287,6 +440,11 @@ onMounted(async () => {
             <el-table-column label="用户" width="140">
               <template #default="{ row }">{{ row.displayName || row.username }}</template>
             </el-table-column>
+            <el-table-column label="关联图片" min-width="180">
+              <template #default="{ row }">
+                <span class="feedback-linked-image" :title="row.imageTitle || ''">{{ row.imageTitle || '-' }}</span>
+              </template>
+            </el-table-column>
             <el-table-column label="状态" width="110">
               <template #default="{ row }">
                 <el-tag :type="statusTagType(row.status)" effect="light">{{ statusLabel(row.status) }}</el-tag>
@@ -305,10 +463,12 @@ onMounted(async () => {
             <el-pagination
               v-model:current-page="adminPagination.page"
               v-model:page-size="adminPagination.size"
+              :page-sizes="[20, 50, 100]"
               :total="adminPagination.total"
               background
-              layout="total, prev, pager, next"
-              @current-change="loadAdmin"
+              layout="total, sizes, prev, pager, next, jumper"
+              @size-change="handleAdminPageSizeChange"
+              @current-change="handleAdminPageChange"
             />
           </div>
         </el-tab-pane>
@@ -348,6 +508,43 @@ onMounted(async () => {
   margin-bottom: 18px;
 }
 
+.feedback-image-select {
+  width: 100%;
+}
+
+.feedback-image-option {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  justify-content: center;
+  line-height: 1.35;
+}
+
+.feedback-image-option strong {
+  overflow: hidden;
+  color: #17201f;
+  font-weight: 650;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.feedback-image-option span {
+  overflow: hidden;
+  color: #66736f;
+  font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.feedback-linked-image {
+  display: inline-block;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  vertical-align: middle;
+  white-space: nowrap;
+}
+
 .feedback-title-cell {
   display: flex;
   flex-direction: column;
@@ -357,5 +554,17 @@ onMounted(async () => {
 .feedback-title-cell span {
   color: #66736f;
   line-height: 1.5;
+}
+
+.pagination-row {
+  display: flex;
+  justify-content: flex-end;
+  margin-top: 16px;
+}
+
+@media (max-width: 720px) {
+  .pagination-row {
+    justify-content: flex-start;
+  }
 }
 </style>
