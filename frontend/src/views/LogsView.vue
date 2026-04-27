@@ -233,13 +233,7 @@ onMounted(refreshAuditState)
 
 <template>
   <section class="workspace-page">
-    <div class="page-head">
-      <div>
-        <p>记录登录、上传、标签、预览、下载和管理操作，历史日志归档后再清理。</p>
-      </div>
-    </div>
-
-    <div v-loading="loading" class="surface surface-pad workspace-scroll-region">
+    <div v-loading="loading" class="surface surface-pad audit-log-panel">
       <div class="retention-strip">
         <div class="retention-item">
           <span class="retention-label">近期记录保留</span>
@@ -273,22 +267,15 @@ onMounted(refreshAuditState)
         </div>
       </div>
 
-      <el-alert
-        type="info"
-        show-icon
-        :closable="false"
-        :title="`近期审计记录在数据库保留 ${retention.days} 天；成功写入 ${retention.storage} 后会清理过期日志，归档历史数据库记录也按 ${retention.days} 天保留。`"
-      />
+      <div class="audit-fixed-region">
+        <div class="audit-scope-row">
+          <el-radio-group v-model="auditTab">
+            <el-radio-button label="logs">近期审计记录</el-radio-button>
+            <el-radio-button label="archives">归档历史</el-radio-button>
+          </el-radio-group>
+        </div>
 
-      <div class="audit-scope-row">
-        <el-radio-group v-model="auditTab">
-          <el-radio-button label="logs">近期审计记录</el-radio-button>
-          <el-radio-button label="archives">归档历史</el-radio-button>
-        </el-radio-group>
-      </div>
-
-      <div v-if="auditTab === 'logs'" class="audit-panel">
-        <div class="toolbar-row audit-toolbar">
+        <div v-if="auditTab === 'logs'" class="toolbar-row audit-toolbar">
           <div class="audit-filter-row">
             <el-input
               v-model="keyword"
@@ -320,29 +307,7 @@ onMounted(refreshAuditState)
           </div>
         </div>
 
-        <el-table :data="auditRows" stripe>
-          <el-table-column prop="action" label="操作" width="180" />
-          <el-table-column prop="target" label="对象" />
-          <el-table-column prop="time" label="时间" width="180" />
-          <el-table-column prop="detailJson" label="详情" min-width="220" show-overflow-tooltip />
-        </el-table>
-
-        <div class="pagination-row">
-          <el-pagination
-            v-model:current-page="auditPagination.page"
-            v-model:page-size="auditPagination.size"
-            :page-sizes="[20, 50, 100]"
-            :total="auditPagination.total"
-            background
-            layout="total, sizes, prev, pager, next, jumper"
-            @size-change="handleAuditPageSizeChange"
-            @current-change="handleAuditPageChange"
-          />
-        </div>
-      </div>
-
-      <div v-else class="audit-panel">
-        <div class="archive-toolbar">
+        <div v-else class="archive-toolbar">
           <div class="archive-actions">
             <el-tag type="success" effect="light">
               <el-icon><Timer /></el-icon>
@@ -353,35 +318,60 @@ onMounted(refreshAuditState)
             </el-button>
           </div>
         </div>
+      </div>
 
-        <el-table :data="archiveRunRows" stripe>
-          <el-table-column prop="startedAtText" label="开始时间" width="170" />
-          <el-table-column prop="triggerTypeText" label="触发方式" width="110" />
-          <el-table-column prop="cutoffTimeText" label="归档截止" width="170" />
-          <el-table-column prop="archivedCount" label="保存条数" width="110" />
-          <el-table-column prop="deletedCount" label="清理条数" width="110" />
-          <el-table-column prop="status" label="状态" width="100">
-            <template #default="{ row }">
-              <el-tag :type="row.status === 'SUCCESS' ? 'success' : row.status === 'FAILED' ? 'danger' : 'info'" effect="light">
-                {{ row.statusText }}
-              </el-tag>
-            </template>
-          </el-table-column>
-          <el-table-column prop="objectKey" label="归档对象" min-width="360" show-overflow-tooltip />
-        </el-table>
-
-        <div class="pagination-row">
-          <el-pagination
-            v-model:current-page="archivePagination.page"
-            v-model:page-size="archivePagination.size"
-            :page-sizes="[20, 50, 100]"
-            :total="archivePagination.total"
-            background
-            layout="total, sizes, prev, pager, next, jumper"
-            @size-change="handleArchivePageSizeChange"
-            @current-change="handleArchivePageChange"
-          />
+      <div class="audit-table-scroll-region">
+        <div v-if="auditTab === 'logs'" class="audit-panel">
+          <el-table :data="auditRows" stripe>
+            <el-table-column prop="action" label="操作" width="180" />
+            <el-table-column prop="target" label="对象" />
+            <el-table-column prop="time" label="时间" width="180" />
+            <el-table-column prop="detailJson" label="详情" min-width="220" show-overflow-tooltip />
+          </el-table>
         </div>
+
+        <div v-else class="audit-panel">
+          <el-table :data="archiveRunRows" stripe>
+            <el-table-column prop="startedAtText" label="开始时间" width="170" />
+            <el-table-column prop="triggerTypeText" label="触发方式" width="110" />
+            <el-table-column prop="cutoffTimeText" label="归档截止" width="170" />
+            <el-table-column prop="archivedCount" label="保存条数" width="110" />
+            <el-table-column prop="deletedCount" label="清理条数" width="110" />
+            <el-table-column prop="status" label="状态" width="100">
+              <template #default="{ row }">
+                <el-tag :type="row.status === 'SUCCESS' ? 'success' : row.status === 'FAILED' ? 'danger' : 'info'" effect="light">
+                  {{ row.statusText }}
+                </el-tag>
+              </template>
+            </el-table-column>
+            <el-table-column prop="objectKey" label="归档对象" min-width="360" show-overflow-tooltip />
+          </el-table>
+        </div>
+      </div>
+
+      <div v-if="auditTab === 'logs'" class="pagination-row workspace-pagination-row">
+        <el-pagination
+          v-model:current-page="auditPagination.page"
+          v-model:page-size="auditPagination.size"
+          :page-sizes="[20, 50, 100]"
+          :total="auditPagination.total"
+          background
+          layout="total, sizes, prev, pager, next, jumper"
+          @size-change="handleAuditPageSizeChange"
+          @current-change="handleAuditPageChange"
+        />
+      </div>
+      <div v-else class="pagination-row workspace-pagination-row">
+        <el-pagination
+          v-model:current-page="archivePagination.page"
+          v-model:page-size="archivePagination.size"
+          :page-sizes="[20, 50, 100]"
+          :total="archivePagination.total"
+          background
+          layout="total, sizes, prev, pager, next, jumper"
+          @size-change="handleArchivePageSizeChange"
+          @current-change="handleArchivePageChange"
+        />
       </div>
     </div>
   </section>
@@ -395,11 +385,32 @@ onMounted(refreshAuditState)
   justify-content: flex-end;
 }
 
+.audit-log-panel {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.audit-fixed-region {
+  flex: 0 0 auto;
+}
+
+.audit-table-scroll-region {
+  flex: 1;
+  min-height: 0;
+  overflow-x: hidden;
+  overflow-y: auto;
+  padding-right: 4px;
+}
+
 .retention-strip {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
   gap: 12px;
-  margin-bottom: 16px;
+  flex: 0 0 auto;
+  margin-bottom: 12px;
 }
 
 .retention-item {
@@ -418,7 +429,7 @@ onMounted(refreshAuditState)
 
 .audit-scope-row {
   display: flex;
-  margin: 18px 0 14px;
+  margin: 0 0 14px;
 }
 
 .audit-panel {
@@ -478,11 +489,6 @@ onMounted(refreshAuditState)
 }
 
 @media (max-width: 720px) {
-  .page-head {
-    align-items: flex-start;
-    flex-direction: column;
-  }
-
   .archive-actions,
   .archive-toolbar,
   .audit-toolbar,

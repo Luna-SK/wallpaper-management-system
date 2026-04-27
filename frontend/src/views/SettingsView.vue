@@ -168,10 +168,7 @@ onMounted(loadSettings)
 
 <template>
   <section class="workspace-page">
-    <div class="page-head">
-      <div>
-        <p>上传限制、预览质量、已停用图片清理和审计日志保留配置。</p>
-      </div>
+    <div class="settings-actions">
       <el-button type="primary" :loading="saving" @click="saveSettings">保存系统设置</el-button>
     </div>
 
@@ -348,6 +345,13 @@ onMounted(loadSettings)
 </template>
 
 <style scoped>
+.settings-actions {
+  display: flex;
+  flex: 0 0 auto;
+  justify-content: flex-end;
+  margin-bottom: 10px;
+}
+
 .form-section + .form-section {
   border-top: 1px solid #e5e7eb;
   margin-top: 26px;
