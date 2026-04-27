@@ -1,17 +1,30 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { createPinia, setActivePinia } from 'pinia'
 import { useAuthStore } from './auth'
-import { login, register, type LoginResponse } from '../api/auth'
+import { getSessionPolicy, login, register, type LoginResponse, type SessionPolicy } from '../api/auth'
 
 vi.mock('../api/auth', () => ({
   changePassword: vi.fn(),
   getMe: vi.fn(),
+  getSessionPolicy: vi.fn(),
   login: vi.fn(),
   logout: vi.fn(),
   register: vi.fn(),
   refreshSession: vi.fn(),
   updateProfile: vi.fn(),
 }))
+
+function sessionPolicy(overrides: Partial<SessionPolicy> = {}): SessionPolicy {
+  return {
+    idleTimeoutEnabled: true,
+    idleTimeoutMinutes: 120,
+    absoluteLifetimeEnabled: true,
+    absoluteLifetimeDays: 7,
+    absoluteExpiresAt: '2026-05-03T00:00:00Z',
+    serverTime: '2026-04-26T00:00:00Z',
+    ...overrides,
+  }
+}
 
 function authResponse(overrides: Partial<LoginResponse> = {}): LoginResponse {
   return {
@@ -21,6 +34,7 @@ function authResponse(overrides: Partial<LoginResponse> = {}): LoginResponse {
     refreshToken: 'refresh-placeholder-token',
     accessTokenExpiresAt: '2026-04-26T00:15:00Z',
     refreshTokenExpiresAt: '2026-05-03T00:00:00Z',
+    sessionPolicy: sessionPolicy(),
     permissions: ['image:view', 'user:manage'],
     user: {
       id: 'user-1',
@@ -52,6 +66,8 @@ describe('auth store', () => {
     vi.stubGlobal('localStorage', storage)
     Object.defineProperty(window, 'localStorage', { value: storage, configurable: true })
     setActivePinia(createPinia())
+    vi.mocked(getSessionPolicy).mockResolvedValue(sessionPolicy())
+    vi.useRealTimers()
   })
 
   it('tracks login state in local storage', async () => {
@@ -66,6 +82,7 @@ describe('auth store', () => {
     expect(window.localStorage.getItem('wzut-wallpaper-token')).toBe('development-placeholder-token')
     expect(auth.displayName).toBe('系统管理员')
     expect(auth.hasPermission('user:manage')).toBe(true)
+    expect(auth.sessionPolicy?.idleTimeoutMinutes).toBe(120)
   })
 
   it('tracks register state in local storage', async () => {
@@ -123,5 +140,75 @@ describe('auth store', () => {
 
     expect(auth.isAuthenticated).toBe(false)
     expect(window.localStorage.getItem('wzut-wallpaper-token')).toBeNull()
+  })
+
+  it('expires an idle session after the configured timeout', async () => {
+    vi.useFakeTimers()
+    vi.setSystemTime(new Date('2026-04-26T00:00:00Z'))
+    const policy = sessionPolicy({
+      idleTimeoutEnabled: true,
+      idleTimeoutMinutes: 15,
+      absoluteLifetimeEnabled: false,
+      absoluteExpiresAt: null,
+    })
+    vi.mocked(login).mockResolvedValue(authResponse({ sessionPolicy: policy }))
+    vi.mocked(getSessionPolicy).mockResolvedValue(policy)
+    const auth = useAuthStore()
+    const expired = vi.fn()
+
+    await auth.login('admin', 'admin123')
+    auth.startSessionLifecycleMonitor(expired)
+    vi.advanceTimersByTime(15 * 60_000)
+
+    expect(auth.isAuthenticated).toBe(false)
+    expect(expired).toHaveBeenCalledWith('登录空闲超时，请重新登录')
+    auth.stopSessionLifecycleMonitor()
+  })
+
+  it('extends idle timeout after user activity', async () => {
+    vi.useFakeTimers()
+    vi.setSystemTime(new Date('2026-04-26T00:00:00Z'))
+    const policy = sessionPolicy({
+      idleTimeoutEnabled: true,
+      idleTimeoutMinutes: 15,
+      absoluteLifetimeEnabled: false,
+      absoluteExpiresAt: null,
+    })
+    vi.mocked(login).mockResolvedValue(authResponse({ sessionPolicy: policy }))
+    vi.mocked(getSessionPolicy).mockResolvedValue(policy)
+    const auth = useAuthStore()
+    const expired = vi.fn()
+
+    await auth.login('admin', 'admin123')
+    auth.startSessionLifecycleMonitor(expired)
+    vi.advanceTimersByTime(10 * 60_000)
+    auth.recordSessionActivity(false)
+    vi.advanceTimersByTime(10 * 60_000)
+
+    expect(auth.isAuthenticated).toBe(true)
+    expect(expired).not.toHaveBeenCalled()
+    auth.stopSessionLifecycleMonitor()
+  })
+
+  it('expires at the absolute session deadline', async () => {
+    vi.useFakeTimers()
+    vi.setSystemTime(new Date('2026-04-26T00:00:00Z'))
+    const policy = sessionPolicy({
+      idleTimeoutEnabled: false,
+      absoluteLifetimeEnabled: true,
+      absoluteExpiresAt: '2026-04-26T01:00:00Z',
+    })
+    vi.mocked(login).mockResolvedValue(authResponse({ sessionPolicy: policy }))
+    vi.mocked(getSessionPolicy).mockResolvedValue(policy)
+    const auth = useAuthStore()
+    const expired = vi.fn()
+
+    await auth.login('admin', 'admin123')
+    auth.startSessionLifecycleMonitor(expired)
+    vi.advanceTimersByTime(60 * 60_000)
+
+    expect(auth.isAuthenticated).toBe(false)
+    expect(expired).toHaveBeenCalledWith('登录已超过最长会话时长，请重新登录')
+    auth.stopSessionLifecycleMonitor()
   })
 })

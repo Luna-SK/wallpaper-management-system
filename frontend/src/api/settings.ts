@@ -25,6 +25,10 @@ export interface SystemSettings {
     | 'BOTTOM_RIGHT'
   watermarkOpacityPercent: number
   watermarkTileDensity: 'SPARSE' | 'NORMAL' | 'DENSE'
+  sessionIdleTimeoutEnabled: boolean
+  sessionIdleTimeoutMinutes: number
+  sessionAbsoluteLifetimeEnabled: boolean
+  sessionAbsoluteLifetimeDays: number
 }
 
 export type SystemSettingsUpdate = Omit<SystemSettings, 'maxFileHardLimitMb' | 'maxBatchHardLimitMb'>

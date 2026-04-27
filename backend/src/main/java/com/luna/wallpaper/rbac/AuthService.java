@@ -37,6 +37,7 @@ import com.luna.wallpaper.rbac.AuthDtos.PasswordChangeRequest;
 import com.luna.wallpaper.rbac.AuthDtos.ProfileUpdateRequest;
 import com.luna.wallpaper.rbac.AuthDtos.RefreshRequest;
 import com.luna.wallpaper.rbac.AuthDtos.RegisterRequest;
+import com.luna.wallpaper.rbac.AuthDtos.SessionPolicyResponse;
 import com.luna.wallpaper.rbac.JwtTokenService.AccessTokenClaims;
 
 @Service
@@ -56,11 +57,13 @@ public class AuthService {
 	private final JwtTokenService jwtTokenService;
 	private final SecurityProperties securityProperties;
 	private final AuditLogService auditLogService;
+	private final SessionLifecyclePolicyService sessionLifecycle;
 	private final SecureRandom secureRandom = new SecureRandom();
 
 	AuthService(AppUserMapper users, RoleMapper roles, PermissionMapper permissions, UserRoleMapper userRoles,
 			RolePermissionMapper rolePermissions, AuthRefreshTokenMapper refreshTokens, PasswordEncoder passwordEncoder,
-			JwtTokenService jwtTokenService, SecurityProperties securityProperties, AuditLogService auditLogService) {
+			JwtTokenService jwtTokenService, SecurityProperties securityProperties, AuditLogService auditLogService,
+			SessionLifecyclePolicyService sessionLifecycle) {
 		this.users = users;
 		this.roles = roles;
 		this.permissions = permissions;
@@ -71,6 +74,7 @@ public class AuthService {
 		this.jwtTokenService = jwtTokenService;
 		this.securityProperties = securityProperties;
 		this.auditLogService = auditLogService;
+		this.sessionLifecycle = sessionLifecycle;
 	}
 
 	@Transactional
@@ -113,12 +117,13 @@ public class AuthService {
 	public AuthResponse refresh(RefreshRequest request, HttpServletRequest servletRequest) {
 		AuthRefreshToken session = Optional.ofNullable(refreshTokens.selectByTokenHash(sha256(request.refreshToken())))
 				.orElseThrow(() -> new BadCredentialsException("登录已失效，请重新登录"));
-		if (!session.isActive(LocalDateTime.now())) {
+		LocalDateTime now = LocalDateTime.now();
+		if (!sessionLifecycle.isValid(session, now)) {
 			throw new BadCredentialsException("登录已失效，请重新登录");
 		}
 		AppUser user = requireActiveUser(session.userId());
 		UserAccess access = loadUserAccess(user);
-		TokenBundle tokens = rotateSessionAndTokens(session, user, servletRequest);
+		TokenBundle tokens = rotateSessionAndTokens(session, user, servletRequest, now);
 		auditLogService.record("auth.refresh", "USER", user.id(), Map.of("sessionId", session.id()));
 		return response(access, tokens);
 	}
@@ -134,6 +139,18 @@ public class AuthService {
 	public AuthUserResponse me(Authentication authentication) {
 		AuthenticatedUser current = currentUser(authentication);
 		return userResponse(loadUserAccess(requireActiveUser(current.id())));
+	}
+
+	@Transactional(readOnly = true)
+	public SessionPolicyResponse sessionPolicy(Authentication authentication) {
+		AuthenticatedUser current = currentUser(authentication);
+		AuthRefreshToken session = Optional.ofNullable(refreshTokens.selectById(current.sessionId()))
+				.orElseThrow(() -> new BadCredentialsException("登录已失效，请重新登录"));
+		LocalDateTime now = LocalDateTime.now();
+		if (!sessionLifecycle.isValid(session, now)) {
+			throw new BadCredentialsException("登录已失效，请重新登录");
+		}
+		return sessionLifecycle.response(session, Instant.now());
 	}
 
 	@Transactional
@@ -171,14 +188,16 @@ public class AuthService {
 		auditLogService.record("user.password.reset", "USER", user.id(), Map.of("revokedSessions", true));
 	}
 
-	@Transactional(readOnly = true)
+	@Transactional
 	public Optional<Authentication> authenticateAccessToken(String accessToken) {
 		try {
 			AccessTokenClaims claims = jwtTokenService.parse(accessToken);
 			AuthRefreshToken session = refreshTokens.selectById(claims.sessionId());
-			if (session == null || !session.isActive(LocalDateTime.now())) {
+			LocalDateTime now = LocalDateTime.now();
+			if (!sessionLifecycle.isValid(session, now)) {
 				return Optional.empty();
 			}
+			touchSessionIfNeeded(session, now);
 			UserAccess access = loadUserAccess(requireActiveUser(claims.userId()));
 			AuthenticatedUser principal = new AuthenticatedUser(access.user().id(), access.user().username(),
 					access.user().displayName(), session.id());
@@ -196,32 +215,51 @@ public class AuthService {
 
 	private TokenBundle createSessionAndTokens(AppUser user, HttpServletRequest request) {
 		String refreshToken = newRefreshToken();
-		Instant refreshExpiresAt = Instant.now().plus(securityProperties.safeRefreshTokenTtl());
+		Instant now = Instant.now();
+		Instant refreshExpiresAt = now.plus(securityProperties.safeRefreshTokenTtl());
 		AuthRefreshToken session = new AuthRefreshToken(user.id(), sha256(refreshToken),
 				toLocalDateTime(refreshExpiresAt), clientIp(request), userAgent(request));
 		refreshTokens.insert(session);
+		refreshExpiresAt = sessionLifecycle.cappedRefreshExpiresAt(session, refreshExpiresAt);
+		if (session.expiresAt().isAfter(toLocalDateTime(refreshExpiresAt))) {
+			session.rotate(session.tokenHash(), toLocalDateTime(refreshExpiresAt), session.lastActivityAt());
+			refreshTokens.updateById(session);
+		}
 		return accessAndRefreshTokens(user, session, refreshToken, refreshExpiresAt);
 	}
 
-	private TokenBundle rotateSessionAndTokens(AuthRefreshToken session, AppUser user, HttpServletRequest request) {
+	private TokenBundle rotateSessionAndTokens(AuthRefreshToken session, AppUser user, HttpServletRequest request,
+			LocalDateTime activityAt) {
 		String refreshToken = newRefreshToken();
 		Instant refreshExpiresAt = Instant.now().plus(securityProperties.safeRefreshTokenTtl());
-		session.rotate(sha256(refreshToken), toLocalDateTime(refreshExpiresAt));
+		refreshExpiresAt = sessionLifecycle.cappedRefreshExpiresAt(session, refreshExpiresAt);
+		session.rotate(sha256(refreshToken), toLocalDateTime(refreshExpiresAt), activityAt);
 		refreshTokens.updateById(session);
 		return accessAndRefreshTokens(user, session, refreshToken, refreshExpiresAt);
 	}
 
 	private TokenBundle accessAndRefreshTokens(AppUser user, AuthRefreshToken session, String refreshToken,
 			Instant refreshExpiresAt) {
-		Instant accessExpiresAt = Instant.now().plus(securityProperties.safeAccessTokenTtl());
+		Instant accessExpiresAt = sessionLifecycle.cappedAccessExpiresAt(session,
+				Instant.now().plus(securityProperties.safeAccessTokenTtl()));
 		String accessToken = jwtTokenService.createAccessToken(user, session.id(), accessExpiresAt);
-		return new TokenBundle(accessToken, refreshToken, accessExpiresAt, refreshExpiresAt);
+		return new TokenBundle(accessToken, refreshToken, accessExpiresAt, refreshExpiresAt,
+				sessionLifecycle.response(session, Instant.now()));
+	}
+
+	private void touchSessionIfNeeded(AuthRefreshToken session, LocalDateTime now) {
+		if (!sessionLifecycle.shouldTouch(session, now)) {
+			return;
+		}
+		session.markActivity(now);
+		refreshTokens.updateById(session);
 	}
 
 	private AuthResponse response(UserAccess access, TokenBundle tokens) {
 		List<String> permissionCodes = access.permissions().stream().map(Permission::code).distinct().toList();
 		return new AuthResponse(access.user().username(), TOKEN_TYPE, tokens.accessToken(), tokens.refreshToken(),
-				tokens.accessExpiresAt(), tokens.refreshExpiresAt(), userResponse(access), permissionCodes);
+				tokens.accessExpiresAt(), tokens.refreshExpiresAt(), userResponse(access), permissionCodes,
+				tokens.sessionPolicy());
 	}
 
 	private AuthUserResponse userResponse(UserAccess access) {
@@ -335,7 +373,7 @@ public class AuthService {
 	}
 
 	private record TokenBundle(String accessToken, String refreshToken, Instant accessExpiresAt,
-			Instant refreshExpiresAt) {
+			Instant refreshExpiresAt, SessionPolicyResponse sessionPolicy) {
 	}
 
 	private record RolePermissionAssignment(String roleId, Permission permission) {

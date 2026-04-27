@@ -42,6 +42,16 @@ export interface LoginResponse {
   refreshTokenExpiresAt: string
   user: AuthUser
   permissions: string[]
+  sessionPolicy: SessionPolicy
+}
+
+export interface SessionPolicy {
+  idleTimeoutEnabled: boolean
+  idleTimeoutMinutes: number
+  absoluteLifetimeEnabled: boolean
+  absoluteLifetimeDays: number
+  absoluteExpiresAt: string | null
+  serverTime: string
 }
 
 export interface RegisterRequest {
@@ -64,6 +74,11 @@ export async function register(payload: RegisterRequest) {
 
 export async function refreshSession(refreshToken: string) {
   const response = await http.post<ApiResponse<LoginResponse>>('/auth/refresh', { refreshToken })
+  return response.data.data
+}
+
+export async function getSessionPolicy() {
+  const response = await http.get<ApiResponse<SessionPolicy>>('/auth/session-policy')
   return response.data.data
 }
 

@@ -3,7 +3,7 @@
 ## User And RBAC
 
 - `app_users`：用户名、展示名、邮箱、手机、密码哈希、状态；状态为 `ACTIVE` 或 `DISABLED`。
-- `auth_refresh_tokens`：refresh/session 记录，保存 token 哈希、用户、过期时间、撤销时间、创建 IP 和 User-Agent。
+- `auth_refresh_tokens`：refresh/session 记录，保存 token 哈希、用户、过期时间、撤销时间、最近活动时间、创建 IP 和 User-Agent。
 - `roles`：系统管理员、数据管理员、标签编辑人员、普通浏览用户；`enabled=false` 表示角色已停用。
 - `permissions`：资源动作权限。
 - `user_roles`、`role_permissions`：授权关系。
