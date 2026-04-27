@@ -374,14 +374,14 @@ onMounted(refresh)
 </script>
 
 <template>
-  <section>
+  <section class="workspace-page">
     <div class="page-head">
       <div>
         <p>用户、角色、权限和访问范围管理。</p>
       </div>
     </div>
 
-    <div v-loading="loading" class="surface surface-pad">
+    <div v-loading="loading" class="surface surface-pad workspace-scroll-region">
       <el-tabs>
         <el-tab-pane v-if="canManageUsers" label="用户">
           <div class="toolbar-row">
