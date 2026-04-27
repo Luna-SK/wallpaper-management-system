@@ -21,6 +21,19 @@ const AUTH_EXPIRED_KEY = 'wzut-wallpaper-auth-expired'
 const ACTIVITY_EVENTS = ['mousedown', 'keydown', 'scroll', 'touchstart', 'wheel', 'pointerdown']
 const ACTIVITY_BROADCAST_INTERVAL_MS = 5000
 const DEFAULT_CHECK_INTERVAL_MS = 60_000
+const DEFAULT_IDLE_TIMEOUT_MINUTES = 120
+const DEFAULT_ABSOLUTE_LIFETIME_DAYS = 7
+
+function defaultSessionPolicy(): SessionPolicy {
+  return {
+    idleTimeoutEnabled: true,
+    idleTimeoutMinutes: DEFAULT_IDLE_TIMEOUT_MINUTES,
+    absoluteLifetimeEnabled: true,
+    absoluteLifetimeDays: DEFAULT_ABSOLUTE_LIFETIME_DAYS,
+    absoluteExpiresAt: null,
+    serverTime: new Date().toISOString(),
+  }
+}
 
 export const useAuthStore = defineStore('auth', () => {
   const stored = getStoredAuthState()
@@ -182,11 +195,7 @@ export const useAuthStore = defineStore('auth', () => {
       clearLifecycleTimer()
       return false
     }
-    const policy = sessionPolicy.value
-    if (!policy) {
-      scheduleLifecycleCheck(DEFAULT_CHECK_INTERVAL_MS)
-      return true
-    }
+    const policy = effectiveSessionPolicy()
     const now = Date.now()
     if (policy.absoluteLifetimeEnabled && policy.absoluteExpiresAt) {
       const absoluteExpiresAt = Date.parse(policy.absoluteExpiresAt)
@@ -206,14 +215,10 @@ export const useAuthStore = defineStore('auth', () => {
     return true
   }
 
-  function scheduleLifecycleCheck(delayOverride?: number) {
+  function scheduleLifecycleCheck() {
     clearLifecycleTimer()
     if (!isAuthenticated.value) return
-    const policy = sessionPolicy.value
-    if (!policy) {
-      lifecycleTimer = window.setTimeout(checkSessionLifecycle, delayOverride ?? DEFAULT_CHECK_INTERVAL_MS)
-      return
-    }
+    const policy = effectiveSessionPolicy()
     const now = Date.now()
     const candidates: number[] = []
     if (policy.idleTimeoutEnabled) {
@@ -227,6 +232,10 @@ export const useAuthStore = defineStore('auth', () => {
     }
     const nextDelay = candidates.length > 0 ? Math.min(...candidates) : DEFAULT_CHECK_INTERVAL_MS
     lifecycleTimer = window.setTimeout(checkSessionLifecycle, Math.max(0, Math.min(nextDelay, DEFAULT_CHECK_INTERVAL_MS)))
+  }
+
+  function effectiveSessionPolicy() {
+    return sessionPolicy.value ?? defaultSessionPolicy()
   }
 
   function clearLifecycleTimer() {

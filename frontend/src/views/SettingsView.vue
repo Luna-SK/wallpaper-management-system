@@ -167,7 +167,7 @@ onMounted(loadSettings)
 </script>
 
 <template>
-  <section>
+  <section class="settings-page">
     <div class="page-head">
       <div>
         <p>上传限制、预览质量、已停用图片清理和审计日志保留配置。</p>
@@ -175,7 +175,7 @@ onMounted(loadSettings)
       <el-button type="primary" :loading="saving" @click="saveSettings">保存系统设置</el-button>
     </div>
 
-    <div v-loading="loading" class="surface surface-pad">
+    <div v-loading="loading" class="surface surface-pad settings-scroll-surface">
       <el-form label-width="150px" style="max-width: 760px">
         <div class="form-section">
           <h2>基础设置</h2>
@@ -348,6 +348,25 @@ onMounted(loadSettings)
 </template>
 
 <style scoped>
+.settings-page {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.settings-page .page-head {
+  flex: 0 0 auto;
+}
+
+.settings-scroll-surface {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-x: hidden;
+  overflow-y: auto;
+}
+
 .form-section + .form-section {
   border-top: 1px solid #e5e7eb;
   margin-top: 26px;

@@ -165,6 +165,28 @@ describe('auth store', () => {
     auth.stopSessionLifecycleMonitor()
   })
 
+  it('uses the default idle policy before the server policy is loaded', () => {
+    vi.useFakeTimers()
+    vi.setSystemTime(new Date('2026-04-26T00:00:00Z'))
+    vi.mocked(getSessionPolicy).mockReturnValue(new Promise<SessionPolicy>(() => undefined))
+    window.localStorage.setItem('wzut-wallpaper-auth', JSON.stringify({
+      accessToken: 'stored-access-token',
+      refreshToken: 'stored-refresh-token',
+      user: authResponse().user,
+      permissions: ['image:view'],
+      lastActivityAt: Date.now(),
+    }))
+    const auth = useAuthStore()
+    const expired = vi.fn()
+
+    auth.startSessionLifecycleMonitor(expired)
+    vi.advanceTimersByTime(120 * 60_000)
+
+    expect(auth.isAuthenticated).toBe(false)
+    expect(expired).toHaveBeenCalledWith('登录空闲超时，请重新登录')
+    auth.stopSessionLifecycleMonitor()
+  })
+
   it('extends idle timeout after user activity', async () => {
     vi.useFakeTimers()
     vi.setSystemTime(new Date('2026-04-26T00:00:00Z'))
