@@ -8,6 +8,7 @@ import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
+import org.springframework.security.core.Authentication;
 import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PatchMapping;
@@ -28,6 +29,7 @@ import com.luna.wallpaper.image.ImageDtos.ImageUpdateRequest;
 import com.luna.wallpaper.image.ImageDtos.ImageVersionResponse;
 import com.luna.wallpaper.image.ImageDtos.UploadBatchResponse;
 import com.luna.wallpaper.image.ImageDtos.UploadSessionCreateRequest;
+import com.luna.wallpaper.rbac.AuthenticatedUser;
 
 @RestController
 @RequestMapping("/api")
@@ -43,15 +45,16 @@ class ImageController {
 	@PreAuthorize("hasAuthority('image:view')")
 	ImagePageResponse images(@RequestParam(required = false) String keyword,
 			@RequestParam(required = false) String categoryId, @RequestParam(required = false) String tagId,
-			@RequestParam(required = false) String status,
+			@RequestParam(required = false) String status, @RequestParam(defaultValue = "false") boolean favoriteOnly,
+			Authentication authentication,
 			@RequestParam(defaultValue = "1") int page, @RequestParam(defaultValue = "20") int size) {
-		return service.list(keyword, categoryId, tagId, status, page, size);
+		return service.list(keyword, categoryId, tagId, status, favoriteOnly, currentUserId(authentication), page, size);
 	}
 
 	@GetMapping("/images/{id}")
 	@PreAuthorize("hasAuthority('image:view')")
-	ImageResponse detail(@PathVariable String id) {
-		return service.detail(id);
+	ImageResponse detail(@PathVariable String id, Authentication authentication) {
+		return service.detail(id, currentUserId(authentication));
 	}
 
 	@PatchMapping("/images/{id}")
@@ -263,5 +266,12 @@ class ImageController {
 				.header(HttpHeaders.CONTENT_DISPOSITION,
 						ContentDisposition.inline().filename(file.filename(), StandardCharsets.UTF_8).build().toString())
 				.body(service.read(file));
+	}
+
+	private String currentUserId(Authentication authentication) {
+		if (authentication != null && authentication.getPrincipal() instanceof AuthenticatedUser user) {
+			return user.id();
+		}
+		throw new IllegalArgumentException("请先登录");
 	}
 }

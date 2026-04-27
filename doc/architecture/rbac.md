@@ -31,10 +31,13 @@
 - `audit:manage`
 - `setting:manage`
 - `backup:manage`
+- `interaction:manage`
 
 后端必须在接口层和方法层同时表达敏感操作权限。前端菜单、路由和操作按钮按权限收敛展示，只作为体验优化，不作为安全边界。
 
 `audit:view` 允许查看近期审计日志和归档历史；`audit:manage` 允许修改保留策略并手动触发归档清理。
+
+图片评论、收藏、点赞复用 `image:view` 权限：能查看图片的登录用户即可参与互动。`interaction:manage` 允许查看并处理全部用户反馈，以及删除不当评论；该权限默认授予系统管理员和数据管理员。普通用户只能编辑或删除自己的评论，只能查看、提交和关闭自己的反馈。
 
 ## Authentication Runtime
 

@@ -33,6 +33,8 @@ import com.luna.wallpaper.image.ImageDtos.ImageUpdateRequest;
 import com.luna.wallpaper.image.ImageDtos.ImageVersionResponse;
 import com.luna.wallpaper.image.ImageDtos.UploadBatchResponse;
 import com.luna.wallpaper.image.ImageDtos.UploadSessionCreateRequest;
+import com.luna.wallpaper.interaction.InteractionDtos.ImageInteractionSummary;
+import com.luna.wallpaper.interaction.InteractionService;
 import com.luna.wallpaper.settings.ImageVersionSettings;
 import com.luna.wallpaper.settings.SoftDeleteCleanupSettings;
 import com.luna.wallpaper.settings.SystemSettingService;
@@ -62,12 +64,13 @@ class ImageService {
 	private final SystemSettingService settings;
 	private final UploadLimitService uploadLimitService;
 	private final AuditLogService auditLogService;
+	private final InteractionService interactionService;
 
 	ImageService(ImageAssetMapper images, ImageVersionMapper versions, UploadBatchMapper batches,
 			UploadBatchItemMapper batchItems, ImageTagMapper imageTags, UploadBatchTagMapper uploadBatchTags,
 			CategoryMapper categories, TagGroupMapper tagGroups, TagMapper tags,
 			ImageStorageService storage, SystemSettingService settings, UploadLimitService uploadLimitService,
-			AuditLogService auditLogService) {
+			AuditLogService auditLogService, InteractionService interactionService) {
 		this.images = images;
 		this.versions = versions;
 		this.batches = batches;
@@ -81,23 +84,32 @@ class ImageService {
 		this.settings = settings;
 		this.uploadLimitService = uploadLimitService;
 		this.auditLogService = auditLogService;
+		this.interactionService = interactionService;
 	}
 
 	@Transactional(readOnly = true)
-	ImagePageResponse list(String keyword, String categoryId, String tagId, String status, int page, int size) {
+	ImagePageResponse list(String keyword, String categoryId, String tagId, String status, boolean favoriteOnly,
+			String viewerId, int page, int size) {
 		String query = keyword == null || keyword.isBlank() ? null : keyword.trim();
 		ImageStatus statusFilter = ImageStatus.parseOrNull(status);
 		int safePage = Math.max(1, page);
 		int safeSize = Math.min(Math.max(1, size), 100);
-		long total = images.countSearch(query, blankToNull(categoryId), blankToNull(tagId), statusFilter);
+		long total = images.countSearch(query, blankToNull(categoryId), blankToNull(tagId), statusFilter,
+				favoriteOnly, viewerId);
 		List<ImageAsset> result = total == 0 ? List.of() : loadImages(images.searchIds(query, blankToNull(categoryId),
-				blankToNull(tagId), statusFilter, (long) (safePage - 1) * safeSize, safeSize));
-		return new ImagePageResponse(result.stream().map(ImageResponse::from).toList(), safePage, safeSize, total);
+				blankToNull(tagId), statusFilter, favoriteOnly, viewerId, (long) (safePage - 1) * safeSize, safeSize));
+		Map<String, ImageInteractionSummary> interactions = interactionService.summaries(
+				result.stream().map(ImageAsset::id).toList(), viewerId);
+		return new ImagePageResponse(result.stream()
+				.map(image -> ImageResponse.from(image,
+						interactions.getOrDefault(image.id(), ImageInteractionSummary.empty(image.id()))))
+				.toList(), safePage, safeSize, total);
 	}
 
 	@Transactional(readOnly = true)
-	ImageResponse detail(String id) {
-		return ImageResponse.from(getImage(id));
+	ImageResponse detail(String id, String viewerId) {
+		ImageAsset image = getImage(id);
+		return ImageResponse.from(image, interactionService.summary(image.id(), viewerId));
 	}
 
 	@Transactional
@@ -648,6 +660,7 @@ class ImageService {
 		if (!imageVersions.isEmpty()) {
 			versions.deleteVersionsByIds(imageVersions.stream().map(ImageVersion::id).toList());
 		}
+		interactionService.cleanupForImagePurge(image.id());
 		imageTags.deleteByImageId(image.id());
 		images.deleteById(image.id());
 		auditLogService.record("image.purge", "IMAGE", image.id(), auditDetail);

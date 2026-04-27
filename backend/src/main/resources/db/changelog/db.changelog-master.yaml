@@ -27,3 +27,5 @@ databaseChangeLog:
       file: db/changelog/013-password-reset-tokens.yaml
   - include:
       file: db/changelog/014-unique-user-email.yaml
+  - include:
+      file: db/changelog/015-user-interactions-feedback.yaml

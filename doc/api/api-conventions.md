@@ -73,6 +73,19 @@
 - `GET /api/images/{id}/thumbnail`
 - `GET /api/images/{id}/preview`
 - `GET /api/images/{id}/download`
+- `GET /api/images/{id}/comments`
+- `POST /api/images/{id}/comments`
+- `PATCH /api/images/{id}/comments/{commentId}`
+- `DELETE /api/images/{id}/comments/{commentId}`
+- `POST /api/images/{id}/favorite`
+- `DELETE /api/images/{id}/favorite`
+- `POST /api/images/{id}/like`
+- `DELETE /api/images/{id}/like`
+- `GET /api/feedback`
+- `POST /api/feedback`
+- `POST /api/feedback/{id}/close`
+- `GET /api/feedback/admin`
+- `PATCH /api/feedback/admin/{id}`
 - `GET /api/categories`
 - `POST /api/categories`
 - `PATCH /api/categories/{id}`
@@ -102,6 +115,12 @@
 确认入库前，暂存文件不会出现在图片库。取消会话、过期会话和孤儿对象清理都会删除未被 `image_versions` 引用的 RustFS 对象。
 
 图片记录只关联一个分类。`GET /api/images` 和 `GET /api/images/{id}` 返回 `category` 对象或 `null`，`PATCH /api/images/{id}` 使用单个 `categoryId` 更新分类，标签使用 `tagIds` 多选且不受分类限制。标签响应包含 `groupId` 和 `groupName`。
+
+图片列表和详情响应同时返回互动统计：`favoriteCount`、`likeCount`、`commentCount`、`favoritedByMe`、`likedByMe`。`GET /api/images` 支持 `favoriteOnly=true`，用于只查看当前登录用户收藏的图片，并可与关键词、分类、标签和状态筛选叠加。
+
+图片互动接口使用 `image:view` 权限。登录用户可对可查看图片评论、收藏和点赞；评论分页通过 `GET /api/images/{id}/comments` 返回，发布、编辑和删除评论分别使用 `POST`、`PATCH` 和 `DELETE`。用户只能编辑和删除自己的评论；拥有 `interaction:manage` 的管理员或数据管理员可删除不当评论。收藏和点赞通过 `POST /api/images/{id}/favorite|like` 开启，通过 `DELETE` 取消，用户与图片维度保持唯一，重复操作保持幂等。
+
+用户反馈接口要求登录。普通用户通过 `POST /api/feedback` 提交反馈，可选关联图片 ID，通过 `GET /api/feedback` 查看自己的反馈，并可用 `POST /api/feedback/{id}/close` 关闭自己的未关闭反馈。拥有 `interaction:manage` 权限的用户可通过 `GET /api/feedback/admin` 按状态和关键词查看全部反馈，并用 `PATCH /api/feedback/admin/{id}` 更新状态与处理回复。反馈状态包括 `OPEN`、`IN_PROGRESS`、`RESOLVED`、`CLOSED`。
 
 在线图像编辑使用 `image:edit` 权限。前端通过 `GET /api/images/{id}/edit-source` 读取无水印当前版本作为编辑源，通过 `POST /api/images/{id}/edit` 提交编辑后的图片文件和操作摘要；后端创建新的 `image_versions` 记录并更新当前版本，原始对象不会被覆盖。
 

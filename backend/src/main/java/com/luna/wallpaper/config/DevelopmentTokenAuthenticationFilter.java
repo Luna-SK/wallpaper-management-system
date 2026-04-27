@@ -32,7 +32,8 @@ class DevelopmentTokenAuthenticationFilter extends OncePerRequestFilter {
 			new SimpleGrantedAuthority("audit:view"),
 			new SimpleGrantedAuthority("audit:manage"),
 			new SimpleGrantedAuthority("setting:manage"),
-			new SimpleGrantedAuthority("backup:manage"));
+			new SimpleGrantedAuthority("backup:manage"),
+			new SimpleGrantedAuthority("interaction:manage"));
 
 	private final SecurityProperties properties;
 

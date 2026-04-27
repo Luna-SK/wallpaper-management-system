@@ -24,6 +24,9 @@ public interface ImageAssetMapper extends BaseMapper<ImageAsset> {
 	@Select("select * from images where status = #{status}")
 	List<ImageAsset> selectByStatus(@Param("status") ImageStatus status);
 
+	@Select("select count(*) from images where id = #{id} and status <> 'DELETED'")
+	int countRetainedById(@Param("id") String id);
+
 	@Select("select * from images where status = #{status} and deleted_at < #{deletedAt}")
 	List<ImageAsset> selectByStatusAndDeletedAtBefore(@Param("status") ImageStatus status,
 			@Param("deletedAt") LocalDateTime deletedAt);
@@ -62,10 +65,19 @@ public interface ImageAssetMapper extends BaseMapper<ImageAsset> {
 			        and tag_group.enabled = true
 			    )
 			  </if>
+			  <if test="favoriteOnly">
+			    and exists (
+			      select 1
+			      from image_favorites favorite
+			      where favorite.image_id = image.id
+			        and favorite.user_id = #{userId}
+			    )
+			  </if>
 			</script>
 			""")
 	long countSearch(@Param("keyword") String keyword, @Param("categoryId") String categoryId,
-			@Param("tagId") String tagId, @Param("status") ImageStatus status);
+			@Param("tagId") String tagId, @Param("status") ImageStatus status,
+			@Param("favoriteOnly") boolean favoriteOnly, @Param("userId") String userId);
 
 	@Select("""
 			<script>
@@ -101,13 +113,22 @@ public interface ImageAssetMapper extends BaseMapper<ImageAsset> {
 			        and tag_group.enabled = true
 			    )
 			  </if>
+			  <if test="favoriteOnly">
+			    and exists (
+			      select 1
+			      from image_favorites favorite
+			      where favorite.image_id = image.id
+			        and favorite.user_id = #{userId}
+			    )
+			  </if>
 			order by image.created_at desc, image.id desc
 			limit #{size} offset #{offset}
 			</script>
 			""")
 	List<String> searchIds(@Param("keyword") String keyword, @Param("categoryId") String categoryId,
-			@Param("tagId") String tagId, @Param("status") ImageStatus status, @Param("offset") long offset,
-			@Param("size") long size);
+			@Param("tagId") String tagId, @Param("status") ImageStatus status,
+			@Param("favoriteOnly") boolean favoriteOnly, @Param("userId") String userId,
+			@Param("offset") long offset, @Param("size") long size);
 
 	@Select("select count(*) from images where status <> #{status}")
 	long countByStatusNot(@Param("status") ImageStatus status);
