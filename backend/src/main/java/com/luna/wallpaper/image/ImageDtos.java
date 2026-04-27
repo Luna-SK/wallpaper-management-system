@@ -3,6 +3,7 @@ package com.luna.wallpaper.image;
 import java.time.LocalDateTime;
 import java.util.List;
 
+import com.luna.wallpaper.interaction.InteractionDtos.ImageInteractionSummary;
 import com.luna.wallpaper.taxonomy.Category;
 import com.luna.wallpaper.taxonomy.Tag;
 
@@ -37,11 +38,18 @@ public final class ImageDtos {
 	}
 
 	public record ImageResponse(String id, String title, String originalFilename, String mimeType, long sizeBytes,
-			Integer width, Integer height, String status, long viewCount, long downloadCount, CategoryBrief category,
+			Integer width, Integer height, String status, long viewCount, long downloadCount, long favoriteCount,
+			long likeCount, long commentCount, boolean favoritedByMe, boolean likedByMe, CategoryBrief category,
 			List<TagBrief> tags, LocalDateTime createdAt) {
 		static ImageResponse from(ImageAsset image) {
+			return from(image, ImageInteractionSummary.empty(image.id()));
+		}
+
+		static ImageResponse from(ImageAsset image, ImageInteractionSummary interaction) {
 			return new ImageResponse(image.id(), image.title(), image.originalFilename(), image.mimeType(), image.sizeBytes(),
 					image.width(), image.height(), image.status().name(), image.viewCount(), image.downloadCount(),
+					interaction.favoriteCount(), interaction.likeCount(), interaction.commentCount(),
+					interaction.favoritedByMe(), interaction.likedByMe(),
 					image.category() == null ? null : CategoryBrief.from(image.category()),
 					image.tags().stream().map(TagBrief::from).toList(), image.createdAt());
 		}

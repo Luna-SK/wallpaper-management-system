@@ -13,6 +13,7 @@ import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 
 import org.junit.jupiter.api.BeforeEach;
@@ -22,6 +23,7 @@ import org.springframework.mock.web.MockMultipartFile;
 import org.springframework.test.util.ReflectionTestUtils;
 
 import com.luna.wallpaper.audit.AuditLogService;
+import com.luna.wallpaper.interaction.InteractionService;
 import com.luna.wallpaper.settings.SystemSettingService;
 import com.luna.wallpaper.settings.UploadLimitService;
 import com.luna.wallpaper.settings.UploadLimitService.UploadLimitSettings;
@@ -46,9 +48,10 @@ class ImageServiceTests {
 	private final SystemSettingService settings = mock(SystemSettingService.class);
 	private final UploadLimitService uploadLimitService = mock(UploadLimitService.class);
 	private final AuditLogService auditLogService = mock(AuditLogService.class);
+	private final InteractionService interactionService = mock(InteractionService.class);
 	private final ImageService service = new ImageService(images, versions,
 			batches, batchItems, imageTags, uploadBatchTags, categories, tagGroups, tags, storage,
-			settings, uploadLimitService, auditLogService);
+			settings, uploadLimitService, auditLogService, interactionService);
 
 	@BeforeEach
 	void setUp() {
@@ -59,6 +62,7 @@ class ImageServiceTests {
 		when(settings.get("watermark.position", "BOTTOM_RIGHT")).thenAnswer(invocation -> invocation.getArgument(1));
 		when(settings.get("watermark.opacity_percent", "16")).thenAnswer(invocation -> invocation.getArgument(1));
 		when(settings.get("watermark.tile_density", "SPARSE")).thenAnswer(invocation -> invocation.getArgument(1));
+		when(interactionService.summaries(any(), any())).thenReturn(Map.of());
 	}
 
 	@Test
@@ -104,12 +108,12 @@ class ImageServiceTests {
 	void listHandlesDeletedImagesWithoutCategory() {
 		ImageAsset deleted = image("image-deleted", "已停用未分类", 0, 0);
 		ReflectionTestUtils.setField(deleted, "status", ImageStatus.DELETED);
-		when(images.countSearch(null, null, null, ImageStatus.DELETED)).thenReturn(1L);
-		when(images.searchIds(null, null, null, ImageStatus.DELETED, 0L, 20)).thenReturn(List.of(deleted.id()));
+		when(images.countSearch(null, null, null, ImageStatus.DELETED, false, "viewer-1")).thenReturn(1L);
+		when(images.searchIds(null, null, null, ImageStatus.DELETED, false, "viewer-1", 0L, 20)).thenReturn(List.of(deleted.id()));
 		when(images.selectImagesByIds(List.of(deleted.id()))).thenReturn(List.of(deleted));
 		when(imageTags.selectByImageIds(List.of(deleted.id()))).thenReturn(List.of());
 
-		var page = service.list(null, null, null, "DELETED", 1, 20);
+		var page = service.list(null, null, null, "DELETED", false, "viewer-1", 1, 20);
 
 		assertThat(page.items()).hasSize(1);
 		assertThat(page.items().getFirst().category()).isNull();
@@ -125,8 +129,8 @@ class ImageServiceTests {
 		Tag hiddenByGroupTag = tag("tag-hidden-group", "group-disabled", "停用组标签", true);
 		TagGroup activeGroup = tagGroup("group-active", "启用组", true);
 		TagGroup disabledGroup = tagGroup("group-disabled", "停用组", false);
-		when(images.countSearch(null, null, null, null)).thenReturn(1L);
-		when(images.searchIds(null, null, null, null, 0L, 20)).thenReturn(List.of(image.id()));
+		when(images.countSearch(null, null, null, null, false, "viewer-1")).thenReturn(1L);
+		when(images.searchIds(null, null, null, null, false, "viewer-1", 0L, 20)).thenReturn(List.of(image.id()));
 		when(images.selectImagesByIds(List.of(image.id()))).thenReturn(List.of(image));
 		when(imageTags.selectByImageIds(List.of(image.id()))).thenReturn(List.of(
 				imageTagLink(image.id(), visibleTag.id()),
@@ -136,7 +140,7 @@ class ImageServiceTests {
 				.thenReturn(List.of(visibleTag, disabledTag, hiddenByGroupTag));
 		when(tagGroups.selectBatchIds(any())).thenReturn(List.of(activeGroup, disabledGroup));
 
-		var page = service.list(null, null, null, null, 1, 20);
+		var page = service.list(null, null, null, null, false, "viewer-1", 1, 20);
 
 		assertThat(page.items()).hasSize(1);
 		assertThat(page.items().getFirst().tags())

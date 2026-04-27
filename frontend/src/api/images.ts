@@ -29,6 +29,11 @@ export interface ImageRecord {
   status: ImageStatus
   viewCount: number
   downloadCount: number
+  favoriteCount: number
+  likeCount: number
+  commentCount: number
+  favoritedByMe: boolean
+  likedByMe: boolean
   category: ImageCategory | null
   tags: ImageTag[]
   createdAt: string
@@ -117,7 +122,7 @@ export interface StatisticsRankingItem {
   downloadCount: number
 }
 
-export async function getImages(params: { keyword?: string; categoryId?: string; tagId?: string; status?: ImageStatus; page?: number; size?: number } = {}) {
+export async function getImages(params: { keyword?: string; categoryId?: string; tagId?: string; status?: ImageStatus; favoriteOnly?: boolean; page?: number; size?: number } = {}) {
   const response = await http.get<ImagePage>('/images', { params })
   return response.data
 }

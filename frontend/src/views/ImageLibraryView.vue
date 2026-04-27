@@ -37,6 +37,18 @@ import {
   type UploadBatchItem,
   type UploadBatchStatus,
 } from '../api/images'
+import {
+  createImageComment,
+  deleteImageComment,
+  favoriteImage,
+  getImageComments,
+  likeImage,
+  unfavoriteImage,
+  unlikeImage,
+  updateImageComment,
+  type ImageComment,
+  type InteractionState,
+} from '../api/interactions'
 import { getCategories, getTags, type Category, type Tag } from '../api/taxonomy'
 import { useAuthStore } from '../stores/auth'
 import { useDialogEnterSubmit } from '../utils/dialogEnterSubmit'
@@ -78,6 +90,7 @@ const loading = ref(false)
 const keyword = ref('')
 const selectedCategoryId = ref('')
 const selectedTagId = ref('')
+const favoriteOnly = ref(false)
 const imageScope = ref<ImageStatus>('ACTIVE')
 const displayMode = ref<'grid' | 'list'>('grid')
 const rows = ref<ImageRecord[]>([])
@@ -121,6 +134,13 @@ const versionPreviewLoading = ref(false)
 const versionPreviewUrl = ref('')
 const versionPreviewVersion = ref<ImageVersionRecord | null>(null)
 const versionPreviewRequestToken = ref(0)
+const comments = ref<ImageComment[]>([])
+const commentsLoading = ref(false)
+const commentSubmitting = ref(false)
+const commentDraft = ref('')
+const commentEditingId = ref('')
+const commentEditContent = ref('')
+const commentPagination = reactive({ page: 1, size: 20, total: 0 })
 const editorDrag = ref<EditorDragState | null>(null)
 const editorHoverHandle = ref<EditorDragType | null>(null)
 const imageEditor = reactive({
@@ -169,6 +189,7 @@ const canView = computed(() => auth.hasPermission('image:view'))
 const canUpload = computed(() => auth.hasPermission('image:upload'))
 const canEdit = computed(() => auth.hasPermission('image:edit'))
 const canDelete = computed(() => auth.hasPermission('image:delete'))
+const canManageInteractions = computed(() => auth.hasPermission('interaction:manage'))
 const currentPreview = computed(() => previewIndex.value >= 0 ? rows.value[previewIndex.value] ?? null : null)
 const currentPreviewTagGroups = computed(() => groupTagsByGroup(currentPreview.value?.tags ?? []))
 const imageEditorReady = computed(() => Boolean(editSourceImage.value && imageEditor.cropWidth > 0 && imageEditor.cropHeight > 0))
@@ -295,6 +316,17 @@ function replaceImageRecord(record: ImageRecord) {
     rows.value[index] = record
   }
   return record
+}
+
+function applyInteractionState(state: InteractionState) {
+  const row = rows.value.find((item) => item.id === state.imageId)
+  if (row) {
+    row.favoriteCount = state.favoriteCount
+    row.likeCount = state.likeCount
+    row.commentCount = state.commentCount
+    row.favoritedByMe = state.favoritedByMe
+    row.likedByMe = state.likedByMe
+  }
 }
 
 async function refreshImageRecord(id: string) {
@@ -550,6 +582,7 @@ async function loadImages() {
       categoryId: selectedCategoryId.value || undefined,
       tagId: selectedTagId.value || undefined,
       status: showingDeletedImages.value ? 'DELETED' : undefined,
+      favoriteOnly: favoriteOnly.value || undefined,
       page: pagination.page,
       size: pagination.size,
     })
@@ -590,6 +623,7 @@ function resetFilters() {
   keyword.value = ''
   selectedCategoryId.value = ''
   selectedTagId.value = ''
+  favoriteOnly.value = false
   tags.value = []
   pagination.page = 1
   void loadImages()
@@ -927,6 +961,7 @@ async function showPreviewAt(index: number) {
     previewUrl.value = url
     previewVisible.value = true
     await refreshImageRecordQuietly(row.id)
+    await loadComments(row.id)
   } catch (error) {
     ElMessage.error(errorMessage(error, '图片预览加载失败'))
   } finally {
@@ -944,6 +979,107 @@ function closePreview() {
   previewIndex.value = -1
   previewImageId.value = ''
   previewLoading.value = false
+  comments.value = []
+  commentDraft.value = ''
+  commentEditingId.value = ''
+  commentEditContent.value = ''
+  commentPagination.page = 1
+  commentPagination.total = 0
+}
+
+async function loadComments(imageId = previewImageId.value) {
+  if (!imageId) return
+  commentsLoading.value = true
+  try {
+    const page = await getImageComments(imageId, {
+      page: commentPagination.page,
+      size: commentPagination.size,
+    })
+    comments.value = page.items
+    commentPagination.page = page.page
+    commentPagination.size = page.size
+    commentPagination.total = page.total
+    const row = rows.value.find((item) => item.id === imageId)
+    if (row) row.commentCount = page.total
+  } catch (error) {
+    ElMessage.error(errorMessage(error, '评论加载失败'))
+  } finally {
+    commentsLoading.value = false
+  }
+}
+
+async function submitComment() {
+  const imageId = previewImageId.value
+  if (!imageId) return
+  if (!commentDraft.value.trim()) {
+    ElMessage.warning('请输入评论内容')
+    return
+  }
+  commentSubmitting.value = true
+  try {
+    await createImageComment(imageId, commentDraft.value)
+    commentDraft.value = ''
+    await refreshImageRecordQuietly(imageId)
+    await loadComments(imageId)
+  } catch (error) {
+    ElMessage.error(errorMessage(error, '评论提交失败'))
+  } finally {
+    commentSubmitting.value = false
+  }
+}
+
+function startEditComment(comment: ImageComment) {
+  commentEditingId.value = comment.id
+  commentEditContent.value = comment.content
+}
+
+async function saveComment(comment: ImageComment) {
+  if (!previewImageId.value || !commentEditContent.value.trim()) return
+  try {
+    await updateImageComment(previewImageId.value, comment.id, commentEditContent.value)
+    commentEditingId.value = ''
+    commentEditContent.value = ''
+    await loadComments(previewImageId.value)
+  } catch (error) {
+    ElMessage.error(errorMessage(error, '评论保存失败'))
+  }
+}
+
+async function removeComment(comment: ImageComment) {
+  if (!previewImageId.value) return
+  try {
+    await deleteImageComment(previewImageId.value, comment.id)
+    await refreshImageRecordQuietly(previewImageId.value)
+    await loadComments(previewImageId.value)
+  } catch (error) {
+    ElMessage.error(errorMessage(error, '评论删除失败'))
+  }
+}
+
+function handleCommentPageChange(page: number) {
+  commentPagination.page = page
+  void loadComments()
+}
+
+async function toggleFavorite(row: ImageRecord) {
+  try {
+    const state = row.favoritedByMe ? await unfavoriteImage(row.id) : await favoriteImage(row.id)
+    applyInteractionState(state)
+    if (favoriteOnly.value && !state.favoritedByMe) {
+      await loadImages()
+    }
+  } catch (error) {
+    ElMessage.error(errorMessage(error, '收藏操作失败'))
+  }
+}
+
+async function toggleLike(row: ImageRecord) {
+  try {
+    const state = row.likedByMe ? await unlikeImage(row.id) : await likeImage(row.id)
+    applyInteractionState(state)
+  } catch (error) {
+    ElMessage.error(errorMessage(error, '点赞操作失败'))
+  }
 }
 
 async function previewPrevious() {
@@ -1488,7 +1624,7 @@ async function restoreVersion(version: ImageVersionRecord) {
   imageVersionActionId.value = version.id
   try {
     const saved = await restoreImageVersion(editing.value.id, version.id)
-    editing.value = replaceImageRecord(saved)
+    editing.value = await refreshImageRecord(saved.id)
     revokeThumbnailUrl(saved.id)
     if (previewImageId.value === saved.id) {
       await refreshImageRecordQuietly(saved.id)
@@ -1853,6 +1989,7 @@ onBeforeUnmount(() => {
               <el-option v-for="tag in group.tags" :key="tag.id" :label="tag.name" :value="tag.id" />
             </el-option-group>
           </el-select>
+          <el-checkbox v-model="favoriteOnly" :disabled="showingDeletedImages">只看我的收藏</el-checkbox>
           <div class="filter-actions">
             <el-button @click="applyFilters">筛选</el-button>
             <el-button @click="resetFilters">重置</el-button>
@@ -1954,7 +2091,9 @@ onBeforeUnmount(() => {
                 <el-tag :type="statusTagType(row.status)" effect="light">{{ statusLabel(row.status) }}</el-tag>
               </div>
               <span class="image-grid-file" :title="row.originalFilename">{{ row.originalFilename }} · {{ formatBytes(row.sizeBytes) }}</span>
-              <span class="image-grid-counts">浏览 {{ row.viewCount }} · 下载 {{ row.downloadCount }}</span>
+              <span class="image-grid-counts">
+                浏览 {{ row.viewCount }} · 下载 {{ row.downloadCount }} · 收藏 {{ row.favoriteCount }} · 点赞 {{ row.likeCount }}
+              </span>
               <div class="image-grid-taxonomy">
                 <div class="image-grid-taxonomy-row">
                   <span class="image-grid-taxonomy-label">分类</span>
@@ -2002,6 +2141,12 @@ onBeforeUnmount(() => {
             </div>
             <div v-if="!showingDeletedImages || canDelete" class="image-grid-actions">
               <template v-if="!showingDeletedImages">
+                <el-button v-if="canView" link type="primary" @click="toggleFavorite(row)">
+                  {{ row.favoritedByMe ? '已收藏' : '收藏' }}
+                </el-button>
+                <el-button v-if="canView" link type="primary" @click="toggleLike(row)">
+                  {{ row.likedByMe ? '已点赞' : '点赞' }}
+                </el-button>
                 <el-button v-if="canEdit" link type="primary" @click="openEdit(row)">编辑</el-button>
                 <el-button v-if="canView" link type="primary" :icon="Download" @click="download(row)">下载</el-button>
                 <el-button v-if="canDelete" link type="danger" @click="remove(row)">停用</el-button>
@@ -2051,12 +2196,20 @@ onBeforeUnmount(() => {
             <div class="image-counts-cell">
               <span>浏览 {{ row.viewCount }}</span>
               <span>下载 {{ row.downloadCount }}</span>
+              <span>收藏 {{ row.favoriteCount }}</span>
+              <span>点赞 {{ row.likeCount }}</span>
             </div>
           </template>
         </el-table-column>
-        <el-table-column v-if="!showingDeletedImages || canDelete" label="操作" width="210" fixed="right">
+        <el-table-column v-if="!showingDeletedImages || canDelete" label="操作" width="250" fixed="right">
           <template #default="{ row }">
             <template v-if="!showingDeletedImages">
+              <el-button v-if="canView" link type="primary" @click="toggleFavorite(row)">
+                {{ row.favoritedByMe ? '已收藏' : '收藏' }}
+              </el-button>
+              <el-button v-if="canView" link type="primary" @click="toggleLike(row)">
+                {{ row.likedByMe ? '已点赞' : '点赞' }}
+              </el-button>
               <el-button v-if="canEdit" link type="primary" @click="openEdit(row)">编辑</el-button>
               <el-button v-if="canView" link type="primary" :icon="Download" @click="download(row)">下载</el-button>
               <el-button v-if="canDelete" link type="danger" @click="remove(row)">停用</el-button>
@@ -2152,7 +2305,72 @@ onBeforeUnmount(() => {
             <span class="preview-detail-label">下载</span>
             <span class="preview-detail-text">{{ currentPreview.downloadCount }}</span>
           </div>
+          <div class="preview-detail-row">
+            <span class="preview-detail-label">收藏</span>
+            <span class="preview-detail-text">{{ currentPreview.favoriteCount }}</span>
+          </div>
+          <div class="preview-detail-row">
+            <span class="preview-detail-label">点赞</span>
+            <span class="preview-detail-text">{{ currentPreview.likeCount }}</span>
+          </div>
+          <div class="preview-detail-row">
+            <span class="preview-detail-label">评论</span>
+            <span class="preview-detail-text">{{ currentPreview.commentCount }}</span>
+          </div>
         </div>
+      </div>
+      <div v-if="currentPreview" class="preview-interactions">
+        <div class="preview-interaction-actions">
+          <el-button type="primary" plain @click="toggleFavorite(currentPreview)">
+            {{ currentPreview.favoritedByMe ? '取消收藏' : '收藏图片' }}
+          </el-button>
+          <el-button type="primary" plain @click="toggleLike(currentPreview)">
+            {{ currentPreview.likedByMe ? '取消点赞' : '点赞图片' }}
+          </el-button>
+        </div>
+        <section class="preview-comments" v-loading="commentsLoading">
+          <div class="preview-comments-head">
+            <strong>评论</strong>
+            <span>{{ commentPagination.total }} 条</span>
+          </div>
+          <div class="comment-editor">
+            <el-input v-model="commentDraft" type="textarea" :rows="3" maxlength="1000" show-word-limit placeholder="写下评论" />
+            <el-button type="primary" :loading="commentSubmitting" @click="submitComment">发布评论</el-button>
+          </div>
+          <div class="comment-list">
+            <article v-for="comment in comments" :key="comment.id" class="comment-item">
+              <div class="comment-item-head">
+                <strong>{{ comment.authorName }}</strong>
+                <span>{{ formatDateTime(comment.createdAt) }}</span>
+              </div>
+              <template v-if="commentEditingId === comment.id">
+                <el-input v-model="commentEditContent" type="textarea" :rows="3" maxlength="1000" show-word-limit />
+                <div class="comment-actions">
+                  <el-button link type="primary" @click="saveComment(comment)">保存</el-button>
+                  <el-button link @click="commentEditingId = ''">取消</el-button>
+                </div>
+              </template>
+              <template v-else>
+                <p>{{ comment.content }}</p>
+                <div v-if="comment.mine || canManageInteractions" class="comment-actions">
+                  <el-button v-if="comment.mine" link type="primary" @click="startEditComment(comment)">编辑</el-button>
+                  <el-button link type="danger" @click="removeComment(comment)">删除</el-button>
+                </div>
+              </template>
+            </article>
+            <el-empty v-if="comments.length === 0" description="暂无评论" />
+          </div>
+          <el-pagination
+            v-if="commentPagination.total > commentPagination.size"
+            v-model:current-page="commentPagination.page"
+            :page-size="commentPagination.size"
+            :total="commentPagination.total"
+            background
+            small
+            layout="prev, pager, next"
+            @current-change="handleCommentPageChange"
+          />
+        </section>
       </div>
     </el-dialog>
 
@@ -2928,6 +3146,85 @@ onBeforeUnmount(() => {
   margin-right: 2px;
 }
 
+.preview-interactions {
+  border-top: 1px solid #e2e8f0;
+  display: grid;
+  gap: 14px;
+  margin-top: 14px;
+  padding-top: 14px;
+}
+
+.preview-interaction-actions {
+  align-items: center;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.preview-comments {
+  background: #f8fafc;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  display: grid;
+  gap: 12px;
+  padding: 14px;
+}
+
+.preview-comments-head {
+  align-items: center;
+  display: flex;
+  justify-content: space-between;
+}
+
+.preview-comments-head span,
+.comment-item-head span {
+  color: #64748b;
+  font-size: 13px;
+}
+
+.comment-editor {
+  display: grid;
+  gap: 10px;
+}
+
+.comment-editor .el-button {
+  justify-self: flex-start;
+}
+
+.comment-list {
+  display: grid;
+  gap: 10px;
+}
+
+.comment-item {
+  background: #ffffff;
+  border: 1px solid #e5e7eb;
+  border-radius: 8px;
+  display: grid;
+  gap: 8px;
+  padding: 12px;
+}
+
+.comment-item-head {
+  align-items: center;
+  display: flex;
+  gap: 10px;
+  justify-content: space-between;
+}
+
+.comment-item p {
+  color: #334155;
+  line-height: 1.55;
+  margin: 0;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.comment-actions {
+  display: flex;
+  gap: 8px;
+}
+
 .edit-dialog-layout {
   display: grid;
   gap: 18px;
@@ -3487,6 +3784,11 @@ onBeforeUnmount(() => {
 
   .preview-nav {
     min-height: 240px;
+  }
+
+  .preview-interaction-actions {
+    align-items: stretch;
+    flex-direction: column;
   }
 
   .edit-dialog-layout {

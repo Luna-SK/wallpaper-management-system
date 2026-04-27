@@ -11,6 +11,7 @@ import UsersView from '../views/UsersView.vue'
 import LogsView from '../views/LogsView.vue'
 import StatisticsView from '../views/StatisticsView.vue'
 import SettingsView from '../views/SettingsView.vue'
+import FeedbackView from '../views/FeedbackView.vue'
 import ForbiddenView from '../views/ForbiddenView.vue'
 
 declare module 'vue-router' {
@@ -59,6 +60,7 @@ const routes: RouteRecordRaw[] = [
       { path: 'users', name: 'users', component: UsersView, meta: { title: '用户权限', permissions: ['user:manage', 'role:manage'] } },
       { path: 'logs', name: 'logs', component: LogsView, meta: { title: '审计日志', permissions: ['audit:view'] } },
       { path: 'statistics', name: 'statistics', component: StatisticsView, meta: { title: '数据统计', permissions: ['image:view'] } },
+      { path: 'feedback', name: 'feedback', component: FeedbackView, meta: { title: '用户反馈' } },
       { path: 'settings', name: 'settings', component: SettingsView, meta: { title: '系统设置', permissions: ['setting:manage'] } },
       { path: 'forbidden', name: 'forbidden', component: ForbiddenView, meta: { title: '无权限' } },
     ],

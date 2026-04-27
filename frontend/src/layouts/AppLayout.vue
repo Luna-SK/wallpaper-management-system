@@ -28,6 +28,7 @@ const menuItems = [
   { path: '/users', label: '用户权限', icon: User, permissions: ['user:manage', 'role:manage'] },
   { path: '/logs', label: '审计日志', icon: Document, permissions: ['audit:view'] },
   { path: '/statistics', label: '数据统计', icon: DataAnalysis, permissions: ['image:view'] },
+  { path: '/feedback', label: '用户反馈', icon: Document },
   { path: '/settings', label: '系统设置', icon: Setting, permissions: ['setting:manage'] },
 ]
 

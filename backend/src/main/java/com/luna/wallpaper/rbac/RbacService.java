@@ -16,6 +16,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import com.luna.wallpaper.audit.AuditLogService;
+import com.luna.wallpaper.interaction.InteractionService;
 import com.luna.wallpaper.rbac.RbacDtos.PermissionResponse;
 import com.luna.wallpaper.rbac.RbacDtos.RolePermissionsRequest;
 import com.luna.wallpaper.rbac.RbacDtos.RoleRequest;
@@ -39,10 +40,11 @@ class RbacService {
 	private final AuthRefreshTokenMapper refreshTokens;
 	private final PasswordEncoder passwordEncoder;
 	private final AuditLogService auditLogService;
+	private final InteractionService interactionService;
 
 	RbacService(AppUserMapper users, RoleMapper roles, PermissionMapper permissions, UserRoleMapper userRoles,
 			RolePermissionMapper rolePermissions, AuthRefreshTokenMapper refreshTokens, PasswordEncoder passwordEncoder,
-			AuditLogService auditLogService) {
+			AuditLogService auditLogService, InteractionService interactionService) {
 		this.users = users;
 		this.roles = roles;
 		this.permissions = permissions;
@@ -51,6 +53,7 @@ class RbacService {
 		this.refreshTokens = refreshTokens;
 		this.passwordEncoder = passwordEncoder;
 		this.auditLogService = auditLogService;
+		this.interactionService = interactionService;
 	}
 
 	@Transactional(readOnly = true)
@@ -144,6 +147,7 @@ class RbacService {
 		refreshTokens.revokeByUserId(id);
 		int tokenCount = refreshTokens.deleteByUserId(id);
 		int roleLinkCount = userRoles.deleteByUserId(id);
+		interactionService.cleanupForUserPurge(id);
 		users.deleteById(id);
 		auditLogService.record("user.purge", "USER", id, Map.of(
 				"username", user.username(),
