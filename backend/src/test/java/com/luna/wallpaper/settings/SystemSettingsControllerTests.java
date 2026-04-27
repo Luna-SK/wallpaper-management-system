@@ -31,7 +31,12 @@ class SystemSettingsControllerTests {
 		when(settings.get(eq("soft_delete.cleanup.enabled"), anyString())).thenAnswer(invocation -> invocation.getArgument(1));
 		when(settings.get(eq("soft_delete.cleanup.cron"), anyString())).thenAnswer(invocation -> invocation.getArgument(1));
 		when(settings.get(eq("watermark.enabled"), anyString())).thenAnswer(invocation -> invocation.getArgument(1));
+		when(settings.get(eq("watermark.preview.enabled"), anyString())).thenAnswer(invocation -> invocation.getArgument(1));
 		when(settings.get(eq("watermark.text"), anyString())).thenAnswer(invocation -> invocation.getArgument(1));
+		when(settings.get(eq("watermark.mode"), anyString())).thenAnswer(invocation -> invocation.getArgument(1));
+		when(settings.get(eq("watermark.position"), anyString())).thenAnswer(invocation -> invocation.getArgument(1));
+		when(settings.get(eq("watermark.opacity_percent"), anyString())).thenAnswer(invocation -> invocation.getArgument(1));
+		when(settings.get(eq("watermark.tile_density"), anyString())).thenAnswer(invocation -> invocation.getArgument(1));
 	}
 
 	@Test
@@ -49,8 +54,8 @@ class SystemSettingsControllerTests {
 
 	@Test
 	void updateRejectsFileLimitAboveHardLimit() {
-		var request = new SystemSettingsController.SystemSettingsRequest(60, 100, "ORIGINAL", 180, false,
-				"0 0 3 * * SUN", true, "仅供授权使用");
+		var request = request(60, 100, "ORIGINAL", 180, false, "0 0 3 * * SUN", true, false,
+				"仅供授权使用", "CORNER", "BOTTOM_RIGHT", 16, "SPARSE");
 
 		assertThatThrownBy(() -> controller.update(request))
 				.isInstanceOf(IllegalArgumentException.class)
@@ -59,8 +64,8 @@ class SystemSettingsControllerTests {
 
 	@Test
 	void updateRejectsBatchLimitAboveHardLimit() {
-		var request = new SystemSettingsController.SystemSettingsRequest(40, 600, "ORIGINAL", 180, false,
-				"0 0 3 * * SUN", true, "仅供授权使用");
+		var request = request(40, 600, "ORIGINAL", 180, false, "0 0 3 * * SUN", true, false,
+				"仅供授权使用", "CORNER", "BOTTOM_RIGHT", 16, "SPARSE");
 
 		assertThatThrownBy(() -> controller.update(request))
 				.isInstanceOf(IllegalArgumentException.class)
@@ -69,8 +74,8 @@ class SystemSettingsControllerTests {
 
 	@Test
 	void updateRejectsBatchLimitBelowFileLimit() {
-		var request = new SystemSettingsController.SystemSettingsRequest(40, 20, "ORIGINAL", 180, false,
-				"0 0 3 * * SUN", true, "仅供授权使用");
+		var request = request(40, 20, "ORIGINAL", 180, false, "0 0 3 * * SUN", true, false,
+				"仅供授权使用", "CORNER", "BOTTOM_RIGHT", 16, "SPARSE");
 
 		assertThatThrownBy(() -> controller.update(request))
 				.isInstanceOf(IllegalArgumentException.class)
@@ -104,8 +109,8 @@ class SystemSettingsControllerTests {
 
 	@Test
 	void updateRejectsInvalidSoftDeleteCleanupCron() {
-		var request = new SystemSettingsController.SystemSettingsRequest(10, 100, "ORIGINAL", 180, false,
-				"bad cron", true, "仅供授权使用");
+		var request = request(10, 100, "ORIGINAL", 180, false, "bad cron", true, false,
+				"仅供授权使用", "CORNER", "BOTTOM_RIGHT", 16, "SPARSE");
 
 		assertThatThrownBy(() -> controller.update(request))
 				.isInstanceOf(IllegalArgumentException.class)
@@ -114,8 +119,8 @@ class SystemSettingsControllerTests {
 
 	@Test
 	void updateSavesValidSoftDeleteCleanupCron() {
-		var request = new SystemSettingsController.SystemSettingsRequest(10, 100, "ORIGINAL", 180, true,
-				"0 0 * * * *", true, "仅供授权使用");
+		var request = request(10, 100, "ORIGINAL", 180, true, "0 0 * * * *", true, false,
+				"仅供授权使用", "CORNER", "BOTTOM_RIGHT", 16, "SPARSE");
 
 		controller.update(request);
 
@@ -125,18 +130,38 @@ class SystemSettingsControllerTests {
 	@Test
 	void getReturnsWatermarkSettings() {
 		when(settings.get(eq("watermark.enabled"), anyString())).thenReturn("true");
+		when(settings.get(eq("watermark.preview.enabled"), anyString())).thenReturn("true");
 		when(settings.get(eq("watermark.text"), anyString())).thenReturn("内部版权");
+		when(settings.get(eq("watermark.mode"), anyString())).thenReturn("TILED");
+		when(settings.get(eq("watermark.position"), anyString())).thenReturn("CENTER");
+		when(settings.get(eq("watermark.opacity_percent"), anyString())).thenReturn("24");
+		when(settings.get(eq("watermark.tile_density"), anyString())).thenReturn("NORMAL");
 
 		var response = controller.get();
 
 		assertThat(response.watermarkEnabled()).isTrue();
+		assertThat(response.watermarkPreviewEnabled()).isTrue();
 		assertThat(response.watermarkText()).isEqualTo("内部版权");
+		assertThat(response.watermarkMode()).isEqualTo("TILED");
+		assertThat(response.watermarkPosition()).isEqualTo("CENTER");
+		assertThat(response.watermarkOpacityPercent()).isEqualTo(24);
+		assertThat(response.watermarkTileDensity()).isEqualTo("NORMAL");
 	}
 
 	@Test
 	void updateRejectsBlankWatermarkTextWhenEnabled() {
-		var request = new SystemSettingsController.SystemSettingsRequest(10, 100, "ORIGINAL", 180, false,
-				"0 0 3 * * SUN", true, " ");
+		var request = request(10, 100, "ORIGINAL", 180, false, "0 0 3 * * SUN", true, false,
+				" ", "CORNER", "BOTTOM_RIGHT", 16, "SPARSE");
+
+		assertThatThrownBy(() -> controller.update(request))
+				.isInstanceOf(IllegalArgumentException.class)
+				.hasMessage("启用水印时必须填写水印文字");
+	}
+
+	@Test
+	void updateRejectsBlankWatermarkTextWhenPreviewWatermarkEnabled() {
+		var request = request(10, 100, "ORIGINAL", 180, false, "0 0 3 * * SUN", false, true,
+				" ", "CORNER", "BOTTOM_RIGHT", 16, "SPARSE");
 
 		assertThatThrownBy(() -> controller.update(request))
 				.isInstanceOf(IllegalArgumentException.class)
@@ -145,8 +170,8 @@ class SystemSettingsControllerTests {
 
 	@Test
 	void updateRejectsTooLongWatermarkText() {
-		var request = new SystemSettingsController.SystemSettingsRequest(10, 100, "ORIGINAL", 180, false,
-				"0 0 3 * * SUN", true, "水".repeat(65));
+		var request = request(10, 100, "ORIGINAL", 180, false, "0 0 3 * * SUN", true, false,
+				"水".repeat(65), "CORNER", "BOTTOM_RIGHT", 16, "SPARSE");
 
 		assertThatThrownBy(() -> controller.update(request))
 				.isInstanceOf(IllegalArgumentException.class)
@@ -155,12 +180,54 @@ class SystemSettingsControllerTests {
 
 	@Test
 	void updateSavesWatermarkSettings() {
-		var request = new SystemSettingsController.SystemSettingsRequest(10, 100, "ORIGINAL", 180, false,
-				"0 0 3 * * SUN", true, "版权文字");
+		var request = request(10, 100, "ORIGINAL", 180, false, "0 0 3 * * SUN", true, true,
+				"版权文字", "TILED", "CENTER", 24, "NORMAL");
 
 		controller.update(request);
 
 		verify(settings).put("watermark.enabled", "true");
+		verify(settings).put("watermark.preview.enabled", "true");
 		verify(settings).put("watermark.text", "版权文字");
+		verify(settings).put("watermark.mode", "TILED");
+		verify(settings).put("watermark.position", "CENTER");
+		verify(settings).put("watermark.opacity_percent", "24");
+		verify(settings).put("watermark.tile_density", "NORMAL");
+	}
+
+	@Test
+	void updateRejectsInvalidWatermarkStyleSettings() {
+		var invalidMode = request(10, 100, "ORIGINAL", 180, false, "0 0 3 * * SUN", true, false,
+				"版权文字", "BAD", "BOTTOM_RIGHT", 16, "SPARSE");
+		assertThatThrownBy(() -> controller.update(invalidMode))
+				.isInstanceOf(IllegalArgumentException.class)
+				.hasMessage("水印样式只能是 CORNER 或 TILED");
+
+		var invalidPosition = request(10, 100, "ORIGINAL", 180, false, "0 0 3 * * SUN", true, false,
+				"版权文字", "CORNER", "BAD", 16, "SPARSE");
+		assertThatThrownBy(() -> controller.update(invalidPosition))
+				.isInstanceOf(IllegalArgumentException.class)
+				.hasMessage("水印位置不正确");
+
+		var invalidOpacity = request(10, 100, "ORIGINAL", 180, false, "0 0 3 * * SUN", true, false,
+				"版权文字", "CORNER", "BOTTOM_RIGHT", 41, "SPARSE");
+		assertThatThrownBy(() -> controller.update(invalidOpacity))
+				.isInstanceOf(IllegalArgumentException.class)
+				.hasMessage("水印透明度必须在 5-40 之间");
+
+		var invalidDensity = request(10, 100, "ORIGINAL", 180, false, "0 0 3 * * SUN", true, false,
+				"版权文字", "TILED", "BOTTOM_RIGHT", 16, "BAD");
+		assertThatThrownBy(() -> controller.update(invalidDensity))
+				.isInstanceOf(IllegalArgumentException.class)
+				.hasMessage("平铺水印密度只能是 SPARSE、NORMAL 或 DENSE");
+	}
+
+	private SystemSettingsController.SystemSettingsRequest request(Integer maxFileSizeMb, Integer maxBatchSizeMb,
+			String previewQuality, Integer softDeleteRetentionDays, Boolean softDeleteCleanupEnabled,
+			String softDeleteCleanupCron, Boolean watermarkEnabled, Boolean watermarkPreviewEnabled, String watermarkText,
+			String watermarkMode, String watermarkPosition, Integer watermarkOpacityPercent, String watermarkTileDensity) {
+		return new SystemSettingsController.SystemSettingsRequest(maxFileSizeMb, maxBatchSizeMb, previewQuality,
+				softDeleteRetentionDays, softDeleteCleanupEnabled, softDeleteCleanupCron, watermarkEnabled,
+				watermarkPreviewEnabled, watermarkText, watermarkMode, watermarkPosition, watermarkOpacityPercent,
+				watermarkTileDensity);
 	}
 }

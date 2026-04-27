@@ -125,7 +125,7 @@
 
 ## System Settings
 
-`GET /api/system-settings` 返回上传业务上限、后端上传硬上限、预览质量和已停用图片清理配置：
+`GET /api/system-settings` 返回上传业务上限、后端上传硬上限、预览质量、已停用图片清理和水印版权保护配置：
 
 ```json
 {
@@ -138,11 +138,16 @@
   "softDeleteCleanupEnabled": false,
   "softDeleteCleanupCron": "0 0 3 * * SUN",
   "watermarkEnabled": true,
-  "watermarkText": "仅供授权使用"
+  "watermarkPreviewEnabled": false,
+  "watermarkText": "仅供授权使用",
+  "watermarkMode": "CORNER",
+  "watermarkPosition": "BOTTOM_RIGHT",
+  "watermarkOpacityPercent": 16,
+  "watermarkTileDensity": "SPARSE"
 }
 ```
 
-`PATCH /api/system-settings` 需要 `setting:manage` 权限。上传业务上限不能超过硬上限；水印启用时必须填写不超过 64 个字符的水印文字；软删除自动清理 cron 使用 Spring 6 段表达式，默认每周日 03:00。保存后无需重启，下一次预览或下载会使用最新水印配置，下一次调度会读取最新 cron；后端启动后仍会补偿检查一次已到期的停用图片。
+`PATCH /api/system-settings` 需要 `setting:manage` 权限。上传业务上限不能超过硬上限；下载/导出水印与预览水印可独立开关，任一水印开启时必须填写不超过 64 个字符的水印文字；水印样式支持角落水印 `CORNER` 和斜向平铺 `TILED`，角落位置支持九宫格，透明度范围为 `5-40`，平铺密度支持 `SPARSE`、`NORMAL`、`DENSE`。软删除自动清理 cron 使用 Spring 6 段表达式，默认每周日 03:00。保存后无需重启，下一次预览或下载会使用最新水印配置，下一次调度会读取最新 cron；后端启动后仍会补偿检查一次已到期的停用图片。
 
 ## Audit Log Retention
 

@@ -302,6 +302,21 @@ class ImageService {
 				.toList();
 	}
 
+	@Transactional(readOnly = true)
+	ObjectFile versionThumbnail(String id, String versionId) {
+		ImageAsset image = getRetainedImage(id);
+		ImageVersion version = getImageVersion(image.id(), versionId);
+		return new ObjectFile(version.bucket(), version.thumbnailObjectKey(), "image/png", version.originalFilename());
+	}
+
+	@Transactional(readOnly = true)
+	ObjectFile versionPreview(String id, String versionId) {
+		ImageAsset image = getRetainedImage(id);
+		ImageVersion version = getImageVersion(image.id(), versionId);
+		String quality = previewQuality();
+		return applyWatermark(versionPreviewObject(version, quality), watermarkPreviewEnabled());
+	}
+
 	@Transactional
 	ImageResponse restoreVersion(String id, String versionId) {
 		ImageAsset image = getImage(id);
@@ -406,15 +421,10 @@ class ImageService {
 		images.incrementViewCount(id);
 		image.viewed();
 		ImageVersion version = currentVersion(image);
-		String quality = settings.get("preview.quality", "ORIGINAL");
-		String key = switch (quality) {
-			case "HIGH" -> version.highPreviewObjectKey();
-			case "STANDARD" -> version.standardPreviewObjectKey();
-			default -> version.originalObjectKey();
-		};
-		String mimeType = "ORIGINAL".equals(quality) ? version.mimeType() : "image/png";
+		String quality = previewQuality();
+		ObjectFile preview = versionPreviewObject(version, quality);
 		auditLogService.record("image.preview", "IMAGE", id, Map.of("quality", quality));
-		return applyWatermark(new ObjectFile(version.bucket(), key, mimeType, image.originalFilename()));
+		return applyWatermark(preview, watermarkPreviewEnabled());
 	}
 
 	@Transactional
@@ -424,7 +434,8 @@ class ImageService {
 		image.downloaded();
 		ImageVersion version = currentVersion(image);
 		auditLogService.record("image.download", "IMAGE", id, Map.of());
-		return applyWatermark(new ObjectFile(version.bucket(), version.originalObjectKey(), version.mimeType(), version.originalFilename()));
+		return applyWatermark(new ObjectFile(version.bucket(), version.originalObjectKey(), version.mimeType(), version.originalFilename()),
+				watermarkEnabled());
 	}
 
 	@Transactional
@@ -772,6 +783,18 @@ class ImageService {
 				version.highPreviewObjectKey(), version.standardPreviewObjectKey());
 	}
 
+	private ObjectFile versionPreviewObject(ImageVersion version, String quality) {
+		return switch (quality) {
+			case "HIGH" -> new ObjectFile(version.bucket(), version.highPreviewObjectKey(), "image/png", version.originalFilename());
+			case "STANDARD" -> new ObjectFile(version.bucket(), version.standardPreviewObjectKey(), "image/png", version.originalFilename());
+			default -> new ObjectFile(version.bucket(), version.originalObjectKey(), version.mimeType(), version.originalFilename());
+		};
+	}
+
+	private String previewQuality() {
+		return settings.get("preview.quality", "ORIGINAL");
+	}
+
 	private int maxRetainedImageVersions() {
 		try {
 			return Math.max(1, Integer.parseInt(settings.get(ImageVersionSettings.MAX_RETAINED,
@@ -872,12 +895,12 @@ class ImageService {
 		return candidate;
 	}
 
-	private ObjectFile applyWatermark(ObjectFile file) {
-		if (!watermarkEnabled()) {
+	private ObjectFile applyWatermark(ObjectFile file, boolean enabled) {
+		if (!enabled) {
 			return file;
 		}
 		ImageStorageService.WatermarkedImage watermarked = storage.watermark(storage.read(file.bucket(), file.objectKey()),
-				watermarkText());
+				watermarkOptions());
 		if (!"image/png".equals(watermarked.mimeType())) {
 			return file;
 		}
@@ -889,7 +912,7 @@ class ImageService {
 			return new DownloadContent(version.originalFilename(), storage.read(version.bucket(), version.originalObjectKey()));
 		}
 		ImageStorageService.WatermarkedImage watermarked = storage.watermark(
-				storage.read(version.bucket(), version.originalObjectKey()), watermarkText());
+				storage.read(version.bucket(), version.originalObjectKey()), watermarkOptions());
 		if (!"image/png".equals(watermarked.mimeType())) {
 			return new DownloadContent(version.originalFilename(), watermarked.bytes());
 		}
@@ -900,8 +923,41 @@ class ImageService {
 		return Boolean.parseBoolean(settings.get(WatermarkSettings.ENABLED, "true"));
 	}
 
-	private String watermarkText() {
-		return settings.get(WatermarkSettings.TEXT, WatermarkSettings.DEFAULT_TEXT);
+	private boolean watermarkPreviewEnabled() {
+		return Boolean.parseBoolean(settings.get(WatermarkSettings.PREVIEW_ENABLED, "false"));
+	}
+
+	private ImageStorageService.WatermarkOptions watermarkOptions() {
+		return new ImageStorageService.WatermarkOptions(
+				settings.get(WatermarkSettings.TEXT, WatermarkSettings.DEFAULT_TEXT),
+				choiceSetting(WatermarkSettings.MODE, WatermarkSettings.DEFAULT_MODE, "CORNER", "TILED"),
+				choiceSetting(WatermarkSettings.POSITION, WatermarkSettings.DEFAULT_POSITION,
+						"TOP_LEFT", "TOP_CENTER", "TOP_RIGHT",
+						"CENTER_LEFT", "CENTER", "CENTER_RIGHT",
+						"BOTTOM_LEFT", "BOTTOM_CENTER", "BOTTOM_RIGHT"),
+				intRangeSetting(WatermarkSettings.OPACITY_PERCENT, WatermarkSettings.DEFAULT_OPACITY_PERCENT,
+						WatermarkSettings.MIN_OPACITY_PERCENT, WatermarkSettings.MAX_OPACITY_PERCENT),
+				choiceSetting(WatermarkSettings.TILE_DENSITY, WatermarkSettings.DEFAULT_TILE_DENSITY,
+						"SPARSE", "NORMAL", "DENSE"));
+	}
+
+	private String choiceSetting(String key, String defaultValue, String... allowedValues) {
+		String value = settings.get(key, defaultValue);
+		for (String allowedValue : allowedValues) {
+			if (allowedValue.equals(value)) {
+				return value;
+			}
+		}
+		return defaultValue;
+	}
+
+	private int intRangeSetting(String key, int defaultValue, int min, int max) {
+		try {
+			return Math.max(min, Math.min(max, Integer.parseInt(settings.get(key, String.valueOf(defaultValue)))));
+		}
+		catch (NumberFormatException ex) {
+			return defaultValue;
+		}
 	}
 
 	private static String watermarkedFilename(String filename) {

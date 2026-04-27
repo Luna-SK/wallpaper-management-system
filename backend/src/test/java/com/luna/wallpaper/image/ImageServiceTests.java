@@ -53,7 +53,12 @@ class ImageServiceTests {
 	@BeforeEach
 	void setUp() {
 		when(settings.get("watermark.enabled", "true")).thenAnswer(invocation -> invocation.getArgument(1));
+		when(settings.get("watermark.preview.enabled", "false")).thenAnswer(invocation -> invocation.getArgument(1));
 		when(settings.get("watermark.text", "仅供授权使用")).thenAnswer(invocation -> invocation.getArgument(1));
+		when(settings.get("watermark.mode", "CORNER")).thenAnswer(invocation -> invocation.getArgument(1));
+		when(settings.get("watermark.position", "BOTTOM_RIGHT")).thenAnswer(invocation -> invocation.getArgument(1));
+		when(settings.get("watermark.opacity_percent", "16")).thenAnswer(invocation -> invocation.getArgument(1));
+		when(settings.get("watermark.tile_density", "SPARSE")).thenAnswer(invocation -> invocation.getArgument(1));
 	}
 
 	@Test
@@ -317,28 +322,171 @@ class ImageServiceTests {
 	}
 
 	@Test
-	void previewAppliesWatermarkWhenEnabled() {
+	void previewDoesNotApplyWatermarkByDefault() {
 		ImageAsset image = image("image-watermark", "水印图", 0, 0);
+		StoredImage original = new StoredImage(image.originalFilename(), image.sha256(), image.mimeType(), image.sizeBytes(),
+				image.width(), image.height(), "bucket", "original-key", "thumb-key", "high-key", "standard-key");
+		ImageVersion current = new ImageVersion(image.id(), 1, "UPLOAD", original);
+		when(images.selectById(image.id())).thenReturn(image);
+		when(imageTags.selectByImageIds(List.of(image.id()))).thenReturn(List.of());
+		when(versions.findLatestByImageId(image.id())).thenReturn(Optional.of(current));
+		when(settings.get("preview.quality", "ORIGINAL")).thenReturn("ORIGINAL");
+		when(settings.get("watermark.enabled", "true")).thenReturn("true");
+
+		ImageService.ObjectFile file = service.preview(image.id());
+
+		assertThat(file.bucket()).isEqualTo("bucket");
+		assertThat(file.objectKey()).isEqualTo("original-key");
+		assertThat(file.mimeType()).isEqualTo("image/jpeg");
+		assertThat(file.filename()).isEqualTo("水印图.jpg");
+		verify(storage, never()).watermark(any(), any());
+	}
+
+	@Test
+	void previewAppliesWatermarkWhenPreviewWatermarkEnabled() {
+		ImageAsset image = image("image-preview-watermark", "预览水印", 0, 0);
+		StoredImage original = new StoredImage(image.originalFilename(), image.sha256(), image.mimeType(), image.sizeBytes(),
+				image.width(), image.height(), "bucket", "original-key", "thumb-key", "high-key", "standard-key");
+		ImageVersion current = new ImageVersion(image.id(), 1, "UPLOAD", original);
+		byte[] source = new byte[] { 1, 2, 3 };
+		byte[] watermarked = new byte[] { 4, 5, 6 };
+		ArgumentCaptor<ImageStorageService.WatermarkOptions> options = ArgumentCaptor.forClass(ImageStorageService.WatermarkOptions.class);
+		when(images.selectById(image.id())).thenReturn(image);
+		when(imageTags.selectByImageIds(List.of(image.id()))).thenReturn(List.of());
+		when(versions.findLatestByImageId(image.id())).thenReturn(Optional.of(current));
+		when(settings.get("preview.quality", "ORIGINAL")).thenReturn("ORIGINAL");
+		when(settings.get("watermark.preview.enabled", "false")).thenReturn("true");
+		when(settings.get("watermark.text", "仅供授权使用")).thenReturn("内部版权");
+		when(settings.get("watermark.mode", "CORNER")).thenReturn("CORNER");
+		when(settings.get("watermark.position", "BOTTOM_RIGHT")).thenReturn("BOTTOM_RIGHT");
+		when(settings.get("watermark.opacity_percent", "16")).thenReturn("16");
+		when(settings.get("watermark.tile_density", "SPARSE")).thenReturn("SPARSE");
+		when(storage.read("bucket", "original-key")).thenReturn(source);
+		when(storage.watermark(any(), any()))
+				.thenReturn(new ImageStorageService.WatermarkedImage(watermarked, "image/png"));
+
+		ImageService.ObjectFile file = service.preview(image.id());
+
+		assertThat(file.mimeType()).isEqualTo("image/png");
+		assertThat(file.filename()).isEqualTo("预览水印-watermarked.png");
+		assertThat(service.read(file)).containsExactly(watermarked);
+		verify(storage).watermark(any(), options.capture());
+		assertThat(options.getValue()).isEqualTo(new ImageStorageService.WatermarkOptions(
+				"内部版权", "CORNER", "BOTTOM_RIGHT", 16, "SPARSE"));
+	}
+
+	@Test
+	void versionThumbnailReadsSpecificVersionThumbnail() {
+		ImageAsset image = image("image-version-thumb", "版本缩略图", 0, 0);
+		StoredImage previousStored = new StoredImage("previous.jpg", "previous-sha", "image/jpeg", 1024, 80, 60,
+				"bucket", "previous-original", "previous-thumb", "previous-high", "previous-standard");
+		ImageVersion previous = new ImageVersion(image.id(), 1, "UPLOAD", previousStored);
+		when(images.selectById(image.id())).thenReturn(image);
+		when(versions.selectByImageIdAndId(image.id(), previous.id())).thenReturn(previous);
+
+		ImageService.ObjectFile file = service.versionThumbnail(image.id(), previous.id());
+
+		assertThat(file.bucket()).isEqualTo("bucket");
+		assertThat(file.objectKey()).isEqualTo("previous-thumb");
+		assertThat(file.mimeType()).isEqualTo("image/png");
+		assertThat(file.filename()).isEqualTo("previous.jpg");
+		verify(images, never()).incrementViewCount(anyString());
+		verify(auditLogService, never()).record(anyString(), anyString(), anyString(), any());
+	}
+
+	@Test
+	void versionPreviewReadsNonCurrentVersionWithoutCountingOrAuditingPreview() {
+		ImageAsset image = image("image-version-preview", "版本预览", 7, 0);
+		StoredImage currentStored = new StoredImage("current.jpg", "current-sha", "image/jpeg", 2048, 200, 100,
+				"bucket", "current-original", "current-thumb", "current-high", "current-standard");
+		StoredImage previousStored = new StoredImage("previous.jpg", "previous-sha", "image/jpeg", 1024, 80, 60,
+				"bucket", "previous-original", "previous-thumb", "previous-high", "previous-standard");
+		ImageVersion current = new ImageVersion(image.id(), 2, "EDIT", currentStored);
+		ImageVersion previous = new ImageVersion(image.id(), 1, "UPLOAD", previousStored);
+		image.replaceCurrentVersion(current);
+		when(images.selectById(image.id())).thenReturn(image);
+		when(versions.selectByImageIdAndId(image.id(), previous.id())).thenReturn(previous);
+		when(settings.get("preview.quality", "ORIGINAL")).thenReturn("HIGH");
+		when(settings.get("watermark.enabled", "true")).thenReturn("false");
+
+		ImageService.ObjectFile file = service.versionPreview(image.id(), previous.id());
+
+		assertThat(file.bucket()).isEqualTo("bucket");
+		assertThat(file.objectKey()).isEqualTo("previous-high");
+		assertThat(file.mimeType()).isEqualTo("image/png");
+		verify(images, never()).incrementViewCount(anyString());
+		verify(auditLogService, never()).record(anyString(), anyString(), anyString(), any());
+	}
+
+	@Test
+	void versionPreviewAppliesWatermarkWhenPreviewWatermarkEnabledWithoutIncrementingViewCount() {
+		ImageAsset image = image("image-version-watermark", "版本水印", 3, 0);
+		StoredImage previousStored = new StoredImage("previous.jpg", "previous-sha", "image/jpeg", 1024, 80, 60,
+				"bucket", "previous-original", "previous-thumb", "previous-high", "previous-standard");
+		ImageVersion previous = new ImageVersion(image.id(), 1, "UPLOAD", previousStored);
+		byte[] source = new byte[] { 1, 2, 3 };
+		byte[] watermarked = new byte[] { 4, 5, 6 };
+		when(images.selectById(image.id())).thenReturn(image);
+		when(versions.selectByImageIdAndId(image.id(), previous.id())).thenReturn(previous);
+		when(settings.get("preview.quality", "ORIGINAL")).thenReturn("ORIGINAL");
+		when(settings.get("watermark.preview.enabled", "false")).thenReturn("true");
+		when(settings.get("watermark.text", "仅供授权使用")).thenReturn("版本版权");
+		when(storage.read("bucket", "previous-original")).thenReturn(source);
+		when(storage.watermark(any(), any()))
+				.thenReturn(new ImageStorageService.WatermarkedImage(watermarked, "image/png"));
+
+		ImageService.ObjectFile file = service.versionPreview(image.id(), previous.id());
+
+		assertThat(file.mimeType()).isEqualTo("image/png");
+		assertThat(file.filename()).isEqualTo("previous-watermarked.png");
+		assertThat(service.read(file)).containsExactly(watermarked);
+		verify(images, never()).incrementViewCount(anyString());
+		verify(auditLogService, never()).record(anyString(), anyString(), anyString(), any());
+	}
+
+	@Test
+	void downloadStillAppliesWatermarkWhenDownloadWatermarkEnabled() {
+		ImageAsset image = image("image-download-watermark", "下载水印", 0, 0);
 		StoredImage original = new StoredImage(image.originalFilename(), image.sha256(), image.mimeType(), image.sizeBytes(),
 				image.width(), image.height(), "bucket", "original-key", "thumb-key", "high-key", "standard-key");
 		ImageVersion current = new ImageVersion(image.id(), 1, "UPLOAD", original);
 		byte[] source = new byte[] { 1, 2, 3 };
 		byte[] watermarked = new byte[] { 4, 5, 6 };
 		when(images.selectById(image.id())).thenReturn(image);
-		when(imageTags.selectByImageIds(List.of(image.id()))).thenReturn(List.of());
 		when(versions.findLatestByImageId(image.id())).thenReturn(Optional.of(current));
-		when(settings.get("preview.quality", "ORIGINAL")).thenReturn("ORIGINAL");
 		when(settings.get("watermark.enabled", "true")).thenReturn("true");
-		when(settings.get("watermark.text", "仅供授权使用")).thenReturn("内部版权");
+		when(settings.get("watermark.preview.enabled", "false")).thenReturn("false");
 		when(storage.read("bucket", "original-key")).thenReturn(source);
-		when(storage.watermark(source, "内部版权"))
+		when(storage.watermark(any(), any()))
 				.thenReturn(new ImageStorageService.WatermarkedImage(watermarked, "image/png"));
 
-		ImageService.ObjectFile file = service.preview(image.id());
+		ImageService.ObjectFile file = service.download(image.id());
 
 		assertThat(file.mimeType()).isEqualTo("image/png");
-		assertThat(file.filename()).isEqualTo("水印图-watermarked.png");
+		assertThat(file.filename()).isEqualTo("下载水印-watermarked.png");
 		assertThat(service.read(file)).containsExactly(watermarked);
+		verify(images).incrementDownloadCount(image.id());
+	}
+
+	@Test
+	void batchDownloadStillAppliesWatermarkWhenDownloadWatermarkEnabled() {
+		ImageAsset image = image("image-batch-watermark", "批量水印", 0, 0);
+		StoredImage original = new StoredImage(image.originalFilename(), image.sha256(), image.mimeType(), image.sizeBytes(),
+				image.width(), image.height(), "bucket", "original-key", "thumb-key", "high-key", "standard-key");
+		ImageVersion current = new ImageVersion(image.id(), 1, "UPLOAD", original);
+		when(images.selectImagesByIds(List.of(image.id()))).thenReturn(List.of(image));
+		when(versions.findLatestByImageId(image.id())).thenReturn(Optional.of(current));
+		when(settings.get("watermark.enabled", "true")).thenReturn("true");
+		when(storage.read("bucket", "original-key")).thenReturn(new byte[] { 1, 2, 3 });
+		when(storage.watermark(any(), any()))
+				.thenReturn(new ImageStorageService.WatermarkedImage(new byte[] { 4, 5, 6 }, "image/png"));
+
+		ImageService.BatchDownloadFile file = service.batchDownload(new ImageDtos.ImageBatchRequest(List.of(image.id())));
+
+		assertThat(file.filename()).startsWith("wallpaper-images-").endsWith(".zip");
+		assertThat(file.content()).isNotEmpty();
+		verify(storage).watermark(any(), any());
+		verify(images).incrementDownloadCount(image.id());
 	}
 
 	@Test

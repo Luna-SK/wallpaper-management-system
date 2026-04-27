@@ -19,7 +19,12 @@ const settings = reactive({
   softDeleteCleanupEnabled: false,
   softDeleteCleanupCron: '0 0 3 * * SUN',
   watermarkEnabled: true,
+  watermarkPreviewEnabled: false,
   watermarkText: '仅供授权使用',
+  watermarkMode: 'CORNER' as SystemSettings['watermarkMode'],
+  watermarkPosition: 'BOTTOM_RIGHT' as SystemSettings['watermarkPosition'],
+  watermarkOpacityPercent: 16,
+  watermarkTileDensity: 'SPARSE' as SystemSettings['watermarkTileDensity'],
   auditArchiveEnabled: true,
   auditRetentionDays: 180,
   auditArchiveCron: '0 30 2 * * *',
@@ -30,6 +35,18 @@ const settings = reactive({
 const loading = ref(false)
 const saving = ref(false)
 const uploadLimitsLoaded = computed(() => settings.maxFileHardLimitMb > 0 && settings.maxBatchHardLimitMb > 0)
+const watermarkActive = computed(() => settings.watermarkEnabled || settings.watermarkPreviewEnabled)
+const watermarkPositions: Array<{ label: string; value: SystemSettings['watermarkPosition'] }> = [
+  { label: '左上', value: 'TOP_LEFT' },
+  { label: '上中', value: 'TOP_CENTER' },
+  { label: '右上', value: 'TOP_RIGHT' },
+  { label: '左中', value: 'CENTER_LEFT' },
+  { label: '居中', value: 'CENTER' },
+  { label: '右中', value: 'CENTER_RIGHT' },
+  { label: '左下', value: 'BOTTOM_LEFT' },
+  { label: '下中', value: 'BOTTOM_CENTER' },
+  { label: '右下', value: 'BOTTOM_RIGHT' },
+]
 
 function errorMessage(error: unknown, fallback: string) {
   if (isAxiosError<{ message?: string }>(error)) {
@@ -63,7 +80,12 @@ function applySystemSettings(system: SystemSettings) {
   settings.softDeleteCleanupEnabled = system.softDeleteCleanupEnabled
   settings.softDeleteCleanupCron = system.softDeleteCleanupCron
   settings.watermarkEnabled = system.watermarkEnabled
+  settings.watermarkPreviewEnabled = system.watermarkPreviewEnabled
   settings.watermarkText = system.watermarkText
+  settings.watermarkMode = system.watermarkMode
+  settings.watermarkPosition = system.watermarkPosition
+  settings.watermarkOpacityPercent = system.watermarkOpacityPercent
+  settings.watermarkTileDensity = system.watermarkTileDensity
   syncUploadLimitRange()
 }
 
@@ -104,7 +126,12 @@ async function saveSettings() {
         softDeleteCleanupEnabled: settings.softDeleteCleanupEnabled,
         softDeleteCleanupCron: settings.softDeleteCleanupCron,
         watermarkEnabled: settings.watermarkEnabled,
+        watermarkPreviewEnabled: settings.watermarkPreviewEnabled,
         watermarkText: settings.watermarkText,
+        watermarkMode: settings.watermarkMode,
+        watermarkPosition: settings.watermarkPosition,
+        watermarkOpacityPercent: settings.watermarkOpacityPercent,
+        watermarkTileDensity: settings.watermarkTileDensity,
       }),
     ])
     applySystemSettings(system)
@@ -178,16 +205,50 @@ onMounted(loadSettings)
 
         <div class="form-section">
           <h2>水印版权保护</h2>
-          <p class="section-copy">启用后，图片预览、单图下载和批量下载会输出带文字水印的图片。</p>
-          <el-form-item label="启用水印">
+          <p class="section-copy">下载和导出默认保留版权水印；预览水印可单独开启，避免影响后台选图和版本核对。</p>
+          <el-form-item label="下载/导出水印">
             <el-switch v-model="settings.watermarkEnabled" active-text="启用" inactive-text="停用" />
+          </el-form-item>
+          <el-form-item label="预览加水印">
+            <el-switch v-model="settings.watermarkPreviewEnabled" active-text="启用" inactive-text="停用" />
           </el-form-item>
           <el-form-item label="水印文字" required>
             <el-input
               v-model="settings.watermarkText"
               maxlength="64"
               show-word-limit
+              :disabled="!watermarkActive"
               placeholder="例如：仅供授权使用"
+            />
+          </el-form-item>
+          <el-form-item label="水印样式">
+            <el-radio-group v-model="settings.watermarkMode" :disabled="!watermarkActive">
+              <el-radio-button label="CORNER">角落水印</el-radio-button>
+              <el-radio-button label="TILED">斜向平铺</el-radio-button>
+            </el-radio-group>
+          </el-form-item>
+          <el-form-item v-if="settings.watermarkMode === 'CORNER'" label="水印位置">
+            <el-radio-group v-model="settings.watermarkPosition" class="watermark-position-grid" :disabled="!watermarkActive">
+              <el-radio-button v-for="position in watermarkPositions" :key="position.value" :label="position.value">
+                {{ position.label }}
+              </el-radio-button>
+            </el-radio-group>
+          </el-form-item>
+          <el-form-item v-if="settings.watermarkMode === 'TILED'" label="平铺密度">
+            <el-radio-group v-model="settings.watermarkTileDensity" :disabled="!watermarkActive">
+              <el-radio-button label="SPARSE">稀疏</el-radio-button>
+              <el-radio-button label="NORMAL">标准</el-radio-button>
+              <el-radio-button label="DENSE">密集</el-radio-button>
+            </el-radio-group>
+          </el-form-item>
+          <el-form-item label="水印透明度">
+            <el-slider
+              v-model="settings.watermarkOpacityPercent"
+              :min="5"
+              :max="40"
+              :step="1"
+              show-input
+              :disabled="!watermarkActive"
             />
           </el-form-item>
         </div>
@@ -283,5 +344,24 @@ onMounted(loadSettings)
 
 .cron-help p {
   margin: 0;
+}
+
+.watermark-position-grid {
+  display: grid;
+  gap: 6px;
+  grid-template-columns: repeat(3, 64px);
+}
+
+.watermark-position-grid :deep(.el-radio-button__inner) {
+  border-left: var(--el-border);
+  border-radius: 4px;
+  padding: 8px 0;
+  text-align: center;
+  width: 64px;
+}
+
+.watermark-position-grid :deep(.el-radio-button:first-child .el-radio-button__inner),
+.watermark-position-grid :deep(.el-radio-button:last-child .el-radio-button__inner) {
+  border-radius: 4px;
 }
 </style>

@@ -73,6 +73,18 @@ class ImageController {
 		return service.versions(id);
 	}
 
+	@GetMapping("/images/{id}/versions/{versionId}/thumbnail")
+	@PreAuthorize("hasAuthority('image:view')")
+	ResponseEntity<byte[]> versionThumbnail(@PathVariable String id, @PathVariable String versionId) {
+		return inline(service.versionThumbnail(id, versionId));
+	}
+
+	@GetMapping("/images/{id}/versions/{versionId}/preview")
+	@PreAuthorize("hasAuthority('image:view')")
+	ResponseEntity<byte[]> versionPreview(@PathVariable String id, @PathVariable String versionId) {
+		return inline(service.versionPreview(id, versionId));
+	}
+
 	@PostMapping("/images/{id}/versions/{versionId}/restore")
 	@PreAuthorize("hasAuthority('image:edit')")
 	ImageResponse restoreVersion(@PathVariable String id, @PathVariable String versionId) {

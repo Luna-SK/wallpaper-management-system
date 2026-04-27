@@ -245,6 +245,11 @@ export async function imageBlobUrl(id: string, kind: 'thumbnail' | 'preview') {
   return URL.createObjectURL(response.data)
 }
 
+export async function imageVersionBlobUrl(id: string, versionId: string, kind: 'thumbnail' | 'preview') {
+  const response = await http.get<Blob>(`/images/${id}/versions/${versionId}/${kind}`, { responseType: 'blob' })
+  return URL.createObjectURL(response.data)
+}
+
 export async function imageEditSourceUrl(id: string) {
   const response = await http.get<Blob>(`/images/${id}/edit-source`, { responseType: 'blob' })
   return URL.createObjectURL(response.data)

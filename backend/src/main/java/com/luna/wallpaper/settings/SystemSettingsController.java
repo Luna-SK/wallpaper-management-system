@@ -1,6 +1,7 @@
 package com.luna.wallpaper.settings;
 
 import java.util.Map;
+import java.util.Set;
 
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.scheduling.support.CronExpression;
@@ -17,6 +18,12 @@ import com.luna.wallpaper.audit.AuditLogService;
 class SystemSettingsController {
 
 	private static final String PREVIEW_QUALITY = "preview.quality";
+	private static final Set<String> WATERMARK_MODES = Set.of("CORNER", "TILED");
+	private static final Set<String> WATERMARK_POSITIONS = Set.of(
+			"TOP_LEFT", "TOP_CENTER", "TOP_RIGHT",
+			"CENTER_LEFT", "CENTER", "CENTER_RIGHT",
+			"BOTTOM_LEFT", "BOTTOM_CENTER", "BOTTOM_RIGHT");
+	private static final Set<String> WATERMARK_TILE_DENSITIES = Set.of("SPARSE", "NORMAL", "DENSE");
 
 	private final SystemSettingService settings;
 	private final AuditLogService auditLogService;
@@ -43,7 +50,13 @@ class SystemSettingsController {
 				booleanSetting(SoftDeleteCleanupSettings.CLEANUP_ENABLED, false),
 				cronSetting(SoftDeleteCleanupSettings.CLEANUP_CRON, SoftDeleteCleanupSettings.DEFAULT_CLEANUP_CRON),
 				booleanSetting(WatermarkSettings.ENABLED, true),
-				settings.get(WatermarkSettings.TEXT, WatermarkSettings.DEFAULT_TEXT));
+				booleanSetting(WatermarkSettings.PREVIEW_ENABLED, false),
+				settings.get(WatermarkSettings.TEXT, WatermarkSettings.DEFAULT_TEXT),
+				choiceSetting(WatermarkSettings.MODE, WatermarkSettings.DEFAULT_MODE, WATERMARK_MODES),
+				choiceSetting(WatermarkSettings.POSITION, WatermarkSettings.DEFAULT_POSITION, WATERMARK_POSITIONS),
+				rangeIntSetting(WatermarkSettings.OPACITY_PERCENT, WatermarkSettings.DEFAULT_OPACITY_PERCENT,
+						WatermarkSettings.MIN_OPACITY_PERCENT, WatermarkSettings.MAX_OPACITY_PERCENT),
+				choiceSetting(WatermarkSettings.TILE_DENSITY, WatermarkSettings.DEFAULT_TILE_DENSITY, WATERMARK_TILE_DENSITIES));
 	}
 
 	@PatchMapping
@@ -59,11 +72,24 @@ class SystemSettingsController {
 		boolean watermarkEnabled = request.watermarkEnabled() == null
 				? booleanSetting(WatermarkSettings.ENABLED, true)
 				: request.watermarkEnabled();
+		boolean watermarkPreviewEnabled = request.watermarkPreviewEnabled() == null
+				? booleanSetting(WatermarkSettings.PREVIEW_ENABLED, false)
+				: request.watermarkPreviewEnabled();
 		String watermarkText = normalizeWatermarkText(
 				request.watermarkText() == null
 						? settings.get(WatermarkSettings.TEXT, WatermarkSettings.DEFAULT_TEXT)
 						: request.watermarkText(),
-				watermarkEnabled);
+				watermarkEnabled || watermarkPreviewEnabled);
+		String watermarkMode = normalizeChoice(request.watermarkMode(), WatermarkSettings.DEFAULT_MODE, WATERMARK_MODES,
+				"水印样式只能是 CORNER 或 TILED");
+		String watermarkPosition = normalizeChoice(request.watermarkPosition(), WatermarkSettings.DEFAULT_POSITION,
+				WATERMARK_POSITIONS, "水印位置不正确");
+		int watermarkOpacityPercent = request.watermarkOpacityPercent() == null
+				? intSetting(WatermarkSettings.OPACITY_PERCENT, WatermarkSettings.DEFAULT_OPACITY_PERCENT)
+				: requireRange(request.watermarkOpacityPercent(), WatermarkSettings.MIN_OPACITY_PERCENT,
+						WatermarkSettings.MAX_OPACITY_PERCENT, "水印透明度必须在 5-40 之间");
+		String watermarkTileDensity = normalizeChoice(request.watermarkTileDensity(), WatermarkSettings.DEFAULT_TILE_DENSITY,
+				WATERMARK_TILE_DENSITIES, "平铺水印密度只能是 SPARSE、NORMAL 或 DENSE");
 		String cleanupCron = normalizeCron(request.softDeleteCleanupCron(),
 				SoftDeleteCleanupSettings.DEFAULT_CLEANUP_CRON,
 				"自动清理执行计划必须是有效的 Spring cron 表达式");
@@ -74,9 +100,15 @@ class SystemSettingsController {
 		settings.put(SoftDeleteCleanupSettings.CLEANUP_ENABLED, String.valueOf(Boolean.TRUE.equals(request.softDeleteCleanupEnabled())));
 		settings.put(SoftDeleteCleanupSettings.CLEANUP_CRON, cleanupCron);
 		settings.put(WatermarkSettings.ENABLED, String.valueOf(watermarkEnabled));
+		settings.put(WatermarkSettings.PREVIEW_ENABLED, String.valueOf(watermarkPreviewEnabled));
 		settings.put(WatermarkSettings.TEXT, watermarkText);
+		settings.put(WatermarkSettings.MODE, watermarkMode);
+		settings.put(WatermarkSettings.POSITION, watermarkPosition);
+		settings.put(WatermarkSettings.OPACITY_PERCENT, String.valueOf(watermarkOpacityPercent));
+		settings.put(WatermarkSettings.TILE_DENSITY, watermarkTileDensity);
 		auditLogService.record("settings.update", "SYSTEM_SETTINGS", "system",
-				Map.of("previewQuality", quality, "watermarkEnabled", watermarkEnabled));
+				Map.of("previewQuality", quality, "watermarkEnabled", watermarkEnabled,
+						"watermarkPreviewEnabled", watermarkPreviewEnabled, "watermarkMode", watermarkMode));
 		return get();
 	}
 
@@ -87,6 +119,11 @@ class SystemSettingsController {
 		catch (NumberFormatException ex) {
 			return defaultValue;
 		}
+	}
+
+	private int rangeIntSetting(String key, int defaultValue, int min, int max) {
+		int value = intSetting(key, defaultValue);
+		return value < min || value > max ? defaultValue : value;
 	}
 
 	private static int requireRange(Integer value, int min, int max, String message) {
@@ -105,12 +142,25 @@ class SystemSettingsController {
 		return CronExpression.isValidExpression(cron) ? cron : defaultValue;
 	}
 
+	private String choiceSetting(String key, String defaultValue, Set<String> allowedValues) {
+		String value = settings.get(key, defaultValue);
+		return allowedValues.contains(value) ? value : defaultValue;
+	}
+
 	private static String normalizeCron(String value, String defaultValue, String message) {
 		String cron = value == null ? defaultValue : value.trim();
 		if (!CronExpression.isValidExpression(cron)) {
 			throw new IllegalArgumentException(message);
 		}
 		return cron;
+	}
+
+	private static String normalizeChoice(String value, String defaultValue, Set<String> allowedValues, String message) {
+		String normalized = value == null || value.isBlank() ? defaultValue : value.trim().toUpperCase();
+		if (!allowedValues.contains(normalized)) {
+			throw new IllegalArgumentException(message);
+		}
+		return normalized;
 	}
 
 	private static String normalizeWatermarkText(String value, boolean enabled) {
@@ -126,12 +176,14 @@ class SystemSettingsController {
 
 	record SystemSettingsRequest(Integer maxFileSizeMb, Integer maxBatchSizeMb, String previewQuality,
 			Integer softDeleteRetentionDays, Boolean softDeleteCleanupEnabled, String softDeleteCleanupCron,
-			Boolean watermarkEnabled, String watermarkText) {
+			Boolean watermarkEnabled, Boolean watermarkPreviewEnabled, String watermarkText, String watermarkMode,
+			String watermarkPosition, Integer watermarkOpacityPercent, String watermarkTileDensity) {
 	}
 
 	record SystemSettingsResponse(int maxFileSizeMb, int maxBatchSizeMb, int maxFileHardLimitMb,
 			int maxBatchHardLimitMb, String previewQuality, int softDeleteRetentionDays,
 			boolean softDeleteCleanupEnabled, String softDeleteCleanupCron, boolean watermarkEnabled,
-			String watermarkText) {
+			boolean watermarkPreviewEnabled, String watermarkText, String watermarkMode, String watermarkPosition,
+			int watermarkOpacityPercent, String watermarkTileDensity) {
 	}
 }

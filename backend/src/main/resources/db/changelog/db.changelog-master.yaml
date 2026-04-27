@@ -19,3 +19,5 @@ databaseChangeLog:
       file: db/changelog/009-watermark-settings.yaml
   - include:
       file: db/changelog/010-image-version-settings.yaml
+  - include:
+      file: db/changelog/011-watermark-experience-settings.yaml

@@ -10,7 +10,21 @@ export interface SystemSettings {
   softDeleteCleanupEnabled: boolean
   softDeleteCleanupCron: string
   watermarkEnabled: boolean
+  watermarkPreviewEnabled: boolean
   watermarkText: string
+  watermarkMode: 'CORNER' | 'TILED'
+  watermarkPosition:
+    | 'TOP_LEFT'
+    | 'TOP_CENTER'
+    | 'TOP_RIGHT'
+    | 'CENTER_LEFT'
+    | 'CENTER'
+    | 'CENTER_RIGHT'
+    | 'BOTTOM_LEFT'
+    | 'BOTTOM_CENTER'
+    | 'BOTTOM_RIGHT'
+  watermarkOpacityPercent: number
+  watermarkTileDensity: 'SPARSE' | 'NORMAL' | 'DENSE'
 }
 
 export type SystemSettingsUpdate = Omit<SystemSettings, 'maxFileHardLimitMb' | 'maxBatchHardLimitMb'>

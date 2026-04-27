@@ -21,6 +21,7 @@ import {
   getImageVersions,
   imageEditSourceUrl,
   imageBlobUrl,
+  imageVersionBlobUrl,
   purgeImage,
   purgeDeletedImages,
   retryUploadSessionItem,
@@ -112,6 +113,14 @@ const editSourceUrl = ref('')
 const imageVersions = ref<ImageVersionRecord[]>([])
 const imageVersionsLoading = ref(false)
 const imageVersionActionId = ref('')
+const imageVersionLoadToken = ref(0)
+const versionThumbnailUrls = reactive<Record<string, string>>({})
+const versionThumbnailFailed = reactive<Record<string, boolean>>({})
+const versionPreviewVisible = ref(false)
+const versionPreviewLoading = ref(false)
+const versionPreviewUrl = ref('')
+const versionPreviewVersion = ref<ImageVersionRecord | null>(null)
+const versionPreviewRequestToken = ref(0)
 const editorDrag = ref<EditorDragState | null>(null)
 const editorHoverHandle = ref<EditorDragType | null>(null)
 const imageEditor = reactive({
@@ -181,6 +190,11 @@ const editorOutputSizeText = computed(() => {
   return normalizedRotation === 90 || normalizedRotation === 270 ? `${height} × ${width}` : `${width} × ${height}`
 })
 const currentVersion = computed(() => imageVersions.value.find((version) => version.current) ?? null)
+const versionPreviewTitle = computed(() => {
+  const version = versionPreviewVersion.value
+  if (!version) return '版本预览'
+  return `版本预览 V${version.versionNo}${version.current ? '（当前）' : ''}`
+})
 const canPreviewPrevious = computed(() => previewIndex.value > 0)
 const canPreviewNext = computed(() => previewIndex.value >= 0 && previewIndex.value < rows.value.length - 1)
 const selectedSingleUploadFile = computed(() => uploadFileList.value[0] ?? null)
@@ -341,8 +355,52 @@ function revokeEditSourceUrl() {
   }
 }
 
+function revokeVersionThumbnailUrl(versionId: string) {
+  if (versionThumbnailUrls[versionId]) {
+    URL.revokeObjectURL(versionThumbnailUrls[versionId])
+    delete versionThumbnailUrls[versionId]
+  }
+  delete versionThumbnailFailed[versionId]
+}
+
+function revokeAllVersionThumbnailUrls() {
+  Object.keys(versionThumbnailUrls).forEach(revokeVersionThumbnailUrl)
+  Object.keys(versionThumbnailFailed).forEach((versionId) => delete versionThumbnailFailed[versionId])
+}
+
+function pruneVersionThumbnailUrls(activeIds: Set<string>) {
+  Object.keys(versionThumbnailUrls).forEach((versionId) => {
+    if (!activeIds.has(versionId)) {
+      revokeVersionThumbnailUrl(versionId)
+    }
+  })
+  Object.keys(versionThumbnailFailed).forEach((versionId) => {
+    if (!activeIds.has(versionId)) {
+      delete versionThumbnailFailed[versionId]
+    }
+  })
+}
+
+function revokeVersionPreviewUrl() {
+  if (versionPreviewUrl.value) {
+    URL.revokeObjectURL(versionPreviewUrl.value)
+    versionPreviewUrl.value = ''
+  }
+}
+
+function closeVersionPreview() {
+  versionPreviewRequestToken.value += 1
+  revokeVersionPreviewUrl()
+  versionPreviewVisible.value = false
+  versionPreviewLoading.value = false
+  versionPreviewVersion.value = null
+}
+
 function resetImageEditor() {
+  imageVersionLoadToken.value += 1
   revokeEditSourceUrl()
+  closeVersionPreview()
+  revokeAllVersionThumbnailUrls()
   editSourceImage.value = null
   imageEditor.naturalWidth = 0
   imageEditor.naturalHeight = 0
@@ -1339,10 +1397,16 @@ async function loadEditSource(row: ImageRecord) {
 }
 
 async function loadImageVersions(id: string) {
+  const loadToken = ++imageVersionLoadToken.value
   imageVersionsLoading.value = true
   try {
-    imageVersions.value = await getImageVersions(id)
+    const versions = await getImageVersions(id)
+    if (loadToken !== imageVersionLoadToken.value) return
+    imageVersions.value = versions
+    pruneVersionThumbnailUrls(new Set(versions.map((version) => version.id)))
+    await Promise.allSettled(versions.map((version) => loadVersionThumbnail(id, version, loadToken)))
   } catch (error) {
+    if (loadToken !== imageVersionLoadToken.value) return
     if (isAxiosError(error) && error.response?.status === 404) {
       ElMessage.error('后端版本接口不可用，请重启后端服务后重试')
     } else if (isAxiosError(error) && error.response?.status === 403) {
@@ -1351,7 +1415,25 @@ async function loadImageVersions(id: string) {
       ElMessage.error(errorMessage(error, '图片版本加载失败'))
     }
   } finally {
-    imageVersionsLoading.value = false
+    if (loadToken === imageVersionLoadToken.value) {
+      imageVersionsLoading.value = false
+    }
+  }
+}
+
+async function loadVersionThumbnail(imageId: string, version: ImageVersionRecord, loadToken: number) {
+  if (versionThumbnailUrls[version.id] || versionThumbnailFailed[version.id]) return
+  try {
+    const url = await imageVersionBlobUrl(imageId, version.id, 'thumbnail')
+    if (loadToken !== imageVersionLoadToken.value || !imageVersions.value.some((item) => item.id === version.id)) {
+      URL.revokeObjectURL(url)
+      return
+    }
+    versionThumbnailUrls[version.id] = url
+  } catch {
+    if (loadToken === imageVersionLoadToken.value) {
+      versionThumbnailFailed[version.id] = true
+    }
   }
 }
 
@@ -1364,6 +1446,32 @@ function versionOperationLabel(operationType: string) {
 function versionDimensions(version: ImageVersionRecord) {
   if (version.width && version.height) return `${version.width} × ${version.height}`
   return '未知尺寸'
+}
+
+async function openVersionPreview(version: ImageVersionRecord) {
+  if (!editing.value) return
+  const requestToken = ++versionPreviewRequestToken.value
+  revokeVersionPreviewUrl()
+  versionPreviewVersion.value = version
+  versionPreviewVisible.value = true
+  versionPreviewLoading.value = true
+  try {
+    const url = await imageVersionBlobUrl(editing.value.id, version.id, 'preview')
+    if (requestToken !== versionPreviewRequestToken.value || versionPreviewVersion.value?.id !== version.id || !versionPreviewVisible.value) {
+      URL.revokeObjectURL(url)
+      return
+    }
+    versionPreviewUrl.value = url
+  } catch (error) {
+    if (requestToken === versionPreviewRequestToken.value) {
+      versionPreviewVisible.value = false
+      ElMessage.error(errorMessage(error, '图片版本预览加载失败'))
+    }
+  } finally {
+    if (requestToken === versionPreviewRequestToken.value) {
+      versionPreviewLoading.value = false
+    }
+  }
 }
 
 async function restoreVersion(version: ImageVersionRecord) {
@@ -1384,6 +1492,9 @@ async function restoreVersion(version: ImageVersionRecord) {
     revokeThumbnailUrl(saved.id)
     if (previewImageId.value === saved.id) {
       await refreshImageRecordQuietly(saved.id)
+    }
+    if (versionPreviewVersion.value?.id === version.id) {
+      closeVersionPreview()
     }
     await nextTick()
     await loadEditSource(saved)
@@ -1410,6 +1521,10 @@ async function removeVersion(version: ImageVersionRecord) {
   imageVersionActionId.value = version.id
   try {
     await deleteImageVersion(editing.value.id, version.id)
+    if (versionPreviewVersion.value?.id === version.id) {
+      closeVersionPreview()
+    }
+    revokeVersionThumbnailUrl(version.id)
     await loadImageVersions(editing.value.id)
     ElMessage.success('图片版本已删除')
   } catch (error) {
@@ -2282,6 +2397,10 @@ onBeforeUnmount(() => {
             <el-empty v-if="!imageVersionsLoading && imageVersions.length === 0" description="暂无版本" :image-size="48" />
             <div v-else class="image-version-list">
               <div v-for="version in imageVersions" :key="version.id" class="image-version-item" :class="{ 'is-current': version.current }">
+                <button class="image-version-thumb" type="button" :aria-label="`预览版本 V${version.versionNo}`" @click="openVersionPreview(version)">
+                  <img v-if="versionThumbnailUrls[version.id]" :src="versionThumbnailUrls[version.id]" alt="" />
+                  <span v-else>{{ versionThumbnailFailed[version.id] ? '不可预览' : '加载中' }}</span>
+                </button>
                 <div class="image-version-main">
                   <div class="image-version-title">
                     <strong>V{{ version.versionNo }}</strong>
@@ -2292,6 +2411,7 @@ onBeforeUnmount(() => {
                   <span>{{ formatDateTime(version.createdAt) }}</span>
                 </div>
                 <div class="image-version-actions">
+                  <el-button link type="primary" :loading="versionPreviewLoading && versionPreviewVersion?.id === version.id" @click="openVersionPreview(version)">预览</el-button>
                   <el-button link type="primary" :disabled="version.current || !canEdit" :loading="imageVersionActionId === version.id" @click="restoreVersion(version)">恢复</el-button>
                   <el-button link type="danger" :disabled="version.current || !canDelete" :loading="imageVersionActionId === version.id" @click="removeVersion(version)">删除</el-button>
                 </div>
@@ -2304,6 +2424,34 @@ onBeforeUnmount(() => {
         <el-button :disabled="editSaving" @click="closeEditDialog">取消</el-button>
         <el-button type="primary" :loading="editSaving" @click="saveEdit">
           {{ imageEditor.dirty ? '保存信息与新版本' : '保存信息' }}
+        </el-button>
+      </template>
+    </el-dialog>
+
+    <el-dialog v-model="versionPreviewVisible" :title="versionPreviewTitle" width="760px" top="6vh" @closed="closeVersionPreview">
+      <div class="version-preview-dialog" v-loading="versionPreviewLoading">
+        <div class="version-preview-stage">
+          <img v-if="versionPreviewUrl" :src="versionPreviewUrl" alt="版本预览" />
+          <el-empty v-else description="暂无预览" :image-size="60" />
+        </div>
+        <div v-if="versionPreviewVersion" class="version-preview-meta">
+          <span>类型：{{ versionOperationLabel(versionPreviewVersion.operationType) }}</span>
+          <span>尺寸：{{ versionDimensions(versionPreviewVersion) }}</span>
+          <span>大小：{{ formatBytes(versionPreviewVersion.sizeBytes) }}</span>
+          <span>MIME：{{ versionPreviewVersion.mimeType }}</span>
+          <span>时间：{{ formatDateTime(versionPreviewVersion.createdAt) }}</span>
+          <span>文件：{{ versionPreviewVersion.originalFilename }}</span>
+        </div>
+      </div>
+      <template #footer>
+        <el-button @click="versionPreviewVisible = false">关闭</el-button>
+        <el-button
+          v-if="versionPreviewVersion && !versionPreviewVersion.current && canEdit"
+          type="primary"
+          :loading="imageVersionActionId === versionPreviewVersion.id"
+          @click="restoreVersion(versionPreviewVersion)"
+        >
+          恢复此版本
         </el-button>
       </template>
     </el-dialog>
@@ -2947,6 +3095,7 @@ onBeforeUnmount(() => {
 	border: 1px solid #e2e8f0;
 	border-radius: 8px;
 	display: grid;
+	grid-template-columns: 72px minmax(0, 1fr);
 	gap: 8px;
 	padding: 10px;
 }
@@ -2962,6 +3111,37 @@ onBeforeUnmount(() => {
 	min-width: 0;
 }
 
+.image-version-thumb {
+	align-items: center;
+	appearance: none;
+	background: #e2e8f0;
+	border: 1px solid #cbd5e1;
+	border-radius: 6px;
+	color: #64748b;
+	cursor: pointer;
+	display: flex;
+	font-size: 12px;
+	height: 54px;
+	justify-content: center;
+	line-height: 1.3;
+	overflow: hidden;
+	padding: 0;
+	width: 72px;
+}
+
+.image-version-thumb:hover,
+.image-version-thumb:focus-visible {
+	border-color: #93c5fd;
+	color: #2563eb;
+	outline: none;
+}
+
+.image-version-thumb img {
+	height: 100%;
+	object-fit: cover;
+	width: 100%;
+}
+
 .image-version-title {
 	align-items: center;
 	display: flex;
@@ -2975,9 +3155,39 @@ onBeforeUnmount(() => {
 }
 
 .image-version-actions {
+	grid-column: 2;
 	display: flex;
 	gap: 8px;
 	justify-content: flex-end;
+}
+
+.version-preview-dialog {
+	display: grid;
+	gap: 14px;
+}
+
+.version-preview-stage {
+	align-items: center;
+	background: #0f172a;
+	border-radius: 8px;
+	display: flex;
+	justify-content: center;
+	min-height: 360px;
+	overflow: hidden;
+}
+
+.version-preview-stage img {
+	max-height: min(62vh, 520px);
+	max-width: 100%;
+	object-fit: contain;
+}
+
+.version-preview-meta {
+	color: #475569;
+	display: grid;
+	font-size: 13px;
+	gap: 8px 16px;
+	grid-template-columns: repeat(2, minmax(0, 1fr));
 }
 
 .pagination-row {
@@ -3291,6 +3501,19 @@ onBeforeUnmount(() => {
   }
 
   .image-editor-info-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .image-version-item {
+    grid-template-columns: 60px minmax(0, 1fr);
+  }
+
+  .image-version-thumb {
+    height: 48px;
+    width: 60px;
+  }
+
+  .version-preview-meta {
     grid-template-columns: 1fr;
   }
 }

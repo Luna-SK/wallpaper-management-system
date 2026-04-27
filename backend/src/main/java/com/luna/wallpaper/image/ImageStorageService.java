@@ -94,7 +94,7 @@ class ImageStorageService {
 		return bytes.asByteArray();
 	}
 
-	WatermarkedImage watermark(byte[] bytes, String text) {
+	WatermarkedImage watermark(byte[] bytes, WatermarkOptions options) {
 		try {
 			BufferedImage source = ImageIO.read(new ByteArrayInputStream(bytes));
 			if (source == null) {
@@ -106,7 +106,7 @@ class ImageStorageService {
 			graphics.setRenderingHint(RenderingHints.KEY_RENDERING, RenderingHints.VALUE_RENDER_QUALITY);
 			graphics.setRenderingHint(RenderingHints.KEY_TEXT_ANTIALIASING, RenderingHints.VALUE_TEXT_ANTIALIAS_ON);
 			graphics.drawImage(source, 0, 0, null);
-			drawWatermark(graphics, source.getWidth(), source.getHeight(), text);
+			drawWatermark(graphics, source.getWidth(), source.getHeight(), options);
 			graphics.dispose();
 			ByteArrayOutputStream output = new ByteArrayOutputStream();
 			ImageIO.write(canvas, "png", output);
@@ -214,15 +214,31 @@ class ImageStorageService {
 		return output.toByteArray();
 	}
 
-	private static void drawWatermark(Graphics2D graphics, int width, int height, String text) {
-		String value = text == null || text.isBlank() ? "仅供授权使用" : text;
-		int fontSize = Math.max(18, Math.min(56, Math.max(width, height) / 18));
+	private static void drawWatermark(Graphics2D graphics, int width, int height, WatermarkOptions options) {
+		if ("TILED".equals(options.mode())) {
+			drawTiledWatermark(graphics, width, height, options);
+			return;
+		}
+		drawCornerWatermark(graphics, width, height, options);
+	}
+
+	private static void drawTiledWatermark(Graphics2D graphics, int width, int height, WatermarkOptions options) {
+		String value = watermarkText(options);
+		int fontSize = Math.max(18, Math.min(52, Math.max(width, height) / 22));
 		graphics.setFont(new Font(Font.SANS_SERIF, Font.BOLD, fontSize));
 		FontMetrics metrics = graphics.getFontMetrics();
 		int textWidth = metrics.stringWidth(value);
-		int xStep = Math.max(textWidth + fontSize * 4, 260);
-		int yStep = Math.max(fontSize * 5, 150);
-		graphics.setComposite(AlphaComposite.getInstance(AlphaComposite.SRC_OVER, 0.22F));
+		int xStep = switch (options.tileDensity()) {
+			case "DENSE" -> Math.max(textWidth + fontSize * 4, 260);
+			case "NORMAL" -> Math.max(textWidth + fontSize * 6, 340);
+			default -> Math.max(textWidth + fontSize * 9, 460);
+		};
+		int yStep = switch (options.tileDensity()) {
+			case "DENSE" -> Math.max(fontSize * 5, 150);
+			case "NORMAL" -> Math.max(fontSize * 6, 210);
+			default -> Math.max(fontSize * 8, 280);
+		};
+		graphics.setComposite(AlphaComposite.getInstance(AlphaComposite.SRC_OVER, watermarkAlpha(options)));
 		graphics.setColor(Color.WHITE);
 		graphics.rotate(Math.toRadians(-30), width / 2D, height / 2D);
 		for (int y = -height; y < height * 2; y += yStep) {
@@ -231,6 +247,45 @@ class ImageStorageService {
 			}
 		}
 		graphics.setComposite(AlphaComposite.SrcOver);
+	}
+
+	private static void drawCornerWatermark(Graphics2D graphics, int width, int height, WatermarkOptions options) {
+		String value = watermarkText(options);
+		int fontSize = Math.max(18, Math.min(48, Math.max(width, height) / 26));
+		graphics.setFont(new Font(Font.SANS_SERIF, Font.BOLD, fontSize));
+		FontMetrics metrics = graphics.getFontMetrics();
+		int textWidth = metrics.stringWidth(value);
+		int textHeight = metrics.getAscent() + metrics.getDescent();
+		int margin = Math.max(12, fontSize);
+		int x = switch (options.position()) {
+			case "TOP_CENTER", "CENTER", "BOTTOM_CENTER" -> (width - textWidth) / 2;
+			case "TOP_RIGHT", "CENTER_RIGHT", "BOTTOM_RIGHT" -> width - margin - textWidth;
+			default -> margin;
+		};
+		int y = switch (options.position()) {
+			case "CENTER_LEFT", "CENTER", "CENTER_RIGHT" -> (height - textHeight) / 2 + metrics.getAscent();
+			case "BOTTOM_LEFT", "BOTTOM_CENTER", "BOTTOM_RIGHT" -> height - margin - metrics.getDescent();
+			default -> margin + metrics.getAscent();
+		};
+		x = Math.max(margin, Math.min(x, width - margin - textWidth));
+		y = Math.max(margin + metrics.getAscent(), Math.min(y, height - margin - metrics.getDescent()));
+		float alpha = watermarkAlpha(options);
+		graphics.setComposite(AlphaComposite.getInstance(AlphaComposite.SRC_OVER, Math.min(0.32F, alpha + 0.08F)));
+		graphics.setColor(Color.BLACK);
+		graphics.drawString(value, x + 1, y + 1);
+		graphics.setComposite(AlphaComposite.getInstance(AlphaComposite.SRC_OVER, alpha));
+		graphics.setColor(Color.WHITE);
+		graphics.drawString(value, x, y);
+		graphics.setComposite(AlphaComposite.SrcOver);
+	}
+
+	private static String watermarkText(WatermarkOptions options) {
+		String value = options.text();
+		return value == null || value.isBlank() ? "仅供授权使用" : value;
+	}
+
+	private static float watermarkAlpha(WatermarkOptions options) {
+		return Math.max(5, Math.min(40, options.opacityPercent())) / 100F;
 	}
 
 	private static String normalizeMime(MultipartFile file) {
@@ -256,6 +311,9 @@ class ImageStorageService {
 	}
 
 	record StoredObject(String bucket, String key, Instant lastModified) {
+	}
+
+	record WatermarkOptions(String text, String mode, String position, int opacityPercent, String tileDensity) {
 	}
 
 	record WatermarkedImage(byte[] bytes, String mimeType) {
