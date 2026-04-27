@@ -10,14 +10,20 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
+import java.time.Instant;
+import java.time.LocalDateTime;
+import java.util.ArrayList;
 
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.BeforeEach;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.boot.test.context.TestConfiguration;
 import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc;
 import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Import;
 import org.springframework.http.MediaType;
+import org.springframework.context.annotation.Primary;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.test.web.servlet.MockMvc;
@@ -62,6 +68,12 @@ class AuthControllerTests {
 	private AuthRefreshTokenMapper refreshTokens;
 
 	@Autowired
+	private PasswordResetTokenMapper passwordResetTokens;
+
+	@Autowired
+	private CapturingPasswordResetMailer resetMailer;
+
+	@Autowired
 	private SystemSettingService settings;
 
 	@Autowired
@@ -73,6 +85,7 @@ class AuthControllerTests {
 		settings.put(SessionLifecycleSettings.IDLE_TIMEOUT_MINUTES, "120");
 		settings.put(SessionLifecycleSettings.ABSOLUTE_LIFETIME_ENABLED, "true");
 		settings.put(SessionLifecycleSettings.ABSOLUTE_LIFETIME_DAYS, "7");
+		resetMailer.clear();
 	}
 
 	@Test
@@ -211,6 +224,87 @@ class AuthControllerTests {
 		mvc.perform(get("/api/auth/me").header("Authorization", bearer(accessToken(secondLogin))))
 				.andExpect(status().isUnauthorized());
 		assertThat(login(username, "newpass123").path("username").asString()).isEqualTo(username);
+	}
+
+	@Test
+	void passwordResetRequestSendsMailForExistingEmailWithoutEnumeratingMissingEmail() throws Exception {
+		AppUser user = createUser("reset-req", "oldpass123", "Reset.User@example.test", UserStatus.ACTIVE);
+
+		mvc.perform(post("/api/auth/password-reset/request")
+						.contentType(MediaType.APPLICATION_JSON)
+						.content(json(Map.of("email", "reset.user@example.test"))))
+				.andExpect(status().isOk());
+
+		assertThat(resetMailer.sent()).hasSize(1);
+		CapturingPasswordResetMailer.SentReset sent = resetMailer.sent().getFirst();
+		assertThat(sent.userId()).isEqualTo(user.id());
+		PasswordResetToken stored = passwordResetTokens.selectByTokenHash(AuthService.sha256(sent.token()));
+		assertThat(stored).isNotNull();
+		assertThat(stored.userId()).isEqualTo(user.id());
+		assertThat(stored.tokenHash()).isNotEqualTo(sent.token());
+
+		mvc.perform(post("/api/auth/password-reset/request")
+						.contentType(MediaType.APPLICATION_JSON)
+						.content(json(Map.of("email", "missing@example.test"))))
+				.andExpect(status().isOk());
+		assertThat(resetMailer.sent()).hasSize(1);
+	}
+
+	@Test
+	void passwordResetConfirmChangesPasswordRevokesSessionsAndConsumesToken() throws Exception {
+		AppUser user = createUser("reset-ok", "oldpass123", "reset-ok@example.test", UserStatus.ACTIVE);
+		JsonNode oldSession = login(user.username(), "oldpass123");
+		requestReset(user.email());
+		String token = resetMailer.sent().getFirst().token();
+
+		mvc.perform(post("/api/auth/password-reset/confirm")
+						.contentType(MediaType.APPLICATION_JSON)
+						.content(json(Map.of("token", token, "newPassword", "newpass123"))))
+				.andExpect(status().isOk());
+
+		PasswordResetToken stored = passwordResetTokens.selectByTokenHash(AuthService.sha256(token));
+		assertThat(stored.usedAt()).isNotNull();
+		mvc.perform(get("/api/auth/me").header("Authorization", bearer(accessToken(oldSession))))
+				.andExpect(status().isUnauthorized());
+		mvc.perform(post("/api/auth/login")
+						.contentType(MediaType.APPLICATION_JSON)
+						.content(json(Map.of("username", user.username(), "password", "oldpass123"))))
+				.andExpect(status().isUnauthorized());
+		assertThat(login(user.username(), "newpass123").path("username").asString()).isEqualTo(user.username());
+	}
+
+	@Test
+	void passwordResetConfirmRejectsReusedExpiredAndDisabledTokens() throws Exception {
+		AppUser user = createUser("reset-reuse", "oldpass123", "reset-reuse@example.test", UserStatus.ACTIVE);
+		requestReset(user.email());
+		String token = resetMailer.sent().getFirst().token();
+		mvc.perform(post("/api/auth/password-reset/confirm")
+						.contentType(MediaType.APPLICATION_JSON)
+						.content(json(Map.of("token", token, "newPassword", "newpass123"))))
+				.andExpect(status().isOk());
+		mvc.perform(post("/api/auth/password-reset/confirm")
+						.contentType(MediaType.APPLICATION_JSON)
+						.content(json(Map.of("token", token, "newPassword", "another123"))))
+				.andExpect(status().isUnauthorized());
+
+		AppUser expiredUser = createUser("reset-expired", "oldpass123", "reset-expired@example.test", UserStatus.ACTIVE);
+		requestReset(expiredUser.email());
+		String expiredToken = resetMailer.sent().getLast().token();
+		jdbcTemplate.update("update password_reset_tokens set expires_at = now(6) - interval 1 minute where token_hash = ?",
+				AuthService.sha256(expiredToken));
+		mvc.perform(post("/api/auth/password-reset/confirm")
+						.contentType(MediaType.APPLICATION_JSON)
+						.content(json(Map.of("token", expiredToken, "newPassword", "newpass123"))))
+				.andExpect(status().isUnauthorized());
+
+		AppUser disabled = createUser("reset-disabled", "oldpass123", "disabled@example.test", UserStatus.DISABLED);
+		String disabledToken = "disabled-" + UUID.randomUUID();
+		passwordResetTokens.insert(new PasswordResetToken(disabled.id(), AuthService.sha256(disabledToken),
+				LocalDateTime.now().plusMinutes(30), "127.0.0.1", "test"));
+		mvc.perform(post("/api/auth/password-reset/confirm")
+						.contentType(MediaType.APPLICATION_JSON)
+						.content(json(Map.of("token", disabledToken, "newPassword", "newpass123"))))
+				.andExpect(status().isUnauthorized());
 	}
 
 	@Test
@@ -361,6 +455,23 @@ class AuthControllerTests {
 				.getContentAsString());
 	}
 
+	private void requestReset(String email) throws Exception {
+		mvc.perform(post("/api/auth/password-reset/request")
+						.contentType(MediaType.APPLICATION_JSON)
+						.content(json(Map.of("email", email))))
+				.andExpect(status().isOk());
+	}
+
+	private AppUser createUser(String usernamePrefix, String password, String email, UserStatus status) {
+		AppUser user = new AppUser(uniqueUsername(usernamePrefix), "密码重置用户", email, null,
+				passwordEncoder.encode(password));
+		if (!status.isActive()) {
+			user.disable();
+		}
+		users.insert(user);
+		return user;
+	}
+
 	private Permission permission(String code) {
 		return permissions.selectOrdered().stream()
 				.filter(permission -> permission.code().equals(code))
@@ -398,5 +509,36 @@ class AuthControllerTests {
 
 	private String shortId() {
 		return UUID.randomUUID().toString().replace("-", "").substring(0, 8);
+	}
+
+	@TestConfiguration
+	static class PasswordResetMailTestConfiguration {
+
+		@Bean
+		@Primary
+		CapturingPasswordResetMailer capturingPasswordResetMailer() {
+			return new CapturingPasswordResetMailer();
+		}
+	}
+
+	static class CapturingPasswordResetMailer implements PasswordResetMailer {
+
+		private final List<SentReset> sent = new ArrayList<>();
+
+		@Override
+		public void send(AppUser user, String token, Instant expiresAt) {
+			sent.add(new SentReset(user.id(), user.email(), token, expiresAt));
+		}
+
+		void clear() {
+			sent.clear();
+		}
+
+		List<SentReset> sent() {
+			return sent;
+		}
+
+		record SentReset(String userId, String email, String token, Instant expiresAt) {
+		}
 	}
 }

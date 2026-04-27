@@ -16,6 +16,15 @@ public interface AppUserMapper extends BaseMapper<AppUser> {
 	@Select("select * from app_users where username = #{username} limit 1")
 	AppUser selectByUsername(@Param("username") String username);
 
+	@Select("""
+			select *
+			from app_users
+			where lower(email) = lower(#{email})
+			  and status = 'ACTIVE'
+			order by username asc
+			""")
+	List<AppUser> selectActiveByEmail(@Param("email") String email);
+
 	@Select("select 1 from app_users where username = #{username} and id <> #{id} limit 1")
 	Integer existsByUsernameExcludingId(@Param("username") String username, @Param("id") String id);
 

@@ -23,3 +23,5 @@ databaseChangeLog:
       file: db/changelog/011-watermark-experience-settings.yaml
   - include:
       file: db/changelog/012-session-lifecycle-settings.yaml
+  - include:
+      file: db/changelog/013-password-reset-tokens.yaml

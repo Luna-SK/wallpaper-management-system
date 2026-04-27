@@ -13,6 +13,8 @@ import com.luna.wallpaper.rbac.AuthDtos.AuthResponse;
 import com.luna.wallpaper.rbac.AuthDtos.AuthUserResponse;
 import com.luna.wallpaper.rbac.AuthDtos.LoginRequest;
 import com.luna.wallpaper.rbac.AuthDtos.PasswordChangeRequest;
+import com.luna.wallpaper.rbac.AuthDtos.PasswordResetConfirmRequest;
+import com.luna.wallpaper.rbac.AuthDtos.PasswordResetRequest;
 import com.luna.wallpaper.rbac.AuthDtos.ProfileUpdateRequest;
 import com.luna.wallpaper.rbac.AuthDtos.RefreshRequest;
 import com.luna.wallpaper.rbac.AuthDtos.RegisterRequest;
@@ -50,6 +52,19 @@ class AuthController {
 	@PostMapping("/logout")
 	ApiResponse<Void> logout(Authentication authentication) {
 		authService.logout(authentication);
+		return ApiResponse.ok();
+	}
+
+	@PostMapping("/password-reset/request")
+	ApiResponse<Void> requestPasswordReset(@Valid @RequestBody PasswordResetRequest request,
+			HttpServletRequest servletRequest) {
+		authService.requestPasswordReset(request, servletRequest);
+		return ApiResponse.ok();
+	}
+
+	@PostMapping("/password-reset/confirm")
+	ApiResponse<Void> confirmPasswordReset(@Valid @RequestBody PasswordResetConfirmRequest request) {
+		authService.confirmPasswordReset(request);
 		return ApiResponse.ok();
 	}
 

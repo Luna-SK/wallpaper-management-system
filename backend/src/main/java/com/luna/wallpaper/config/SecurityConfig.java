@@ -35,7 +35,8 @@ class SecurityConfig {
 				.authorizeHttpRequests(authorize -> authorize
 						.requestMatchers("/error", "/actuator/health/**", "/api/system/health").permitAll()
 						.requestMatchers(HttpMethod.POST, "/api/auth/login", "/api/auth/register",
-								"/api/auth/refresh").permitAll()
+								"/api/auth/refresh", "/api/auth/password-reset/request",
+								"/api/auth/password-reset/confirm").permitAll()
 						.anyRequest().authenticated())
 				.addFilterBefore(jwtAuthenticationFilter, BasicAuthenticationFilter.class)
 				.addFilterBefore(developmentTokenAuthenticationFilter, BasicAuthenticationFilter.class)
