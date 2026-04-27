@@ -25,6 +25,10 @@ const settings = reactive({
   watermarkPosition: 'BOTTOM_RIGHT' as SystemSettings['watermarkPosition'],
   watermarkOpacityPercent: 16,
   watermarkTileDensity: 'SPARSE' as SystemSettings['watermarkTileDensity'],
+  sessionIdleTimeoutEnabled: true,
+  sessionIdleTimeoutMinutes: 120,
+  sessionAbsoluteLifetimeEnabled: true,
+  sessionAbsoluteLifetimeDays: 7,
   auditArchiveEnabled: true,
   auditRetentionDays: 180,
   auditArchiveCron: '0 30 2 * * *',
@@ -86,6 +90,10 @@ function applySystemSettings(system: SystemSettings) {
   settings.watermarkPosition = system.watermarkPosition
   settings.watermarkOpacityPercent = system.watermarkOpacityPercent
   settings.watermarkTileDensity = system.watermarkTileDensity
+  settings.sessionIdleTimeoutEnabled = system.sessionIdleTimeoutEnabled
+  settings.sessionIdleTimeoutMinutes = system.sessionIdleTimeoutMinutes
+  settings.sessionAbsoluteLifetimeEnabled = system.sessionAbsoluteLifetimeEnabled
+  settings.sessionAbsoluteLifetimeDays = system.sessionAbsoluteLifetimeDays
   syncUploadLimitRange()
 }
 
@@ -132,6 +140,10 @@ async function saveSettings() {
         watermarkPosition: settings.watermarkPosition,
         watermarkOpacityPercent: settings.watermarkOpacityPercent,
         watermarkTileDensity: settings.watermarkTileDensity,
+        sessionIdleTimeoutEnabled: settings.sessionIdleTimeoutEnabled,
+        sessionIdleTimeoutMinutes: settings.sessionIdleTimeoutMinutes,
+        sessionAbsoluteLifetimeEnabled: settings.sessionAbsoluteLifetimeEnabled,
+        sessionAbsoluteLifetimeDays: settings.sessionAbsoluteLifetimeDays,
       }),
     ])
     applySystemSettings(system)
@@ -155,7 +167,7 @@ onMounted(loadSettings)
 </script>
 
 <template>
-  <section>
+  <section class="workspace-page">
     <div class="page-head">
       <div>
         <p>上传限制、预览质量、已停用图片清理和审计日志保留配置。</p>
@@ -163,7 +175,7 @@ onMounted(loadSettings)
       <el-button type="primary" :loading="saving" @click="saveSettings">保存系统设置</el-button>
     </div>
 
-    <div v-loading="loading" class="surface surface-pad">
+    <div v-loading="loading" class="surface surface-pad workspace-scroll-region">
       <el-form label-width="150px" style="max-width: 760px">
         <div class="form-section">
           <h2>基础设置</h2>
@@ -250,6 +262,39 @@ onMounted(loadSettings)
               show-input
               :disabled="!watermarkActive"
             />
+          </el-form-item>
+        </div>
+
+        <div class="form-section">
+          <h2>会话生命周期</h2>
+          <p class="section-copy">默认空闲 2 小时自动退出，单次登录最长保留 7 天。</p>
+          <el-form-item label="空闲超时退出">
+            <el-switch v-model="settings.sessionIdleTimeoutEnabled" active-text="启用" inactive-text="停用" />
+          </el-form-item>
+          <el-form-item label="空闲超时时长">
+            <el-input-number
+              v-model="settings.sessionIdleTimeoutMinutes"
+              :min="15"
+              :max="1440"
+              :step="15"
+              controls-position="right"
+              :disabled="!settings.sessionIdleTimeoutEnabled"
+            />
+            <span class="unit-label">分钟</span>
+          </el-form-item>
+          <el-form-item label="绝对会话时长">
+            <el-switch v-model="settings.sessionAbsoluteLifetimeEnabled" active-text="启用" inactive-text="停用" />
+          </el-form-item>
+          <el-form-item label="最长登录时长">
+            <el-input-number
+              v-model="settings.sessionAbsoluteLifetimeDays"
+              :min="1"
+              :max="30"
+              :step="1"
+              controls-position="right"
+              :disabled="!settings.sessionAbsoluteLifetimeEnabled"
+            />
+            <span class="unit-label">天</span>
           </el-form-item>
         </div>
 

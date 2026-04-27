@@ -30,7 +30,12 @@ public final class AuthDtos {
 
 	public record AuthResponse(String username, String tokenType, String accessToken, String refreshToken,
 			Instant accessTokenExpiresAt, Instant refreshTokenExpiresAt, AuthUserResponse user,
-			List<String> permissions) {
+			List<String> permissions, SessionPolicyResponse sessionPolicy) {
+	}
+
+	public record SessionPolicyResponse(boolean idleTimeoutEnabled, int idleTimeoutMinutes,
+			boolean absoluteLifetimeEnabled, int absoluteLifetimeDays, Instant absoluteExpiresAt,
+			Instant serverTime) {
 	}
 
 	public record AuthUserResponse(String id, String username, String displayName, String email, String phone,

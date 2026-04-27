@@ -113,9 +113,9 @@
 
 ## Auth and RBAC
 
-认证使用短期 JWT access token 和服务端 refresh session。`POST /api/auth/login` 返回 `accessToken`、`refreshToken`、过期时间、当前用户资料、角色和权限编码；后续请求使用 `Authorization: Bearer <accessToken>`。
+认证使用短期 JWT access token 和服务端 refresh session。`POST /api/auth/login` 返回 `accessToken`、`refreshToken`、过期时间、当前用户资料、角色、权限编码和 `sessionPolicy`；后续请求使用 `Authorization: Bearer <accessToken>`。
 
-`POST /api/auth/register` 公开注册启用用户，默认分配 `VIEWER` 角色并返回 token 对。`POST /api/auth/refresh` 使用 refresh token 轮换新的 token 对；`POST /api/auth/logout` 撤销当前 session。用户可通过 `PATCH /api/auth/profile` 修改个人资料，通过 `PATCH /api/auth/password` 修改自己的密码。管理员通过 `PUT /api/users/{id}/password` 重置用户密码，重置后该用户已有 session 会被撤销。
+`POST /api/auth/register` 公开注册启用用户，默认分配 `VIEWER` 角色并返回 token 对。`POST /api/auth/refresh` 使用 refresh token 轮换新的 token 对；refresh session 同时受空闲超时和绝对会话时长约束，默认空闲 2 小时退出、最长 7 天必须重新登录。`GET /api/auth/session-policy` 返回当前登录会话的空闲超时开关、空闲分钟数、绝对会话开关、绝对到期时间和服务器时间。`POST /api/auth/logout` 撤销当前 session。用户可通过 `PATCH /api/auth/profile` 修改个人资料，通过 `PATCH /api/auth/password` 修改自己的密码。管理员通过 `PUT /api/users/{id}/password` 重置用户密码，重置后该用户已有 session 会被撤销。
 
 权限来自当前启用用户、启用角色和角色权限关系，请求鉴权时动态加载；角色权限调整后无需用户重新登录即可在下一次请求生效。开发令牌旁路默认关闭，仅在显式配置 `APP_SECURITY_DEVELOPMENT_TOKEN_ENABLED=true` 时启用。
 
@@ -143,11 +143,15 @@
   "watermarkMode": "CORNER",
   "watermarkPosition": "BOTTOM_RIGHT",
   "watermarkOpacityPercent": 16,
-  "watermarkTileDensity": "SPARSE"
+  "watermarkTileDensity": "SPARSE",
+  "sessionIdleTimeoutEnabled": true,
+  "sessionIdleTimeoutMinutes": 120,
+  "sessionAbsoluteLifetimeEnabled": true,
+  "sessionAbsoluteLifetimeDays": 7
 }
 ```
 
-`PATCH /api/system-settings` 需要 `setting:manage` 权限。上传业务上限不能超过硬上限；下载/导出水印与预览水印可独立开关，任一水印开启时必须填写不超过 64 个字符的水印文字；水印样式支持角落水印 `CORNER` 和斜向平铺 `TILED`，角落位置支持九宫格，透明度范围为 `5-40`，平铺密度支持 `SPARSE`、`NORMAL`、`DENSE`。软删除自动清理 cron 使用 Spring 6 段表达式，默认每周日 03:00。保存后无需重启，下一次预览或下载会使用最新水印配置，下一次调度会读取最新 cron；后端启动后仍会补偿检查一次已到期的停用图片。
+`PATCH /api/system-settings` 需要 `setting:manage` 权限。上传业务上限不能超过硬上限；下载/导出水印与预览水印可独立开关，任一水印开启时必须填写不超过 64 个字符的水印文字；水印样式支持角落水印 `CORNER` 和斜向平铺 `TILED`，角落位置支持九宫格，透明度范围为 `5-40`，平铺密度支持 `SPARSE`、`NORMAL`、`DENSE`。空闲超时范围为 `15-1440` 分钟，绝对会话时长范围为 `1-30` 天，两个机制均可独立开关且默认开启。软删除自动清理 cron 使用 Spring 6 段表达式，默认每周日 03:00。保存后无需重启，下一次预览、下载或会话校验会读取最新配置，下一次调度会读取最新 cron；后端启动后仍会补偿检查一次已到期的停用图片。
 
 ## Audit Log Retention
 

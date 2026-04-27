@@ -171,7 +171,7 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <section>
+  <section class="workspace-page">
     <div class="page-head">
       <div>
         <p>图片数量、访问量、下载量和存储占用。</p>
@@ -179,7 +179,7 @@ onBeforeUnmount(() => {
       <el-button @click="load">刷新</el-button>
     </div>
 
-    <div v-loading="loading" class="stats-dashboard">
+    <div v-loading="loading" class="stats-dashboard workspace-scroll-region">
       <div class="metric-grid">
         <div class="metric stat-metric">
           <span>图片总量</span>

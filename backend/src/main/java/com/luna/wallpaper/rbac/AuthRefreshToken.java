@@ -27,6 +27,8 @@ public class AuthRefreshToken {
 
 	private String userAgent;
 
+	private LocalDateTime lastActivityAt;
+
 	@TableField(fill = FieldFill.INSERT)
 	private LocalDateTime createdAt;
 
@@ -43,6 +45,7 @@ public class AuthRefreshToken {
 		this.expiresAt = expiresAt;
 		this.createdIp = createdIp;
 		this.userAgent = userAgent;
+		this.lastActivityAt = LocalDateTime.now();
 	}
 
 	String id() { return id; }
@@ -50,15 +53,23 @@ public class AuthRefreshToken {
 	String tokenHash() { return tokenHash; }
 	LocalDateTime expiresAt() { return expiresAt; }
 	LocalDateTime revokedAt() { return revokedAt; }
+	LocalDateTime lastActivityAt() { return lastActivityAt; }
+	LocalDateTime createdAt() { return createdAt; }
+	LocalDateTime updatedAt() { return updatedAt; }
 
 	boolean isActive(LocalDateTime now) {
 		return revokedAt == null && expiresAt.isAfter(now);
 	}
 
-	void rotate(String tokenHash, LocalDateTime expiresAt) {
+	void rotate(String tokenHash, LocalDateTime expiresAt, LocalDateTime activityAt) {
 		this.tokenHash = tokenHash;
 		this.expiresAt = expiresAt;
+		this.lastActivityAt = activityAt;
 		this.revokedAt = null;
+	}
+
+	void markActivity(LocalDateTime activityAt) {
+		this.lastActivityAt = activityAt;
 	}
 
 	void revoke() {

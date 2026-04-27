@@ -1826,7 +1826,7 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <section>
+  <section class="workspace-page">
     <div class="page-head">
       <div>
         <p>按关键词、分类、标签、上传者和时间范围检索图片。</p>
@@ -1834,7 +1834,7 @@ onBeforeUnmount(() => {
       <el-button v-if="canUpload" type="primary" :icon="UploadFilled" @click="openUploadDialog">上传图片</el-button>
     </div>
 
-    <div class="surface surface-pad">
+    <div class="surface surface-pad workspace-scroll-region">
       <div class="image-scope-row">
         <el-radio-group v-model="imageScope" @change="handleImageScopeChange">
           <el-radio-button label="ACTIVE">在库图片</el-radio-button>

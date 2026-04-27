@@ -1,3 +1,5 @@
+import type { SessionPolicy } from '../api/auth'
+
 const TOKEN_KEY = 'wzut-wallpaper-token'
 const AUTH_STATE_KEY = 'wzut-wallpaper-auth'
 
@@ -6,6 +8,8 @@ export interface StoredAuthState {
   refreshToken: string
   user: unknown
   permissions: string[]
+  sessionPolicy?: SessionPolicy | null
+  lastActivityAt?: number
 }
 
 export function getStoredAuthState(): StoredAuthState | null {
@@ -21,6 +25,8 @@ export function getStoredAuthState(): StoredAuthState | null {
         refreshToken: parsed.refreshToken,
         user: parsed.user ?? null,
         permissions: Array.isArray(parsed.permissions) ? parsed.permissions.filter((item): item is string => typeof item === 'string') : [],
+        sessionPolicy: isSessionPolicy(parsed.sessionPolicy) ? parsed.sessionPolicy : null,
+        lastActivityAt: typeof parsed.lastActivityAt === 'number' ? parsed.lastActivityAt : Date.now(),
       }
     }
   } catch {
@@ -49,4 +55,15 @@ export function setStoredToken(token: string) {
 export function clearStoredToken() {
   localStorage.removeItem(AUTH_STATE_KEY)
   localStorage.removeItem(TOKEN_KEY)
+}
+
+function isSessionPolicy(value: unknown): value is SessionPolicy {
+  if (!value || typeof value !== 'object') {
+    return false
+  }
+  const policy = value as Partial<SessionPolicy>
+  return typeof policy.idleTimeoutEnabled === 'boolean'
+    && typeof policy.idleTimeoutMinutes === 'number'
+    && typeof policy.absoluteLifetimeEnabled === 'boolean'
+    && typeof policy.absoluteLifetimeDays === 'number'
 }

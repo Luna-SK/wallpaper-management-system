@@ -37,6 +37,10 @@ class SystemSettingsControllerTests {
 		when(settings.get(eq("watermark.position"), anyString())).thenAnswer(invocation -> invocation.getArgument(1));
 		when(settings.get(eq("watermark.opacity_percent"), anyString())).thenAnswer(invocation -> invocation.getArgument(1));
 		when(settings.get(eq("watermark.tile_density"), anyString())).thenAnswer(invocation -> invocation.getArgument(1));
+		when(settings.get(eq("session.idle_timeout.enabled"), anyString())).thenAnswer(invocation -> invocation.getArgument(1));
+		when(settings.get(eq("session.idle_timeout_minutes"), anyString())).thenAnswer(invocation -> invocation.getArgument(1));
+		when(settings.get(eq("session.absolute_lifetime.enabled"), anyString())).thenAnswer(invocation -> invocation.getArgument(1));
+		when(settings.get(eq("session.absolute_lifetime_days"), anyString())).thenAnswer(invocation -> invocation.getArgument(1));
 	}
 
 	@Test
@@ -221,6 +225,47 @@ class SystemSettingsControllerTests {
 				.hasMessage("平铺水印密度只能是 SPARSE、NORMAL 或 DENSE");
 	}
 
+	@Test
+	void getReturnsSessionLifecycleDefaults() {
+		var response = controller.get();
+
+		assertThat(response.sessionIdleTimeoutEnabled()).isTrue();
+		assertThat(response.sessionIdleTimeoutMinutes()).isEqualTo(120);
+		assertThat(response.sessionAbsoluteLifetimeEnabled()).isTrue();
+		assertThat(response.sessionAbsoluteLifetimeDays()).isEqualTo(7);
+	}
+
+	@Test
+	void updateSavesSessionLifecycleSettings() {
+		var request = new SystemSettingsController.SystemSettingsRequest(10, 100, "ORIGINAL", 180,
+				false, "0 0 3 * * SUN", true, false, "版权文字", "CORNER",
+				"BOTTOM_RIGHT", 16, "SPARSE", true, 60, false, 14);
+
+		controller.update(request);
+
+		verify(settings).put("session.idle_timeout.enabled", "true");
+		verify(settings).put("session.idle_timeout_minutes", "60");
+		verify(settings).put("session.absolute_lifetime.enabled", "false");
+		verify(settings).put("session.absolute_lifetime_days", "14");
+	}
+
+	@Test
+	void updateRejectsInvalidSessionLifecycleRanges() {
+		var invalidIdle = new SystemSettingsController.SystemSettingsRequest(10, 100, "ORIGINAL", 180,
+				false, "0 0 3 * * SUN", true, false, "版权文字", "CORNER",
+				"BOTTOM_RIGHT", 16, "SPARSE", true, 10, true, 7);
+		assertThatThrownBy(() -> controller.update(invalidIdle))
+				.isInstanceOf(IllegalArgumentException.class)
+				.hasMessage("登录空闲超时必须在 15-1440 分钟之间");
+
+		var invalidAbsolute = new SystemSettingsController.SystemSettingsRequest(10, 100, "ORIGINAL", 180,
+				false, "0 0 3 * * SUN", true, false, "版权文字", "CORNER",
+				"BOTTOM_RIGHT", 16, "SPARSE", true, 120, true, 31);
+		assertThatThrownBy(() -> controller.update(invalidAbsolute))
+				.isInstanceOf(IllegalArgumentException.class)
+				.hasMessage("绝对会话时长必须在 1-30 天之间");
+	}
+
 	private SystemSettingsController.SystemSettingsRequest request(Integer maxFileSizeMb, Integer maxBatchSizeMb,
 			String previewQuality, Integer softDeleteRetentionDays, Boolean softDeleteCleanupEnabled,
 			String softDeleteCleanupCron, Boolean watermarkEnabled, Boolean watermarkPreviewEnabled, String watermarkText,
@@ -228,6 +273,6 @@ class SystemSettingsControllerTests {
 		return new SystemSettingsController.SystemSettingsRequest(maxFileSizeMb, maxBatchSizeMb, previewQuality,
 				softDeleteRetentionDays, softDeleteCleanupEnabled, softDeleteCleanupCron, watermarkEnabled,
 				watermarkPreviewEnabled, watermarkText, watermarkMode, watermarkPosition, watermarkOpacityPercent,
-				watermarkTileDensity);
+				watermarkTileDensity, true, 120, true, 7);
 	}
 }

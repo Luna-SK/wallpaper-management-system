@@ -304,14 +304,14 @@ onMounted(refresh)
 </script>
 
 <template>
-  <section>
+  <section class="workspace-page">
     <div class="page-head">
       <div>
         <p>维护图片分类、标签组和标签。</p>
       </div>
     </div>
 
-    <el-tabs v-model="activeTab" class="surface surface-pad">
+    <el-tabs v-model="activeTab" class="surface surface-pad workspace-scroll-region">
       <el-tab-pane label="分类" name="categories">
         <div class="toolbar-row">
           <el-radio-group v-model="categoryScope">

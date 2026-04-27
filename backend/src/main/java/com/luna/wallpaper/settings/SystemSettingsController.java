@@ -56,7 +56,19 @@ class SystemSettingsController {
 				choiceSetting(WatermarkSettings.POSITION, WatermarkSettings.DEFAULT_POSITION, WATERMARK_POSITIONS),
 				rangeIntSetting(WatermarkSettings.OPACITY_PERCENT, WatermarkSettings.DEFAULT_OPACITY_PERCENT,
 						WatermarkSettings.MIN_OPACITY_PERCENT, WatermarkSettings.MAX_OPACITY_PERCENT),
-				choiceSetting(WatermarkSettings.TILE_DENSITY, WatermarkSettings.DEFAULT_TILE_DENSITY, WATERMARK_TILE_DENSITIES));
+				choiceSetting(WatermarkSettings.TILE_DENSITY, WatermarkSettings.DEFAULT_TILE_DENSITY, WATERMARK_TILE_DENSITIES),
+				booleanSetting(SessionLifecycleSettings.IDLE_TIMEOUT_ENABLED,
+						SessionLifecycleSettings.DEFAULT_IDLE_TIMEOUT_ENABLED),
+				rangeIntSetting(SessionLifecycleSettings.IDLE_TIMEOUT_MINUTES,
+						SessionLifecycleSettings.DEFAULT_IDLE_TIMEOUT_MINUTES,
+						SessionLifecycleSettings.MIN_IDLE_TIMEOUT_MINUTES,
+						SessionLifecycleSettings.MAX_IDLE_TIMEOUT_MINUTES),
+				booleanSetting(SessionLifecycleSettings.ABSOLUTE_LIFETIME_ENABLED,
+						SessionLifecycleSettings.DEFAULT_ABSOLUTE_LIFETIME_ENABLED),
+				rangeIntSetting(SessionLifecycleSettings.ABSOLUTE_LIFETIME_DAYS,
+						SessionLifecycleSettings.DEFAULT_ABSOLUTE_LIFETIME_DAYS,
+						SessionLifecycleSettings.MIN_ABSOLUTE_LIFETIME_DAYS,
+						SessionLifecycleSettings.MAX_ABSOLUTE_LIFETIME_DAYS));
 	}
 
 	@PatchMapping
@@ -90,6 +102,32 @@ class SystemSettingsController {
 						WatermarkSettings.MAX_OPACITY_PERCENT, "水印透明度必须在 5-40 之间");
 		String watermarkTileDensity = normalizeChoice(request.watermarkTileDensity(), WatermarkSettings.DEFAULT_TILE_DENSITY,
 				WATERMARK_TILE_DENSITIES, "平铺水印密度只能是 SPARSE、NORMAL 或 DENSE");
+		boolean sessionIdleTimeoutEnabled = request.sessionIdleTimeoutEnabled() == null
+				? booleanSetting(SessionLifecycleSettings.IDLE_TIMEOUT_ENABLED,
+						SessionLifecycleSettings.DEFAULT_IDLE_TIMEOUT_ENABLED)
+				: request.sessionIdleTimeoutEnabled();
+		int sessionIdleTimeoutMinutes = request.sessionIdleTimeoutMinutes() == null
+				? rangeIntSetting(SessionLifecycleSettings.IDLE_TIMEOUT_MINUTES,
+						SessionLifecycleSettings.DEFAULT_IDLE_TIMEOUT_MINUTES,
+						SessionLifecycleSettings.MIN_IDLE_TIMEOUT_MINUTES,
+						SessionLifecycleSettings.MAX_IDLE_TIMEOUT_MINUTES)
+				: requireRange(request.sessionIdleTimeoutMinutes(),
+						SessionLifecycleSettings.MIN_IDLE_TIMEOUT_MINUTES,
+						SessionLifecycleSettings.MAX_IDLE_TIMEOUT_MINUTES,
+						"登录空闲超时必须在 15-1440 分钟之间");
+		boolean sessionAbsoluteLifetimeEnabled = request.sessionAbsoluteLifetimeEnabled() == null
+				? booleanSetting(SessionLifecycleSettings.ABSOLUTE_LIFETIME_ENABLED,
+						SessionLifecycleSettings.DEFAULT_ABSOLUTE_LIFETIME_ENABLED)
+				: request.sessionAbsoluteLifetimeEnabled();
+		int sessionAbsoluteLifetimeDays = request.sessionAbsoluteLifetimeDays() == null
+				? rangeIntSetting(SessionLifecycleSettings.ABSOLUTE_LIFETIME_DAYS,
+						SessionLifecycleSettings.DEFAULT_ABSOLUTE_LIFETIME_DAYS,
+						SessionLifecycleSettings.MIN_ABSOLUTE_LIFETIME_DAYS,
+						SessionLifecycleSettings.MAX_ABSOLUTE_LIFETIME_DAYS)
+				: requireRange(request.sessionAbsoluteLifetimeDays(),
+						SessionLifecycleSettings.MIN_ABSOLUTE_LIFETIME_DAYS,
+						SessionLifecycleSettings.MAX_ABSOLUTE_LIFETIME_DAYS,
+						"绝对会话时长必须在 1-30 天之间");
 		String cleanupCron = normalizeCron(request.softDeleteCleanupCron(),
 				SoftDeleteCleanupSettings.DEFAULT_CLEANUP_CRON,
 				"自动清理执行计划必须是有效的 Spring cron 表达式");
@@ -106,9 +144,15 @@ class SystemSettingsController {
 		settings.put(WatermarkSettings.POSITION, watermarkPosition);
 		settings.put(WatermarkSettings.OPACITY_PERCENT, String.valueOf(watermarkOpacityPercent));
 		settings.put(WatermarkSettings.TILE_DENSITY, watermarkTileDensity);
+		settings.put(SessionLifecycleSettings.IDLE_TIMEOUT_ENABLED, String.valueOf(sessionIdleTimeoutEnabled));
+		settings.put(SessionLifecycleSettings.IDLE_TIMEOUT_MINUTES, String.valueOf(sessionIdleTimeoutMinutes));
+		settings.put(SessionLifecycleSettings.ABSOLUTE_LIFETIME_ENABLED, String.valueOf(sessionAbsoluteLifetimeEnabled));
+		settings.put(SessionLifecycleSettings.ABSOLUTE_LIFETIME_DAYS, String.valueOf(sessionAbsoluteLifetimeDays));
 		auditLogService.record("settings.update", "SYSTEM_SETTINGS", "system",
 				Map.of("previewQuality", quality, "watermarkEnabled", watermarkEnabled,
-						"watermarkPreviewEnabled", watermarkPreviewEnabled, "watermarkMode", watermarkMode));
+						"watermarkPreviewEnabled", watermarkPreviewEnabled, "watermarkMode", watermarkMode,
+						"sessionIdleTimeoutEnabled", sessionIdleTimeoutEnabled,
+						"sessionAbsoluteLifetimeEnabled", sessionAbsoluteLifetimeEnabled));
 		return get();
 	}
 
@@ -177,13 +221,16 @@ class SystemSettingsController {
 	record SystemSettingsRequest(Integer maxFileSizeMb, Integer maxBatchSizeMb, String previewQuality,
 			Integer softDeleteRetentionDays, Boolean softDeleteCleanupEnabled, String softDeleteCleanupCron,
 			Boolean watermarkEnabled, Boolean watermarkPreviewEnabled, String watermarkText, String watermarkMode,
-			String watermarkPosition, Integer watermarkOpacityPercent, String watermarkTileDensity) {
+			String watermarkPosition, Integer watermarkOpacityPercent, String watermarkTileDensity,
+			Boolean sessionIdleTimeoutEnabled, Integer sessionIdleTimeoutMinutes,
+			Boolean sessionAbsoluteLifetimeEnabled, Integer sessionAbsoluteLifetimeDays) {
 	}
 
 	record SystemSettingsResponse(int maxFileSizeMb, int maxBatchSizeMb, int maxFileHardLimitMb,
 			int maxBatchHardLimitMb, String previewQuality, int softDeleteRetentionDays,
 			boolean softDeleteCleanupEnabled, String softDeleteCleanupCron, boolean watermarkEnabled,
 			boolean watermarkPreviewEnabled, String watermarkText, String watermarkMode, String watermarkPosition,
-			int watermarkOpacityPercent, String watermarkTileDensity) {
+			int watermarkOpacityPercent, String watermarkTileDensity, boolean sessionIdleTimeoutEnabled,
+			int sessionIdleTimeoutMinutes, boolean sessionAbsoluteLifetimeEnabled, int sessionAbsoluteLifetimeDays) {
 	}
 }

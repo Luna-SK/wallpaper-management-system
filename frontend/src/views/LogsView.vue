@@ -232,14 +232,14 @@ onMounted(refreshAuditState)
 </script>
 
 <template>
-  <section>
+  <section class="workspace-page">
     <div class="page-head">
       <div>
         <p>记录登录、上传、标签、预览、下载和管理操作，历史日志归档后再清理。</p>
       </div>
     </div>
 
-    <div v-loading="loading" class="surface surface-pad">
+    <div v-loading="loading" class="surface surface-pad workspace-scroll-region">
       <div class="retention-strip">
         <div class="retention-item">
           <span class="retention-label">近期记录保留</span>

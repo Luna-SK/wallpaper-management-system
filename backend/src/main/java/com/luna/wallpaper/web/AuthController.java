@@ -16,6 +16,7 @@ import com.luna.wallpaper.rbac.AuthDtos.PasswordChangeRequest;
 import com.luna.wallpaper.rbac.AuthDtos.ProfileUpdateRequest;
 import com.luna.wallpaper.rbac.AuthDtos.RefreshRequest;
 import com.luna.wallpaper.rbac.AuthDtos.RegisterRequest;
+import com.luna.wallpaper.rbac.AuthDtos.SessionPolicyResponse;
 import com.luna.wallpaper.rbac.AuthService;
 
 import jakarta.validation.Valid;
@@ -55,6 +56,11 @@ class AuthController {
 	@GetMapping("/me")
 	ApiResponse<AuthUserResponse> me(Authentication authentication) {
 		return ApiResponse.ok(authService.me(authentication));
+	}
+
+	@GetMapping("/session-policy")
+	ApiResponse<SessionPolicyResponse> sessionPolicy(Authentication authentication) {
+		return ApiResponse.ok(authService.sessionPolicy(authentication));
 	}
 
 	@PatchMapping("/profile")

@@ -12,15 +12,19 @@ import java.util.Map;
 import java.util.UUID;
 
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.BeforeEach;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.context.annotation.Import;
 import org.springframework.http.MediaType;
+import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.test.web.servlet.MockMvc;
 
 import com.luna.wallpaper.TestcontainersConfiguration;
+import com.luna.wallpaper.settings.SessionLifecycleSettings;
+import com.luna.wallpaper.settings.SystemSettingService;
 
 import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.ObjectMapper;
@@ -54,6 +58,23 @@ class AuthControllerTests {
 	@Autowired
 	private PasswordEncoder passwordEncoder;
 
+	@Autowired
+	private AuthRefreshTokenMapper refreshTokens;
+
+	@Autowired
+	private SystemSettingService settings;
+
+	@Autowired
+	private JdbcTemplate jdbcTemplate;
+
+	@BeforeEach
+	void resetSessionLifecycleSettings() {
+		settings.put(SessionLifecycleSettings.IDLE_TIMEOUT_ENABLED, "true");
+		settings.put(SessionLifecycleSettings.IDLE_TIMEOUT_MINUTES, "120");
+		settings.put(SessionLifecycleSettings.ABSOLUTE_LIFETIME_ENABLED, "true");
+		settings.put(SessionLifecycleSettings.ABSOLUTE_LIFETIME_DAYS, "7");
+	}
+
 	@Test
 	void loginUsesStoredPasswordAndDynamicAdminPermissions() throws Exception {
 		JsonNode data = login("admin", "admin123");
@@ -61,6 +82,11 @@ class AuthControllerTests {
 		assertThat(data.path("accessToken").asString()).isNotBlank();
 		assertThat(data.path("refreshToken").asString()).isNotBlank();
 		assertThat(permissionCodes(data)).contains("user:manage", "role:manage", "setting:manage");
+		assertThat(data.path("sessionPolicy").path("idleTimeoutEnabled").asBoolean()).isTrue();
+		assertThat(data.path("sessionPolicy").path("idleTimeoutMinutes").asInt()).isEqualTo(120);
+		assertThat(data.path("sessionPolicy").path("absoluteLifetimeEnabled").asBoolean()).isTrue();
+		assertThat(data.path("sessionPolicy").path("absoluteLifetimeDays").asInt()).isEqualTo(7);
+		assertThat(data.path("sessionPolicy").path("absoluteExpiresAt").asString()).isNotBlank();
 
 		mvc.perform(get("/api/users").header("Authorization", bearer(accessToken(data))))
 				.andExpect(status().isOk());
@@ -93,6 +119,72 @@ class AuthControllerTests {
 				.andExpect(status().isOk());
 		mvc.perform(get("/api/auth/me").header("Authorization", bearer(accessToken(refreshed))))
 				.andExpect(status().isUnauthorized());
+	}
+
+	@Test
+	void sessionPolicyEndpointReturnsCurrentSessionPolicy() throws Exception {
+		JsonNode login = login("admin", "admin123");
+
+		String response = mvc.perform(get("/api/auth/session-policy").header("Authorization", bearer(accessToken(login))))
+				.andExpect(status().isOk())
+				.andReturn()
+				.getResponse()
+				.getContentAsString();
+		JsonNode policy = data(response);
+
+		assertThat(policy.path("idleTimeoutEnabled").asBoolean()).isTrue();
+		assertThat(policy.path("idleTimeoutMinutes").asInt()).isEqualTo(120);
+		assertThat(policy.path("absoluteLifetimeEnabled").asBoolean()).isTrue();
+		assertThat(policy.path("absoluteLifetimeDays").asInt()).isEqualTo(7);
+	}
+
+	@Test
+	void idleTimeoutInvalidatesAccessAndRefreshTokens() throws Exception {
+		JsonNode login = login("admin", "admin123");
+		AuthRefreshToken session = refreshTokens.selectByTokenHash(AuthService.sha256(refreshToken(login)));
+		session.markActivity(java.time.LocalDateTime.now().minusMinutes(121));
+		refreshTokens.updateById(session);
+
+		mvc.perform(get("/api/auth/me").header("Authorization", bearer(accessToken(login))))
+				.andExpect(status().isUnauthorized());
+		mvc.perform(post("/api/auth/refresh")
+						.contentType(MediaType.APPLICATION_JSON)
+						.content(json(Map.of("refreshToken", refreshToken(login)))))
+				.andExpect(status().isUnauthorized());
+	}
+
+	@Test
+	void absoluteLifetimeInvalidatesSessionEvenWhenActivityIsFresh() throws Exception {
+		JsonNode login = login("admin", "admin123");
+		AuthRefreshToken session = refreshTokens.selectByTokenHash(AuthService.sha256(refreshToken(login)));
+		jdbcTemplate.update("""
+				update auth_refresh_tokens
+				set created_at = now(6) - interval 8 day,
+				    last_activity_at = now(6),
+				    updated_at = updated_at
+				where id = ?
+				""", session.id());
+
+		mvc.perform(get("/api/auth/me").header("Authorization", bearer(accessToken(login))))
+				.andExpect(status().isUnauthorized());
+	}
+
+	@Test
+	void disabledLifecycleRulesDoNotInvalidateSession() throws Exception {
+		settings.put(SessionLifecycleSettings.IDLE_TIMEOUT_ENABLED, "false");
+		settings.put(SessionLifecycleSettings.ABSOLUTE_LIFETIME_ENABLED, "false");
+		JsonNode login = login("admin", "admin123");
+		AuthRefreshToken session = refreshTokens.selectByTokenHash(AuthService.sha256(refreshToken(login)));
+		session.markActivity(java.time.LocalDateTime.now().minusMinutes(121));
+		refreshTokens.updateById(session);
+		jdbcTemplate.update("""
+				update auth_refresh_tokens
+				set created_at = now(6) - interval 8 day
+				where id = ?
+				""", session.id());
+
+		mvc.perform(get("/api/auth/me").header("Authorization", bearer(accessToken(login))))
+				.andExpect(status().isOk());
 	}
 
 	@Test
