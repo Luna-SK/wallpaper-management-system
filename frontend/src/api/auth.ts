@@ -101,9 +101,9 @@ export async function changePassword(payload: { currentPassword: string; newPass
 }
 
 export async function requestPasswordReset(email: string) {
-  await http.post<ApiResponse<void>>('/auth/password-reset/request', { email })
+  await http.post<ApiResponse<void>>('/auth/reset-password/request', { email })
 }
 
 export async function confirmPasswordReset(payload: { token: string; newPassword: string }) {
-  await http.post<ApiResponse<void>>('/auth/password-reset/confirm', payload)
+  await http.post<ApiResponse<void>>('/auth/reset-password/confirm', payload)
 }

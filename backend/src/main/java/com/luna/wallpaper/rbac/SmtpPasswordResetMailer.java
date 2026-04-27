@@ -14,7 +14,7 @@ import org.springframework.stereotype.Service;
 import com.luna.wallpaper.config.MailProperties;
 
 @Service
-class SmtpPasswordResetMailer implements PasswordResetMailer {
+class SmtpPasswordResetMailer extends PasswordResetMailer {
 
 	private static final Logger log = LoggerFactory.getLogger(SmtpPasswordResetMailer.class);
 
@@ -40,11 +40,11 @@ class SmtpPasswordResetMailer implements PasswordResetMailer {
 			message.setText("""
 					%s，您好：
 
-					请点击以下链接重置图片管理系统密码：
+					您正在为账号 %s 重置图片管理系统密码，请点击以下链接继续：
 					%s
 
 					该链接将在 %s 过期，且只能使用一次。若不是您本人操作，请忽略此邮件。
-					""".formatted(user.displayName(), link, expiresAt));
+					""".formatted(user.displayName(), user.username(), link, expiresAt));
 			sender.send(message);
 		}
 		catch (RuntimeException ex) {

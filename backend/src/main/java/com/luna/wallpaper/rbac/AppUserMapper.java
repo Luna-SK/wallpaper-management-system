@@ -19,14 +19,20 @@ public interface AppUserMapper extends BaseMapper<AppUser> {
 	@Select("""
 			select *
 			from app_users
-			where lower(email) = lower(#{email})
+			where email = #{email}
 			  and status = 'ACTIVE'
-			order by username asc
+			limit 1
 			""")
-	List<AppUser> selectActiveByEmail(@Param("email") String email);
+	AppUser selectActiveByEmail(@Param("email") String email);
 
 	@Select("select 1 from app_users where username = #{username} and id <> #{id} limit 1")
 	Integer existsByUsernameExcludingId(@Param("username") String username, @Param("id") String id);
+
+	@Select("select 1 from app_users where email = #{email} limit 1")
+	Integer existsByEmail(@Param("email") String email);
+
+	@Select("select 1 from app_users where email = #{email} and id <> #{id} limit 1")
+	Integer existsByEmailExcludingId(@Param("email") String email, @Param("id") String id);
 
 	default Optional<AppUser> findByUsername(String username) {
 		return Optional.ofNullable(selectByUsername(username));
@@ -34,5 +40,13 @@ public interface AppUserMapper extends BaseMapper<AppUser> {
 
 	default boolean hasUsernameExcludingId(String username, String id) {
 		return existsByUsernameExcludingId(username, id) != null;
+	}
+
+	default boolean hasEmail(String email) {
+		return existsByEmail(email) != null;
+	}
+
+	default boolean hasEmailExcludingId(String email, String id) {
+		return existsByEmailExcludingId(email, id) != null;
 	}
 }

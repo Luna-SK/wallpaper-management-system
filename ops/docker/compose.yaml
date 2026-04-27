@@ -36,6 +36,12 @@ services:
     volumes:
       - rustfs-data:/data
 
+  mailpit:
+    image: axllent/mailpit
+    ports:
+      - "${MAILPIT_SMTP_PORT:-1025}:1025"
+      - "${MAILPIT_WEB_PORT:-8025}:8025"
+
   backend:
     build:
       context: ../../backend
@@ -45,6 +51,8 @@ services:
       redis:
         condition: service_started
       rustfs:
+        condition: service_started
+      mailpit:
         condition: service_started
     environment:
       DB_HOST: mysql
@@ -62,6 +70,16 @@ services:
       APP_SECURITY_JWT_SECRET: ${APP_SECURITY_JWT_SECRET}
       APP_SECURITY_ACCESS_TOKEN_TTL: ${APP_SECURITY_ACCESS_TOKEN_TTL:-15m}
       APP_SECURITY_REFRESH_TOKEN_TTL: ${APP_SECURITY_REFRESH_TOKEN_TTL:-7d}
+      APP_MAIL_ENABLED: ${APP_MAIL_ENABLED:-true}
+      APP_MAIL_HOST: ${APP_MAIL_HOST:-mailpit}
+      APP_MAIL_PORT: ${APP_MAIL_PORT:-1025}
+      APP_MAIL_USERNAME: ${APP_MAIL_USERNAME:-}
+      APP_MAIL_PASSWORD: ${APP_MAIL_PASSWORD:-}
+      APP_MAIL_SMTP_AUTH: ${APP_MAIL_SMTP_AUTH:-false}
+      APP_MAIL_SMTP_STARTTLS: ${APP_MAIL_SMTP_STARTTLS:-false}
+      APP_MAIL_FROM: ${APP_MAIL_FROM:-no-reply@example.local}
+      APP_MAIL_FRONTEND_BASE_URL: ${APP_MAIL_FRONTEND_BASE_URL:-http://localhost}
+      APP_MAIL_PASSWORD_RESET_TOKEN_TTL: ${APP_MAIL_PASSWORD_RESET_TOKEN_TTL:-30m}
       UPLOAD_MAX_FILE_SIZE: ${UPLOAD_MAX_FILE_SIZE:-50MB}
       UPLOAD_MAX_REQUEST_SIZE: ${UPLOAD_MAX_REQUEST_SIZE:-500MB}
       RUSTFS_ENDPOINT: http://rustfs:9000

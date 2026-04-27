@@ -26,7 +26,7 @@ import jakarta.servlet.http.HttpServletRequest;
 
 @RestController
 @RequestMapping("/api/auth")
-class AuthController {
+public class AuthController {
 
 	private final AuthService authService;
 
@@ -35,57 +35,57 @@ class AuthController {
 	}
 
 	@PostMapping("/login")
-	ApiResponse<AuthResponse> login(@Valid @RequestBody LoginRequest request, HttpServletRequest servletRequest) {
+	public ApiResponse<AuthResponse> login(@Valid @RequestBody LoginRequest request, HttpServletRequest servletRequest) {
 		return ApiResponse.ok(authService.login(request, servletRequest));
 	}
 
 	@PostMapping("/register")
-	ApiResponse<AuthResponse> register(@Valid @RequestBody RegisterRequest request, HttpServletRequest servletRequest) {
+	public ApiResponse<AuthResponse> register(@Valid @RequestBody RegisterRequest request, HttpServletRequest servletRequest) {
 		return ApiResponse.ok(authService.register(request, servletRequest));
 	}
 
 	@PostMapping("/refresh")
-	ApiResponse<AuthResponse> refresh(@Valid @RequestBody RefreshRequest request, HttpServletRequest servletRequest) {
+	public ApiResponse<AuthResponse> refresh(@Valid @RequestBody RefreshRequest request, HttpServletRequest servletRequest) {
 		return ApiResponse.ok(authService.refresh(request, servletRequest));
 	}
 
 	@PostMapping("/logout")
-	ApiResponse<Void> logout(Authentication authentication) {
+	public ApiResponse<Void> logout(Authentication authentication) {
 		authService.logout(authentication);
 		return ApiResponse.ok();
 	}
 
-	@PostMapping("/password-reset/request")
-	ApiResponse<Void> requestPasswordReset(@Valid @RequestBody PasswordResetRequest request,
+	@PostMapping({ "/password-reset/request", "/reset-password/request" })
+	public ApiResponse<Void> requestPasswordReset(@Valid @RequestBody PasswordResetRequest request,
 			HttpServletRequest servletRequest) {
 		authService.requestPasswordReset(request, servletRequest);
 		return ApiResponse.ok();
 	}
 
-	@PostMapping("/password-reset/confirm")
-	ApiResponse<Void> confirmPasswordReset(@Valid @RequestBody PasswordResetConfirmRequest request) {
+	@PostMapping({ "/password-reset/confirm", "/reset-password/confirm" })
+	public ApiResponse<Void> confirmPasswordReset(@Valid @RequestBody PasswordResetConfirmRequest request) {
 		authService.confirmPasswordReset(request);
 		return ApiResponse.ok();
 	}
 
 	@GetMapping("/me")
-	ApiResponse<AuthUserResponse> me(Authentication authentication) {
+	public ApiResponse<AuthUserResponse> me(Authentication authentication) {
 		return ApiResponse.ok(authService.me(authentication));
 	}
 
 	@GetMapping("/session-policy")
-	ApiResponse<SessionPolicyResponse> sessionPolicy(Authentication authentication) {
+	public ApiResponse<SessionPolicyResponse> sessionPolicy(Authentication authentication) {
 		return ApiResponse.ok(authService.sessionPolicy(authentication));
 	}
 
 	@PatchMapping("/profile")
-	ApiResponse<AuthUserResponse> updateProfile(Authentication authentication,
+	public ApiResponse<AuthUserResponse> updateProfile(Authentication authentication,
 			@Valid @RequestBody ProfileUpdateRequest request) {
 		return ApiResponse.ok(authService.updateProfile(authentication, request));
 	}
 
 	@PatchMapping("/password")
-	ApiResponse<Void> changePassword(Authentication authentication, @Valid @RequestBody PasswordChangeRequest request) {
+	public ApiResponse<Void> changePassword(Authentication authentication, @Valid @RequestBody PasswordChangeRequest request) {
 		authService.changePassword(authentication, request);
 		return ApiResponse.ok();
 	}

@@ -2,7 +2,7 @@ package com.luna.wallpaper.rbac;
 
 import java.time.Instant;
 
-interface PasswordResetMailer {
+abstract class PasswordResetMailer {
 
-	void send(AppUser user, String token, Instant expiresAt);
+	abstract void send(AppUser user, String token, Instant expiresAt);
 }

@@ -11,7 +11,6 @@ import java.util.Comparator;
 import java.util.HexFormat;
 import java.util.LinkedHashSet;
 import java.util.List;
-import java.util.Locale;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
@@ -111,8 +110,10 @@ public class AuthService {
 		if (users.findByUsername(username).isPresent()) {
 			throw new IllegalArgumentException("用户名已存在");
 		}
+		String email = EmailAddresses.normalizeNullable(request.email());
+		EmailAddresses.requireAvailable(users, email, null);
 		requirePassword(request.password());
-		AppUser user = new AppUser(username, request.displayName().trim(), request.email(), request.phone(),
+		AppUser user = new AppUser(username, request.displayName().trim(), email, request.phone(),
 				passwordEncoder.encode(request.password()));
 		users.insert(user);
 		Role viewer = roles.findByCode(VIEWER_ROLE_CODE)
@@ -169,7 +170,9 @@ public class AuthService {
 	public AuthUserResponse updateProfile(Authentication authentication, ProfileUpdateRequest request) {
 		AuthenticatedUser current = currentUser(authentication);
 		AppUser user = requireActiveUser(current.id());
-		user.update(request.displayName().trim(), request.email(), request.phone(), user.status());
+		String email = EmailAddresses.normalizeNullable(request.email());
+		EmailAddresses.requireAvailable(users, email, user.id());
+		user.update(request.displayName().trim(), email, request.phone(), user.status());
 		users.updateById(user);
 		auditLogService.record("auth.profile.update", "USER", user.id(), Map.of());
 		return userResponse(loadUserAccess(user));
@@ -191,18 +194,20 @@ public class AuthService {
 
 	@Transactional
 	public void requestPasswordReset(PasswordResetRequest request, HttpServletRequest servletRequest) {
-		String email = normalizeEmail(request.email());
+		String email = EmailAddresses.normalizeRequired(request.email());
 		Instant expiresAt = Instant.now().plus(mailProperties.safePasswordResetTokenTtl());
-		for (AppUser user : users.selectActiveByEmail(email)) {
-			passwordResetTokens.consumeOpenTokensByUserId(user.id());
-			String token = newPasswordResetToken();
-			PasswordResetToken resetToken = new PasswordResetToken(user.id(), sha256(token),
-					toLocalDateTime(expiresAt), clientIp(servletRequest), userAgent(servletRequest));
-			passwordResetTokens.insert(resetToken);
-			passwordResetMailer.send(user, token, expiresAt);
-			auditLogService.record("auth.password.reset.request", "USER", user.id(),
-					Map.of("emailHash", sha256(email), "expiresAt", expiresAt));
+		AppUser user = users.selectActiveByEmail(email);
+		if (user == null) {
+			throw new IllegalArgumentException("该邮箱未绑定启用账号");
 		}
+		passwordResetTokens.consumeOpenTokensByUserId(user.id());
+		String token = newPasswordResetToken();
+		PasswordResetToken resetToken = new PasswordResetToken(user.id(), sha256(token),
+				toLocalDateTime(expiresAt), clientIp(servletRequest), userAgent(servletRequest));
+		passwordResetTokens.insert(resetToken);
+		passwordResetMailer.send(user, token, expiresAt);
+		auditLogService.record("auth.password.reset.request", "USER", user.id(),
+				Map.of("emailHash", sha256(email), "expiresAt", expiresAt));
 	}
 
 	@Transactional
@@ -403,10 +408,6 @@ public class AuthService {
 
 	private static String normalizeUsername(String username) {
 		return username == null ? "" : username.trim();
-	}
-
-	private static String normalizeEmail(String email) {
-		return email == null ? "" : email.trim().toLowerCase(Locale.ROOT);
 	}
 
 	private static void requirePassword(String password) {

@@ -2,7 +2,7 @@
 
 ## User And RBAC
 
-- `app_users`：用户名、展示名、邮箱、手机、密码哈希、状态；状态为 `ACTIVE` 或 `DISABLED`。
+- `app_users`：用户名、展示名、邮箱、手机、密码哈希、状态；状态为 `ACTIVE` 或 `DISABLED`。邮箱允许为空，非空邮箱统一保存为小写并保持唯一，用于邮件找回密码。
 - `auth_refresh_tokens`：refresh/session 记录，保存 token 哈希、用户、过期时间、撤销时间、最近活动时间、创建 IP 和 User-Agent。
 - `password_reset_tokens`：邮件找回密码令牌，保存用户、令牌哈希、过期时间、使用时间、请求 IP 和 User-Agent；明文令牌只出现在邮件链接中，不入库。
 - `roles`：系统管理员、数据管理员、标签编辑人员、普通浏览用户；`enabled=false` 表示角色已停用。

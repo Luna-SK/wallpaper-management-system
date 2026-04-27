@@ -12,6 +12,7 @@ const formRef = ref<FormInstance>()
 const form = reactive({ email: '' })
 const loading = ref(false)
 const sent = ref(false)
+const successMessage = '重置链接已发送，请前往邮箱查看'
 
 const loginRoute = computed(() => ({
   name: 'login',
@@ -36,10 +37,11 @@ async function submit() {
   const valid = await formRef.value?.validate().catch(() => false)
   if (!valid) return
   loading.value = true
+  sent.value = false
   try {
     await requestPasswordReset(form.email.trim())
     sent.value = true
-    ElMessage.success('如果邮箱存在，重置链接将发送到该邮箱')
+    ElMessage.success(successMessage)
   } catch (error) {
     ElMessage.error(errorMessage(error))
   } finally {
@@ -63,7 +65,7 @@ async function submit() {
           type="success"
           show-icon
           :closable="false"
-          title="如果邮箱存在，重置链接将发送到该邮箱"
+          :title="successMessage"
           style="margin-bottom: 18px"
         />
         <el-form-item label="邮箱" prop="email">

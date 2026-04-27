@@ -6,7 +6,6 @@ import java.util.List;
 import com.luna.wallpaper.rbac.RbacDtos.PermissionResponse;
 import com.luna.wallpaper.rbac.RbacDtos.RoleBrief;
 
-import jakarta.validation.constraints.Email;
 import jakarta.validation.constraints.NotBlank;
 
 public final class AuthDtos {
@@ -29,7 +28,7 @@ public final class AuthDtos {
 	public record PasswordChangeRequest(@NotBlank String currentPassword, @NotBlank String newPassword) {
 	}
 
-	public record PasswordResetRequest(@NotBlank @Email String email) {
+	public record PasswordResetRequest(@NotBlank String email) {
 	}
 
 	public record PasswordResetConfirmRequest(@NotBlank String token, @NotBlank String newPassword) {
