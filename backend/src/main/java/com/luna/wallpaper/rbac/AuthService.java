@@ -29,11 +29,14 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import com.luna.wallpaper.audit.AuditLogService;
+import com.luna.wallpaper.config.MailProperties;
 import com.luna.wallpaper.config.SecurityProperties;
 import com.luna.wallpaper.rbac.AuthDtos.AuthResponse;
 import com.luna.wallpaper.rbac.AuthDtos.AuthUserResponse;
 import com.luna.wallpaper.rbac.AuthDtos.LoginRequest;
 import com.luna.wallpaper.rbac.AuthDtos.PasswordChangeRequest;
+import com.luna.wallpaper.rbac.AuthDtos.PasswordResetConfirmRequest;
+import com.luna.wallpaper.rbac.AuthDtos.PasswordResetRequest;
 import com.luna.wallpaper.rbac.AuthDtos.ProfileUpdateRequest;
 import com.luna.wallpaper.rbac.AuthDtos.RefreshRequest;
 import com.luna.wallpaper.rbac.AuthDtos.RegisterRequest;
@@ -45,6 +48,7 @@ public class AuthService {
 
 	private static final String TOKEN_TYPE = "Bearer";
 	private static final int REFRESH_TOKEN_BYTES = 48;
+	private static final int PASSWORD_RESET_TOKEN_BYTES = 48;
 	private static final String VIEWER_ROLE_CODE = "VIEWER";
 
 	private final AppUserMapper users;
@@ -53,26 +57,33 @@ public class AuthService {
 	private final UserRoleMapper userRoles;
 	private final RolePermissionMapper rolePermissions;
 	private final AuthRefreshTokenMapper refreshTokens;
+	private final PasswordResetTokenMapper passwordResetTokens;
+	private final PasswordResetMailer passwordResetMailer;
 	private final PasswordEncoder passwordEncoder;
 	private final JwtTokenService jwtTokenService;
 	private final SecurityProperties securityProperties;
+	private final MailProperties mailProperties;
 	private final AuditLogService auditLogService;
 	private final SessionLifecyclePolicyService sessionLifecycle;
 	private final SecureRandom secureRandom = new SecureRandom();
 
 	AuthService(AppUserMapper users, RoleMapper roles, PermissionMapper permissions, UserRoleMapper userRoles,
-			RolePermissionMapper rolePermissions, AuthRefreshTokenMapper refreshTokens, PasswordEncoder passwordEncoder,
-			JwtTokenService jwtTokenService, SecurityProperties securityProperties, AuditLogService auditLogService,
-			SessionLifecyclePolicyService sessionLifecycle) {
+			RolePermissionMapper rolePermissions, AuthRefreshTokenMapper refreshTokens,
+			PasswordResetTokenMapper passwordResetTokens, PasswordResetMailer passwordResetMailer,
+			PasswordEncoder passwordEncoder, JwtTokenService jwtTokenService, SecurityProperties securityProperties,
+			MailProperties mailProperties, AuditLogService auditLogService, SessionLifecyclePolicyService sessionLifecycle) {
 		this.users = users;
 		this.roles = roles;
 		this.permissions = permissions;
 		this.userRoles = userRoles;
 		this.rolePermissions = rolePermissions;
 		this.refreshTokens = refreshTokens;
+		this.passwordResetTokens = passwordResetTokens;
+		this.passwordResetMailer = passwordResetMailer;
 		this.passwordEncoder = passwordEncoder;
 		this.jwtTokenService = jwtTokenService;
 		this.securityProperties = securityProperties;
+		this.mailProperties = mailProperties;
 		this.auditLogService = auditLogService;
 		this.sessionLifecycle = sessionLifecycle;
 	}
@@ -99,8 +110,10 @@ public class AuthService {
 		if (users.findByUsername(username).isPresent()) {
 			throw new IllegalArgumentException("用户名已存在");
 		}
+		String email = EmailAddresses.normalizeNullable(request.email());
+		EmailAddresses.requireAvailable(users, email, null);
 		requirePassword(request.password());
-		AppUser user = new AppUser(username, request.displayName().trim(), request.email(), request.phone(),
+		AppUser user = new AppUser(username, request.displayName().trim(), email, request.phone(),
 				passwordEncoder.encode(request.password()));
 		users.insert(user);
 		Role viewer = roles.findByCode(VIEWER_ROLE_CODE)
@@ -157,7 +170,9 @@ public class AuthService {
 	public AuthUserResponse updateProfile(Authentication authentication, ProfileUpdateRequest request) {
 		AuthenticatedUser current = currentUser(authentication);
 		AppUser user = requireActiveUser(current.id());
-		user.update(request.displayName().trim(), request.email(), request.phone(), user.status());
+		String email = EmailAddresses.normalizeNullable(request.email());
+		EmailAddresses.requireAvailable(users, email, user.id());
+		user.update(request.displayName().trim(), email, request.phone(), user.status());
 		users.updateById(user);
 		auditLogService.record("auth.profile.update", "USER", user.id(), Map.of());
 		return userResponse(loadUserAccess(user));
@@ -175,6 +190,43 @@ public class AuthService {
 		users.updateById(user);
 		refreshTokens.revokeOtherSessions(user.id(), current.sessionId());
 		auditLogService.record("auth.password.change", "USER", user.id(), Map.of("revokedOtherSessions", true));
+	}
+
+	@Transactional
+	public void requestPasswordReset(PasswordResetRequest request, HttpServletRequest servletRequest) {
+		String email = EmailAddresses.normalizeRequired(request.email());
+		Instant expiresAt = Instant.now().plus(mailProperties.safePasswordResetTokenTtl());
+		AppUser user = users.selectActiveByEmail(email);
+		if (user == null) {
+			throw new IllegalArgumentException("该邮箱未绑定启用账号");
+		}
+		passwordResetTokens.consumeOpenTokensByUserId(user.id());
+		String token = newPasswordResetToken();
+		PasswordResetToken resetToken = new PasswordResetToken(user.id(), sha256(token),
+				toLocalDateTime(expiresAt), clientIp(servletRequest), userAgent(servletRequest));
+		passwordResetTokens.insert(resetToken);
+		passwordResetMailer.send(user, token, expiresAt);
+		auditLogService.record("auth.password.reset.request", "USER", user.id(),
+				Map.of("emailHash", sha256(email), "expiresAt", expiresAt));
+	}
+
+	@Transactional
+	public void confirmPasswordReset(PasswordResetConfirmRequest request) {
+		requirePassword(request.newPassword());
+		PasswordResetToken resetToken = Optional.ofNullable(passwordResetTokens.selectByTokenHash(sha256(request.token())))
+				.orElseThrow(() -> new BadCredentialsException("重置链接无效或已过期"));
+		LocalDateTime now = LocalDateTime.now();
+		if (!resetToken.isUsable(now)) {
+			throw new BadCredentialsException("重置链接无效或已过期");
+		}
+		AppUser user = requireActiveUser(resetToken.userId());
+		user.changePasswordHash(passwordEncoder.encode(request.newPassword()));
+		users.updateById(user);
+		resetToken.markUsed(now);
+		passwordResetTokens.updateById(resetToken);
+		passwordResetTokens.consumeOpenTokensByUserId(user.id());
+		refreshTokens.revokeByUserId(user.id());
+		auditLogService.record("auth.password.reset.confirm", "USER", user.id(), Map.of("revokedSessions", true));
 	}
 
 	@Transactional
@@ -327,7 +379,15 @@ public class AuthService {
 	}
 
 	private String newRefreshToken() {
-		byte[] bytes = new byte[REFRESH_TOKEN_BYTES];
+		return newUrlToken(REFRESH_TOKEN_BYTES);
+	}
+
+	private String newPasswordResetToken() {
+		return newUrlToken(PASSWORD_RESET_TOKEN_BYTES);
+	}
+
+	private String newUrlToken(int byteCount) {
+		byte[] bytes = new byte[byteCount];
 		secureRandom.nextBytes(bytes);
 		return Base64.getUrlEncoder().withoutPadding().encodeToString(bytes);
 	}

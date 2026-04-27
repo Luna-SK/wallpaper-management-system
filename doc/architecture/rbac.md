@@ -40,4 +40,4 @@
 
 认证使用短期 JWT access token 和服务端 refresh session。access token 携带 `sub=userId`、`sid=sessionId` 和过期时间；请求进入后端时会校验 token、session 是否撤销或过期、空闲超时和绝对会话时长是否触发、用户是否启用，并按用户当前启用角色实时加载权限。
 
-refresh token 只以哈希形式保存在 `auth_refresh_tokens`。刷新接口会轮换 refresh token 并更新 `last_activity_at`；空闲超时默认 2 小时，绝对会话时长默认 7 天，两个机制都可在系统设置中独立开关和配置。退出登录撤销当前 session；用户自助改密会撤销其它 session；管理员重置密码和停用用户会撤销该用户全部 session。开发令牌旁路默认关闭，仅测试或本地显式开启时可用。
+refresh token 只以哈希形式保存在 `auth_refresh_tokens`。刷新接口会轮换 refresh token 并更新 `last_activity_at`；空闲超时默认 2 小时，绝对会话时长默认 7 天，两个机制都可在系统设置中独立开关和配置。邮件找回密码使用唯一邮箱定位启用账号，重置令牌 30 分钟有效且数据库只保存哈希；重置成功后会撤销该用户全部 session。退出登录撤销当前 session；用户自助改密会撤销其它 session；管理员重置密码和停用用户会撤销该用户全部 session。开发令牌旁路默认关闭，仅测试或本地显式开启时可用。

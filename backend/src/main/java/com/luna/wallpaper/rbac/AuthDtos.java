@@ -28,6 +28,12 @@ public final class AuthDtos {
 	public record PasswordChangeRequest(@NotBlank String currentPassword, @NotBlank String newPassword) {
 	}
 
+	public record PasswordResetRequest(@NotBlank String email) {
+	}
+
+	public record PasswordResetConfirmRequest(@NotBlank String token, @NotBlank String newPassword) {
+	}
+
 	public record AuthResponse(String username, String tokenType, String accessToken, String refreshToken,
 			Instant accessTokenExpiresAt, Instant refreshTokenExpiresAt, AuthUserResponse user,
 			List<String> permissions, SessionPolicyResponse sessionPolicy) {

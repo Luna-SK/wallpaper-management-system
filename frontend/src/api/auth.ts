@@ -99,3 +99,11 @@ export async function updateProfile(payload: { displayName: string; email?: stri
 export async function changePassword(payload: { currentPassword: string; newPassword: string }) {
   await http.patch<ApiResponse<void>>('/auth/password', payload)
 }
+
+export async function requestPasswordReset(email: string) {
+  await http.post<ApiResponse<void>>('/auth/reset-password/request', { email })
+}
+
+export async function confirmPasswordReset(payload: { token: string; newPassword: string }) {
+  await http.post<ApiResponse<void>>('/auth/reset-password/confirm', payload)
+}

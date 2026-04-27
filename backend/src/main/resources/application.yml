@@ -47,6 +47,17 @@ app:
     jwt-secret: ${APP_SECURITY_JWT_SECRET}
     access-token-ttl: ${APP_SECURITY_ACCESS_TOKEN_TTL:15m}
     refresh-token-ttl: ${APP_SECURITY_REFRESH_TOKEN_TTL:7d}
+  mail:
+    enabled: ${APP_MAIL_ENABLED:false}
+    host: ${APP_MAIL_HOST:localhost}
+    port: ${APP_MAIL_PORT:25}
+    username: ${APP_MAIL_USERNAME:}
+    password: ${APP_MAIL_PASSWORD:}
+    smtp-auth: ${APP_MAIL_SMTP_AUTH:false}
+    smtp-starttls: ${APP_MAIL_SMTP_STARTTLS:false}
+    from: ${APP_MAIL_FROM:no-reply@example.local}
+    frontend-base-url: ${APP_MAIL_FRONTEND_BASE_URL:http://localhost:5173}
+    password-reset-token-ttl: ${APP_MAIL_PASSWORD_RESET_TOKEN_TTL:30m}
   storage:
     endpoint: ${RUSTFS_ENDPOINT}
     region: ${RUSTFS_REGION}

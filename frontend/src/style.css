@@ -409,12 +409,21 @@ textarea {
   font-size: 14px;
 }
 
+.auth-form-link-row {
+  display: flex;
+  justify-content: flex-end;
+  margin-top: 12px;
+  font-size: 14px;
+}
+
+.auth-form-link-row a,
 .auth-form-footer a {
   color: #0d433c;
   font-weight: 600;
   text-decoration: none;
 }
 
+.auth-form-link-row a:hover,
 .auth-form-footer a:hover {
   text-decoration: underline;
 }

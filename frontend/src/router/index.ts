@@ -3,6 +3,8 @@ import { useAuthStore } from '../stores/auth'
 import AppLayout from '../layouts/AppLayout.vue'
 import LoginView from '../views/LoginView.vue'
 import RegisterView from '../views/RegisterView.vue'
+import ForgotPasswordView from '../views/ForgotPasswordView.vue'
+import ResetPasswordView from '../views/ResetPasswordView.vue'
 import ImageLibraryView from '../views/ImageLibraryView.vue'
 import TaxonomyView from '../views/TaxonomyView.vue'
 import UsersView from '../views/UsersView.vue'
@@ -32,6 +34,18 @@ const routes: RouteRecordRaw[] = [
     name: 'register',
     component: RegisterView,
     meta: { title: '注册', guestOnly: true },
+  },
+  {
+    path: '/forgot-password',
+    name: 'forgot-password',
+    component: ForgotPasswordView,
+    meta: { title: '找回密码', guestOnly: true },
+  },
+  {
+    path: '/reset-password',
+    name: 'reset-password',
+    component: ResetPasswordView,
+    meta: { title: '重置密码', guestOnly: true },
   },
   {
     path: '/',

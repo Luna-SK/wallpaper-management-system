@@ -15,7 +15,7 @@
 - 后端不引入 Spring Data JPA/Hibernate；数据库结构只由 Liquibase 初始化和迁移，MyBatis-Plus 不启用任何运行期自动建表或改表能力。
 - `/api/system/health` 未登录可访问。
 - 需要登录的接口未认证时返回拒绝。
-- 认证使用 JWT access token 和 MySQL refresh session；登录、注册、刷新、退出、个人资料、修改密码和管理员重置密码接口可用。
+- 认证使用 JWT access token 和 MySQL refresh session；登录、注册、刷新、退出、个人资料、修改密码、管理员重置密码和邮件找回密码接口可用。
 - 会话生命周期控制已验证：空闲超时默认 2 小时、绝对会话时长默认 7 天，两个机制均可在系统设置中独立开关和配置；access token 与 refresh token 都受后端强制校验。
 - 开发令牌旁路默认关闭；权限按当前启用用户、启用角色和角色权限关系动态加载，角色权限变更后下一次请求生效。
 - 用户支持停用、启用和彻底删除；停用和重置密码会撤销已有 session，彻底删除仅允许已停用且非内置、非当前登录用户。

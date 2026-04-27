@@ -20,6 +20,7 @@ import org.springframework.web.cors.CorsConfigurationSource;
 import org.springframework.web.cors.UrlBasedCorsConfigurationSource;
 
 import jakarta.servlet.http.HttpServletResponse;
+import jakarta.servlet.http.HttpServletRequest;
 
 @Configuration
 @EnableMethodSecurity
@@ -34,6 +35,7 @@ class SecurityConfig {
 				.cors(Customizer.withDefaults())
 				.authorizeHttpRequests(authorize -> authorize
 						.requestMatchers("/error", "/actuator/health/**", "/api/system/health").permitAll()
+						.requestMatchers(SecurityConfig::isPasswordResetEndpoint).permitAll()
 						.requestMatchers(HttpMethod.POST, "/api/auth/login", "/api/auth/register",
 								"/api/auth/refresh").permitAll()
 						.anyRequest().authenticated())
@@ -56,6 +58,17 @@ class SecurityConfig {
 	@Bean
 	PasswordEncoder passwordEncoder() {
 		return PasswordEncoderFactories.createDelegatingPasswordEncoder();
+	}
+
+	private static boolean isPasswordResetEndpoint(HttpServletRequest request) {
+		if (!HttpMethod.POST.matches(request.getMethod())) {
+			return false;
+		}
+		return switch (request.getRequestURI()) {
+			case "/api/auth/password-reset/request", "/api/auth/password-reset/confirm",
+					"/api/auth/reset-password/request", "/api/auth/reset-password/confirm" -> true;
+			default -> false;
+		};
 	}
 
 	@Bean

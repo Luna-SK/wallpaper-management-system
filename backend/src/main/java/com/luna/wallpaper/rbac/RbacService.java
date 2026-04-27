@@ -65,8 +65,10 @@ class RbacService {
 		if (users.findByUsername(request.username()).isPresent()) {
 			throw new IllegalArgumentException("用户名已存在");
 		}
+		String email = EmailAddresses.normalizeNullable(request.email());
+		EmailAddresses.requireAvailable(users, email, null);
 		requirePassword(request.initialPassword());
-		AppUser user = new AppUser(request.username().trim(), request.displayName().trim(), request.email(), request.phone(),
+		AppUser user = new AppUser(request.username().trim(), request.displayName().trim(), email, request.phone(),
 				passwordEncoder.encode(request.initialPassword()));
 		user.update(user.displayName(), user.email(), user.phone(), normalizeStatus(request.status()));
 		users.insert(user);
@@ -78,7 +80,9 @@ class RbacService {
 	UserResponse updateUser(String id, UserRequest request) {
 		AppUser user = getUser(id);
 		UserStatus status = normalizeStatus(request.status());
-		user.update(request.displayName().trim(), request.email(), request.phone(), status);
+		String email = EmailAddresses.normalizeNullable(request.email());
+		EmailAddresses.requireAvailable(users, email, id);
+		user.update(request.displayName().trim(), email, request.phone(), status);
 		users.updateById(user);
 		if (!status.isActive()) {
 			refreshTokens.revokeByUserId(id);
