@@ -48,9 +48,10 @@ public final class AuthDtos {
 	}
 
 	public record AuthUserResponse(String id, String username, String displayName, String email, String phone,
-			String status, List<RoleBrief> roles, List<PermissionResponse> permissions) {
+			String avatarUrl, String status, List<RoleBrief> roles, List<PermissionResponse> permissions) {
 		static AuthUserResponse from(AppUser user, List<Permission> permissions) {
 			return new AuthUserResponse(user.id(), user.username(), user.displayName(), user.email(), user.phone(),
+					UserAvatars.url(user),
 					user.status().name(), user.roles().stream().map(RoleBrief::from).toList(),
 					permissions.stream().map(PermissionResponse::from).toList());
 		}

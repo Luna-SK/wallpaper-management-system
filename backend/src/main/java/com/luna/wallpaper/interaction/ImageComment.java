@@ -19,6 +19,12 @@ public class ImageComment {
 
 	private String userId;
 
+	private String parentCommentId;
+
+	private String rootCommentId;
+
+	private int depth;
+
 	private String content;
 
 	private ImageCommentStatus status = ImageCommentStatus.ACTIVE;
@@ -36,6 +42,20 @@ public class ImageComment {
 		this.id = UUID.randomUUID().toString();
 		this.imageId = imageId;
 		this.userId = userId;
+		this.rootCommentId = this.id;
+		this.depth = 0;
+		this.content = content;
+		this.status = ImageCommentStatus.ACTIVE;
+	}
+
+	ImageComment(String imageId, String userId, String parentCommentId, String rootCommentId, int depth,
+			String content) {
+		this.id = UUID.randomUUID().toString();
+		this.imageId = imageId;
+		this.userId = userId;
+		this.parentCommentId = parentCommentId;
+		this.rootCommentId = rootCommentId == null ? this.id : rootCommentId;
+		this.depth = Math.max(0, depth);
 		this.content = content;
 		this.status = ImageCommentStatus.ACTIVE;
 	}
@@ -43,8 +63,12 @@ public class ImageComment {
 	String id() { return id; }
 	String imageId() { return imageId; }
 	String userId() { return userId; }
+	String parentCommentId() { return parentCommentId; }
+	String rootCommentId() { return rootCommentId; }
+	int depth() { return depth; }
 	String content() { return content; }
 	ImageCommentStatus status() { return status; }
+	LocalDateTime updatedAt() { return updatedAt; }
 
 	void updateContent(String content) {
 		this.content = content;

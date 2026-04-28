@@ -27,6 +27,7 @@ import org.springframework.security.core.authority.SimpleGrantedAuthority;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.web.multipart.MultipartFile;
 
 import com.luna.wallpaper.audit.AuditLogService;
 import com.luna.wallpaper.config.MailProperties;
@@ -67,6 +68,7 @@ public class AuthService {
 	private final AuditLogService auditLogService;
 	private final SessionLifecyclePolicyService sessionLifecycle;
 	private final PasswordResetPolicyService passwordResetPolicy;
+	private final AvatarStorageService avatarStorage;
 	private final SecureRandom secureRandom = new SecureRandom();
 
 	AuthService(AppUserMapper users, RoleMapper roles, PermissionMapper permissions, UserRoleMapper userRoles,
@@ -74,7 +76,7 @@ public class AuthService {
 			PasswordResetTokenMapper passwordResetTokens, PasswordResetMailer passwordResetMailer,
 			PasswordEncoder passwordEncoder, JwtTokenService jwtTokenService, SecurityProperties securityProperties,
 			MailProperties mailProperties, AuditLogService auditLogService, SessionLifecyclePolicyService sessionLifecycle,
-			PasswordResetPolicyService passwordResetPolicy) {
+			PasswordResetPolicyService passwordResetPolicy, AvatarStorageService avatarStorage) {
 		this.users = users;
 		this.roles = roles;
 		this.permissions = permissions;
@@ -90,6 +92,7 @@ public class AuthService {
 		this.auditLogService = auditLogService;
 		this.sessionLifecycle = sessionLifecycle;
 		this.passwordResetPolicy = passwordResetPolicy;
+		this.avatarStorage = avatarStorage;
 	}
 
 	@Transactional
@@ -179,6 +182,39 @@ public class AuthService {
 		user.update(request.displayName().trim(), email, request.phone(), user.status());
 		users.updateById(user);
 		auditLogService.record("auth.profile.update", "USER", user.id(), Map.of());
+		return userResponse(loadUserAccess(user));
+	}
+
+	@Transactional
+	public AuthUserResponse updateAvatar(Authentication authentication, MultipartFile file) {
+		AuthenticatedUser current = currentUser(authentication);
+		AppUser user = requireActiveUser(current.id());
+		String oldObjectKey = user.avatarObjectKey();
+		AvatarStorageService.StoredAvatar avatar = null;
+		try {
+			avatar = avatarStorage.store(file, user.id());
+			user.updateAvatar(avatar.objectKey(), avatar.mimeType());
+			users.updateById(user);
+			avatarStorage.deleteQuietly(oldObjectKey);
+			auditLogService.record("auth.avatar.update", "USER", user.id(), Map.of());
+			return userResponse(loadUserAccess(user));
+		} catch (RuntimeException ex) {
+			if (avatar != null) {
+				avatarStorage.deleteQuietly(avatar.objectKey());
+			}
+			throw ex;
+		}
+	}
+
+	@Transactional
+	public AuthUserResponse deleteAvatar(Authentication authentication) {
+		AuthenticatedUser current = currentUser(authentication);
+		AppUser user = requireActiveUser(current.id());
+		String oldObjectKey = user.avatarObjectKey();
+		user.clearAvatar();
+		users.updateById(user);
+		avatarStorage.deleteQuietly(oldObjectKey);
+		auditLogService.record("auth.avatar.delete", "USER", user.id(), Map.of());
 		return userResponse(loadUserAccess(user));
 	}
 

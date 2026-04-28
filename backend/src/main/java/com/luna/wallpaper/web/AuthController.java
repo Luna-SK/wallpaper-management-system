@@ -1,12 +1,16 @@
 package com.luna.wallpaper.web;
 
 import org.springframework.security.core.Authentication;
+import org.springframework.http.MediaType;
+import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PatchMapping;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
+import org.springframework.web.multipart.MultipartFile;
 
 import com.luna.wallpaper.common.ApiResponse;
 import com.luna.wallpaper.rbac.AuthDtos.AuthResponse;
@@ -88,6 +92,17 @@ public class AuthController {
 	public ApiResponse<AuthUserResponse> updateProfile(Authentication authentication,
 			@Valid @RequestBody ProfileUpdateRequest request) {
 		return ApiResponse.ok(authService.updateProfile(authentication, request));
+	}
+
+	@PostMapping(path = "/avatar", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
+	public ApiResponse<AuthUserResponse> updateAvatar(Authentication authentication,
+			@RequestParam("file") MultipartFile file) {
+		return ApiResponse.ok(authService.updateAvatar(authentication, file));
+	}
+
+	@DeleteMapping("/avatar")
+	public ApiResponse<AuthUserResponse> deleteAvatar(Authentication authentication) {
+		return ApiResponse.ok(authService.deleteAvatar(authentication));
 	}
 
 	@PatchMapping("/password")

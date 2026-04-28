@@ -6,6 +6,10 @@ import jakarta.validation.Valid;
 
 import org.springframework.security.core.Authentication;
 import org.springframework.security.access.prepost.PreAuthorize;
+import org.springframework.http.CacheControl;
+import org.springframework.http.ContentDisposition;
+import org.springframework.http.HttpHeaders;
+import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PatchMapping;
@@ -16,6 +20,7 @@ import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
+import java.time.Duration;
 import com.luna.wallpaper.rbac.RbacDtos.PermissionResponse;
 import com.luna.wallpaper.rbac.RbacDtos.RolePermissionsRequest;
 import com.luna.wallpaper.rbac.RbacDtos.RoleRequest;
@@ -39,6 +44,16 @@ class RbacController {
 	@PreAuthorize("hasAuthority('user:manage')")
 	List<UserResponse> users() {
 		return service.users();
+	}
+
+	@GetMapping("/users/{id}/avatar")
+	ResponseEntity<byte[]> avatar(@PathVariable String id) {
+		AvatarStorageService.AvatarFile file = service.avatar(id);
+		return ResponseEntity.ok()
+				.header(HttpHeaders.CONTENT_DISPOSITION, ContentDisposition.inline().filename("avatar.png").build().toString())
+				.contentType(org.springframework.http.MediaType.parseMediaType(file.mimeType()))
+				.cacheControl(CacheControl.maxAge(Duration.ofHours(1)).cachePrivate())
+				.body(file.content());
 	}
 
 	@PostMapping("/users")

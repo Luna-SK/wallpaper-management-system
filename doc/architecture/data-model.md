@@ -2,7 +2,7 @@
 
 ## 用户与权限
 
-- `app_users`：用户名、展示名、邮箱、手机、密码哈希、状态；状态为 `ACTIVE` 或 `DISABLED`。邮箱允许为空，非空邮箱统一保存为小写并保持唯一，用于邮件找回密码。
+- `app_users`：用户名、展示名、邮箱、手机、密码哈希、状态、头像对象 key 和头像 MIME；状态为 `ACTIVE` 或 `DISABLED`。邮箱允许为空，非空邮箱统一保存为小写并保持唯一，用于邮件找回密码。用户头像原图不入库，后端统一裁剪缩放成 160x160 PNG 后保存到 RustFS `avatars/{userId}/` 前缀。
 - `auth_refresh_tokens`：refresh/session 记录，保存 token 哈希、用户、过期时间、撤销时间、最近活动时间、创建 IP 和 User-Agent。
 - `password_reset_tokens`：邮件找回密码令牌，保存用户、令牌哈希、过期时间、使用时间、请求 IP 和 User-Agent；明文令牌只出现在邮件链接中，不入库。
 - `roles`：系统管理员、数据管理员、标签编辑人员、普通浏览用户；`enabled=false` 表示角色已停用。
@@ -17,7 +17,7 @@
 - `image_versions`：图片版本记录，保存原图、缩略图、高清预览、标准预览的 RustFS object key。覆盖编辑只切换当前版本指针，历史版本进入保留期；版本号按单张图片现有最大版本号递增。
 - `image_tags`：图片与标签的多对多关系。
 - `upload_batches`、`upload_batch_items`、`upload_batch_tags`：上传会话、文件级状态、会话标签、暂存对象 key、失败原因和重试记录。文件先暂存到 RustFS，确认后才创建正式 `images + image_versions` 记录；取消或过期会话会清理未确认对象。
-- `image_comments`：图片评论，绑定图片和用户，状态为 `ACTIVE` 或 `DELETED`，删除评论采用软状态，便于审计与管理。
+- `image_comments`：图片评论，绑定图片和用户，状态为 `ACTIVE` 或 `DELETED`；通过 `parent_comment_id`、`root_comment_id` 和 `depth` 支持无限层级楼中楼回复。删除评论采用软状态，若下方仍有回复则保留占位节点以维持讨论上下文；评论响应会从用户头像字段派生作者头像 URL。
 - `image_favorites`：图片收藏，使用 `user_id + image_id` 唯一约束，取消收藏时物理删除关系。
 - `image_likes`：图片点赞，使用 `user_id + image_id` 唯一约束，取消点赞时物理删除关系。
 - `user_feedback`：用户反馈工单，绑定提交用户，可选关联图片，状态为 `OPEN`、`IN_PROGRESS`、`RESOLVED`、`CLOSED`，管理员处理时记录回复、处理人和处理时间。

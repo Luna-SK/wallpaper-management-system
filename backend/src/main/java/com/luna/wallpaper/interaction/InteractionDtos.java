@@ -22,18 +22,19 @@ public final class InteractionDtos {
 		}
 	}
 
-	public record CommentRequest(String content) {
-	}
-
-	public record CommentPageResponse(List<CommentResponse> items, int page, int size, long total) {
-	}
-
-	public record CommentResponse(String id, String imageId, String userId, String authorName, String content,
-			String status, LocalDateTime createdAt, LocalDateTime updatedAt, boolean mine) {
-		static CommentResponse from(ImageCommentRow row, String currentUserId) {
-			return new CommentResponse(row.id(), row.imageId(), row.userId(), row.authorName(), row.content(),
-					row.status(), row.createdAt(), row.updatedAt(), row.userId().equals(currentUserId));
+	public record CommentRequest(String content, String parentCommentId, LocalDateTime parentUpdatedAt) {
+		public CommentRequest(String content, String parentCommentId) {
+			this(content, parentCommentId, null);
 		}
+	}
+
+	public record CommentPageResponse(List<CommentResponse> items, int page, int size, long total, long commentTotal) {
+	}
+
+	public record CommentResponse(String id, String imageId, String userId, String authorName,
+			String authorAvatarUrl, String content, String status, LocalDateTime createdAt, LocalDateTime updatedAt,
+			boolean mine, String parentCommentId, String rootCommentId, int depth, boolean deleted,
+			boolean hasReplies, List<CommentResponse> replies) {
 	}
 
 	public record FeedbackCreateRequest(String type, String title, String content, String imageId) {

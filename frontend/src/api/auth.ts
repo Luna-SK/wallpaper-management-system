@@ -28,6 +28,7 @@ export interface AuthUser {
   displayName: string
   email: string | null
   phone: string | null
+  avatarUrl: string | null
   status: UserStatus
   roles: RoleBrief[]
   permissions: Permission[]
@@ -102,6 +103,18 @@ export async function getMe() {
 
 export async function updateProfile(payload: { displayName: string; email?: string | null; phone?: string | null }) {
   const response = await http.patch<ApiResponse<AuthUser>>('/auth/profile', payload)
+  return response.data.data
+}
+
+export async function uploadAvatar(file: File) {
+  const form = new FormData()
+  form.append('file', file)
+  const response = await http.post<ApiResponse<AuthUser>>('/auth/avatar', form)
+  return response.data.data
+}
+
+export async function deleteAvatar() {
+  const response = await http.delete<ApiResponse<AuthUser>>('/auth/avatar')
   return response.data.data
 }
 

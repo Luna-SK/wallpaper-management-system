@@ -1,6 +1,8 @@
 package com.luna.wallpaper.interaction;
 
+import java.util.ArrayList;
 import java.util.Collection;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
@@ -22,6 +24,7 @@ import com.luna.wallpaper.interaction.InteractionDtos.FeedbackPageResponse;
 import com.luna.wallpaper.interaction.InteractionDtos.FeedbackResponse;
 import com.luna.wallpaper.interaction.InteractionDtos.ImageInteractionSummary;
 import com.luna.wallpaper.interaction.InteractionDtos.InteractionStateResponse;
+import com.luna.wallpaper.rbac.UserAvatars;
 
 @Service
 public class InteractionService {
@@ -65,32 +68,54 @@ public class InteractionService {
 		ensureRetainedImage(imageId);
 		int safePage = Math.max(1, page);
 		int safeSize = Math.min(Math.max(1, size), 100);
-		long total = comments.countActiveByImageId(imageId);
-		List<CommentResponse> items = total == 0 ? List.of() : comments.selectActiveRowsByImageId(imageId,
-						(long) (safePage - 1) * safeSize, safeSize).stream()
-				.map(row -> CommentResponse.from(row, userId))
-				.toList();
-		return new CommentPageResponse(items, safePage, safeSize, total);
+		long total = comments.countVisibleRootThreadsByImageId(imageId);
+		long commentTotal = comments.countActiveByImageId(imageId);
+		long offset = (long) (safePage - 1) * safeSize;
+		List<ImageCommentRow> roots = total == 0 ? List.of()
+				: comments.selectVisibleRootRowsByImageId(imageId, offset, safeSize);
+		List<CommentResponse> items = roots.isEmpty() ? List.of()
+				: buildCommentTree(roots, comments.selectRowsByRootIds(roots.stream().map(ImageCommentRow::id).toList()),
+						userId);
+		return new CommentPageResponse(items, safePage, safeSize, total, commentTotal);
 	}
 
 	@Transactional
 	public CommentResponse createComment(String imageId, String userId, CommentRequest request) {
 		ensureRetainedImage(imageId);
-		ImageComment comment = new ImageComment(imageId, userId, requiredText(request.content(), "请输入评论内容", 1000));
+		String parentCommentId = blankToNull(request.parentCommentId());
+		ImageComment comment;
+		if (parentCommentId == null) {
+			comment = new ImageComment(imageId, userId, requiredText(request.content(), "请输入评论内容", 1000));
+		} else {
+			ImageComment parent = getCommentForUpdate(parentCommentId);
+			if (!parent.imageId().equals(imageId) || parent.status() != ImageCommentStatus.ACTIVE) {
+				throw new IllegalArgumentException("回复的评论不存在");
+			}
+			if (request.parentUpdatedAt() == null || !request.parentUpdatedAt().equals(parent.updatedAt())) {
+				throw new IllegalArgumentException("该评论已更新，请刷新后再回复");
+			}
+			String rootCommentId = blankToNull(parent.rootCommentId()) == null ? parent.id() : parent.rootCommentId();
+			comment = new ImageComment(imageId, userId, parent.id(), rootCommentId, parent.depth() + 1,
+					requiredText(request.content(), "请输入评论内容", 1000));
+		}
 		comments.insert(comment);
-		auditLogService.record("interaction.comment.create", "IMAGE", imageId, Map.of("commentId", comment.id()));
+		auditLogService.record("interaction.comment.create", "IMAGE", imageId,
+				Map.of("commentId", comment.id(), "parentCommentId", parentCommentId == null ? "" : parentCommentId));
 		return commentResponse(comment.id(), userId, "评论保存失败");
 	}
 
 	@Transactional
 	public CommentResponse updateComment(String imageId, String commentId, String userId, CommentRequest request) {
 		ensureRetainedImage(imageId);
-		ImageComment comment = getComment(commentId);
+		ImageComment comment = getCommentForUpdate(commentId);
 		if (!comment.imageId().equals(imageId) || comment.status() != ImageCommentStatus.ACTIVE) {
 			throw new IllegalArgumentException("评论不存在");
 		}
 		if (!comment.userId().equals(userId)) {
 			throw new AccessDeniedException("只能编辑自己的评论");
+		}
+		if (comments.countByParentId(comment.id()) > 0) {
+			throw new IllegalArgumentException("已有回复的评论不能编辑");
 		}
 		comment.updateContent(requiredText(request.content(), "请输入评论内容", 1000));
 		comments.updateById(comment);
@@ -231,7 +256,7 @@ public class InteractionService {
 		if (row == null) {
 			throw new IllegalStateException(errorMessage);
 		}
-		return CommentResponse.from(row, currentUserId);
+		return toCommentResponse(new CommentNode(row), currentUserId);
 	}
 
 	private FeedbackResponse feedbackResponse(String id, String errorMessage) {
@@ -250,6 +275,14 @@ public class InteractionService {
 
 	private ImageComment getComment(String id) {
 		ImageComment comment = comments.selectById(id);
+		if (comment == null) {
+			throw new IllegalArgumentException("评论不存在");
+		}
+		return comment;
+	}
+
+	private ImageComment getCommentForUpdate(String id) {
+		ImageComment comment = comments.selectByIdForUpdate(id);
 		if (comment == null) {
 			throw new IllegalArgumentException("评论不存在");
 		}
@@ -297,5 +330,58 @@ public class InteractionService {
 
 	private static String blankToNull(String value) {
 		return value == null || value.isBlank() ? null : value.trim();
+	}
+
+	private static List<CommentResponse> buildCommentTree(List<ImageCommentRow> roots, List<ImageCommentRow> rows,
+			String currentUserId) {
+		Map<String, CommentNode> nodes = new LinkedHashMap<>();
+		for (ImageCommentRow row : rows) {
+			nodes.put(row.id(), new CommentNode(row));
+		}
+		for (CommentNode node : nodes.values()) {
+			String parentId = node.row.parentCommentId();
+			CommentNode parent = parentId == null ? null : nodes.get(parentId);
+			if (parent != null && !parent.row.id().equals(node.row.id())) {
+				parent.children.add(node);
+				parent.hasReplies = true;
+			}
+		}
+		List<CommentResponse> result = new ArrayList<>();
+		for (int i = 0; i < roots.size(); i++) {
+			CommentNode root = nodes.get(roots.get(i).id());
+			if (root != null && pruneInvisibleDeletedLeaves(root)) {
+				result.add(toCommentResponse(root, currentUserId));
+			}
+		}
+		return List.copyOf(result);
+	}
+
+	private static boolean pruneInvisibleDeletedLeaves(CommentNode node) {
+		node.children.removeIf(child -> !pruneInvisibleDeletedLeaves(child));
+		return "ACTIVE".equals(node.row.status()) || !node.children.isEmpty();
+	}
+
+	private static CommentResponse toCommentResponse(CommentNode node, String currentUserId) {
+		ImageCommentRow row = node.row;
+		boolean deleted = !"ACTIVE".equals(row.status());
+		List<CommentResponse> replies = new ArrayList<>();
+		for (int i = 0; i < node.children.size(); i++) {
+			replies.add(toCommentResponse(node.children.get(i), currentUserId));
+		}
+		return new CommentResponse(row.id(), row.imageId(), row.userId(), row.authorName(),
+				UserAvatars.url(row.userId(), row.authorAvatarObjectKey(), row.authorAvatarUpdatedAt()),
+				deleted ? null : row.content(), row.status(), row.createdAt(), row.updatedAt(),
+				row.userId().equals(currentUserId), row.parentCommentId(), row.rootCommentId(), row.depth(), deleted,
+				node.hasReplies || row.hasReplies(), List.copyOf(replies));
+	}
+
+	private static final class CommentNode {
+		private final ImageCommentRow row;
+		private final List<CommentNode> children = new ArrayList<>();
+		private boolean hasReplies;
+
+		private CommentNode(ImageCommentRow row) {
+			this.row = row;
+		}
 	}
 }

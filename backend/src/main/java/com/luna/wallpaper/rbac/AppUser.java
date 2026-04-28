@@ -27,6 +27,12 @@ public class AppUser {
 
 	private String passwordHash;
 
+	private String avatarObjectKey;
+
+	private String avatarMimeType;
+
+	private LocalDateTime avatarUpdatedAt;
+
 	private UserStatus status = UserStatus.ACTIVE;
 
 	@TableField(exist = false)
@@ -57,6 +63,9 @@ public class AppUser {
 	String email() { return email; }
 	String phone() { return phone; }
 	String passwordHash() { return passwordHash; }
+	String avatarObjectKey() { return avatarObjectKey; }
+	String avatarMimeType() { return avatarMimeType; }
+	LocalDateTime avatarUpdatedAt() { return avatarUpdatedAt; }
 	UserStatus status() { return status; }
 	Set<Role> roles() { return roles; }
 
@@ -77,6 +86,18 @@ public class AppUser {
 
 	void changePasswordHash(String passwordHash) {
 		this.passwordHash = passwordHash;
+	}
+
+	void updateAvatar(String objectKey, String mimeType) {
+		this.avatarObjectKey = objectKey;
+		this.avatarMimeType = mimeType;
+		this.avatarUpdatedAt = LocalDateTime.now();
+	}
+
+	void clearAvatar() {
+		this.avatarObjectKey = null;
+		this.avatarMimeType = null;
+		this.avatarUpdatedAt = null;
 	}
 
 	void replaceRoles(Set<Role> roles) {

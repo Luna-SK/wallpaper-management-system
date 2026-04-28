@@ -14,11 +14,18 @@ export interface ImageComment {
   imageId: string
   userId: string
   authorName: string
-  content: string
+  authorAvatarUrl: string | null
+  content: string | null
   status: string
   createdAt: string
   updatedAt: string
   mine: boolean
+  parentCommentId: string | null
+  rootCommentId: string | null
+  depth: number
+  deleted: boolean
+  hasReplies: boolean
+  replies: ImageComment[]
 }
 
 export interface CommentPage {
@@ -26,6 +33,7 @@ export interface CommentPage {
   page: number
   size: number
   total: number
+  commentTotal: number
 }
 
 export type FeedbackStatus = 'OPEN' | 'IN_PROGRESS' | 'RESOLVED' | 'CLOSED'
@@ -60,8 +68,13 @@ export async function getImageComments(imageId: string, params: { page?: number;
   return response.data
 }
 
-export async function createImageComment(imageId: string, content: string) {
-  const response = await http.post<ImageComment>(`/images/${imageId}/comments`, { content })
+export async function createImageComment(
+  imageId: string,
+  content: string,
+  parentCommentId?: string | null,
+  parentUpdatedAt?: string | null,
+) {
+  const response = await http.post<ImageComment>(`/images/${imageId}/comments`, { content, parentCommentId, parentUpdatedAt })
   return response.data
 }
 

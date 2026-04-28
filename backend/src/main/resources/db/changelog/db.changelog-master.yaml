@@ -31,3 +31,7 @@ databaseChangeLog:
       file: db/changelog/015-user-interactions-feedback.yaml
   - include:
       file: db/changelog/016-password-reset-email-settings.yaml
+  - include:
+      file: db/changelog/017-comment-threaded-replies.yaml
+  - include:
+      file: db/changelog/018-user-avatars.yaml

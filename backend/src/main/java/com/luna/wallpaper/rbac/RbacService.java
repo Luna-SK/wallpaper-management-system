@@ -41,10 +41,11 @@ class RbacService {
 	private final PasswordEncoder passwordEncoder;
 	private final AuditLogService auditLogService;
 	private final InteractionService interactionService;
+	private final AvatarStorageService avatarStorage;
 
 	RbacService(AppUserMapper users, RoleMapper roles, PermissionMapper permissions, UserRoleMapper userRoles,
 			RolePermissionMapper rolePermissions, AuthRefreshTokenMapper refreshTokens, PasswordEncoder passwordEncoder,
-			AuditLogService auditLogService, InteractionService interactionService) {
+			AuditLogService auditLogService, InteractionService interactionService, AvatarStorageService avatarStorage) {
 		this.users = users;
 		this.roles = roles;
 		this.permissions = permissions;
@@ -54,6 +55,7 @@ class RbacService {
 		this.passwordEncoder = passwordEncoder;
 		this.auditLogService = auditLogService;
 		this.interactionService = interactionService;
+		this.avatarStorage = avatarStorage;
 	}
 
 	@Transactional(readOnly = true)
@@ -147,12 +149,19 @@ class RbacService {
 		refreshTokens.revokeByUserId(id);
 		int tokenCount = refreshTokens.deleteByUserId(id);
 		int roleLinkCount = userRoles.deleteByUserId(id);
+		String avatarObjectKey = user.avatarObjectKey();
 		interactionService.cleanupForUserPurge(id);
 		users.deleteById(id);
+		avatarStorage.deleteQuietly(avatarObjectKey);
 		auditLogService.record("user.purge", "USER", id, Map.of(
 				"username", user.username(),
 				"deletedSessions", tokenCount,
 				"deletedRoleLinks", roleLinkCount));
+	}
+
+	@Transactional(readOnly = true)
+	AvatarStorageService.AvatarFile avatar(String id) {
+		return avatarStorage.read(getUser(id));
 	}
 
 	@Transactional(readOnly = true)

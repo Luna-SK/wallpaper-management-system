@@ -3,6 +3,7 @@ import { computed, onMounted, reactive, ref, watch } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Plus, Search } from '@element-plus/icons-vue'
 import { isAxiosError } from 'axios'
+import UserAvatar from '../components/UserAvatar.vue'
 import {
   disableRole,
   disableUser,
@@ -452,6 +453,11 @@ onMounted(refresh)
 
             <div class="workspace-table-scroll-region">
               <el-table :data="pagedUsers" stripe>
+                <el-table-column label="头像" width="72">
+                  <template #default="{ row }">
+                    <UserAvatar :name="row.displayName || row.username" :avatar-url="row.avatarUrl" :size="30" />
+                  </template>
+                </el-table-column>
                 <el-table-column prop="username" label="用户名" width="160" />
                 <el-table-column prop="displayName" label="姓名" width="160" />
                 <el-table-column label="角色" min-width="220">
