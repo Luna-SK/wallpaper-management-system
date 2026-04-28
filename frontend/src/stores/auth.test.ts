@@ -5,6 +5,7 @@ import { getSessionPolicy, login, register, type LoginResponse, type SessionPoli
 
 vi.mock('../api/auth', () => ({
   changePassword: vi.fn(),
+  deleteAvatar: vi.fn(),
   getMe: vi.fn(),
   getSessionPolicy: vi.fn(),
   login: vi.fn(),
@@ -12,6 +13,7 @@ vi.mock('../api/auth', () => ({
   register: vi.fn(),
   refreshSession: vi.fn(),
   updateProfile: vi.fn(),
+  uploadAvatar: vi.fn(),
 }))
 
 function sessionPolicy(overrides: Partial<SessionPolicy> = {}): SessionPolicy {
@@ -42,6 +44,7 @@ function authResponse(overrides: Partial<LoginResponse> = {}): LoginResponse {
       displayName: '系统管理员',
       email: null,
       phone: null,
+      avatarUrl: null,
       status: 'ACTIVE',
       roles: [{ id: 'role-1', code: 'SYSTEM_ADMIN', name: '系统管理员' }],
       permissions: [
@@ -97,6 +100,7 @@ describe('auth store', () => {
         displayName: '浏览用户',
         email: 'viewer@example.com',
         phone: null,
+        avatarUrl: null,
         status: 'ACTIVE',
         roles: [{ id: 'role-2', code: 'VIEWER', name: '浏览者' }],
         permissions: [

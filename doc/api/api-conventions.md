@@ -36,8 +36,11 @@
 - `POST /api/auth/logout`
 - `GET /api/auth/me`
 - `PATCH /api/auth/profile`
+- `POST /api/auth/avatar`
+- `DELETE /api/auth/avatar`
 - `PATCH /api/auth/password`
 - `GET /api/users`
+- `GET /api/users/{id}/avatar`
 - `POST /api/users`
 - `PATCH /api/users/{id}`
 - `PUT /api/users/{id}/roles`
@@ -118,7 +121,7 @@
 
 图片列表和详情响应同时返回互动统计：`favoriteCount`、`likeCount`、`commentCount`、`favoritedByMe`、`likedByMe`。`GET /api/images` 支持 `favoriteOnly=true`，用于只查看当前登录用户收藏的图片，并可与关键词、分类、标签和状态筛选叠加。
 
-图片互动接口使用 `image:view` 权限。登录用户可对可查看图片评论、收藏和点赞；评论分页通过 `GET /api/images/{id}/comments` 返回，发布、编辑和删除评论分别使用 `POST`、`PATCH` 和 `DELETE`。用户只能编辑和删除自己的评论；拥有 `interaction:manage` 的管理员或数据管理员可删除不当评论。收藏和点赞通过 `POST /api/images/{id}/favorite|like` 开启，通过 `DELETE` 取消，用户与图片维度保持唯一，重复操作保持幂等。
+图片互动接口使用 `image:view` 权限。登录用户可对可查看图片评论、收藏和点赞；评论分页通过 `GET /api/images/{id}/comments` 返回，发布、编辑和删除评论分别使用 `POST`、`PATCH` 和 `DELETE`。评论支持楼中楼回复，发布回复时传入 `parentCommentId` 和当前父评论 `parentUpdatedAt`，若父评论已被更新则拒绝提交并提示刷新；响应按顶层评论分页，并在当前页顶层评论下返回完整回复树。评论响应包含 `authorAvatarUrl`、`parentCommentId`、`rootCommentId`、`depth`、`deleted`、`hasReplies` 和 `replies`，前端以 Reddit 风格的头像、树状连接线和折叠分支展示层级。删除评论采用软删除；若被删除评论下仍有回复，接口返回“已删除”占位节点但不暴露原正文。用户只能编辑自己的评论，且已有任意子回复记录的评论禁止编辑；拥有 `interaction:manage` 的管理员或数据管理员可删除不当评论。收藏和点赞通过 `POST /api/images/{id}/favorite|like` 开启，通过 `DELETE` 取消，用户与图片维度保持唯一，重复操作保持幂等。
 
 用户反馈接口要求登录。普通用户通过 `POST /api/feedback` 提交反馈，可选关联图片 ID，通过 `GET /api/feedback` 查看自己的反馈，并可用 `POST /api/feedback/{id}/close` 关闭自己的未关闭反馈。拥有 `interaction:manage` 权限的用户可通过 `GET /api/feedback/admin` 按状态和关键词查看全部反馈，并用 `PATCH /api/feedback/admin/{id}` 更新状态与处理回复。反馈状态包括 `OPEN`、`IN_PROGRESS`、`RESOLVED`、`CLOSED`。
 
@@ -136,7 +139,7 @@
 
 认证使用短期 JWT access token 和服务端 refresh session。`POST /api/auth/login` 返回 `accessToken`、`refreshToken`、过期时间、当前用户资料、角色、权限编码和 `sessionPolicy`；后续请求使用 `Authorization: Bearer <accessToken>`。
 
-`POST /api/auth/register` 公开注册启用用户，默认分配 `VIEWER` 角色并返回 token 对。用户邮箱不是必填项，但非空邮箱会统一去空格并保存为小写，且在系统内唯一。`POST /api/auth/refresh` 使用 refresh token 轮换新的 token 对；refresh session 同时受空闲超时和绝对会话时长约束，默认空闲 2 小时退出、最长 7 天必须重新登录。`GET /api/auth/session-policy` 返回当前登录会话的空闲超时开关、空闲分钟数、绝对会话开关、绝对到期时间和服务器时间。`POST /api/auth/logout` 撤销当前 session。用户可通过 `PATCH /api/auth/profile` 修改个人资料，通过 `PATCH /api/auth/password` 修改自己的密码。管理员通过 `PUT /api/users/{id}/password` 重置用户密码，重置后该用户已有 session 会被撤销。
+`POST /api/auth/register` 公开注册启用用户，默认分配 `VIEWER` 角色并返回 token 对。用户邮箱不是必填项，但非空邮箱会统一去空格并保存为小写，且在系统内唯一。`POST /api/auth/refresh` 使用 refresh token 轮换新的 token 对；refresh session 同时受空闲超时和绝对会话时长约束，默认空闲 2 小时退出、最长 7 天必须重新登录。`GET /api/auth/session-policy` 返回当前登录会话的空闲超时开关、空闲分钟数、绝对会话开关、绝对到期时间和服务器时间。`POST /api/auth/logout` 撤销当前 session。用户可通过 `PATCH /api/auth/profile` 修改个人资料，通过 `POST /api/auth/avatar` 上传自己的 JPEG/PNG 头像，通过 `DELETE /api/auth/avatar` 清除头像，通过 `PATCH /api/auth/password` 修改自己的密码。头像会统一裁剪缩放为 160x160 PNG 并写入 RustFS；`GET /api/users/{id}/avatar` 登录后可读取头像文件。管理员通过 `PUT /api/users/{id}/password` 重置用户密码，重置后该用户已有 session 会被撤销。
 
 邮件找回密码使用公开接口。`GET /api/auth/password-reset-policy` 返回邮件找回密码是否启用。`POST /api/auth/reset-password/request` 接收邮箱；若邮箱唯一匹配启用用户且业务开关开启，后端生成 30 分钟有效的一次性重置令牌，仅保存 SHA-256 哈希，并通过 SMTP 发送包含账号名的重置链接；若邮箱未绑定启用账号，返回 `400 VALIDATION_ERROR` 和“该邮箱未绑定启用账号”。邮件找回密码关闭时，申请和确认接口都返回 `400 VALIDATION_ERROR`；SMTP 未启用、配置错误或发送失败时返回 `503 SERVICE_UNAVAILABLE`，本次生成的重置令牌会随事务回滚。`POST /api/auth/reset-password/confirm` 接收重置令牌和新密码，令牌有效、业务开关仍开启且用户仍启用时更新密码、标记令牌已使用并撤销该用户全部 refresh session。后端同时保留 `/api/auth/password-reset/*` 兼容路径。
 

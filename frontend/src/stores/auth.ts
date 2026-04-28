@@ -2,6 +2,7 @@ import { defineStore } from 'pinia'
 import { computed, ref } from 'vue'
 import {
   changePassword as changePasswordApi,
+  deleteAvatar as deleteAvatarApi,
   getMe,
   getSessionPolicy,
   login as loginApi,
@@ -9,6 +10,7 @@ import {
   register as registerApi,
   refreshSession,
   updateProfile as updateProfileApi,
+  uploadAvatar as uploadAvatarApi,
   type AuthUser,
   type LoginResponse,
   type RegisterRequest,
@@ -91,6 +93,22 @@ export const useAuthStore = defineStore('auth', () => {
 
   async function updateProfile(payload: { displayName: string; email?: string | null; phone?: string | null }) {
     const data = await updateProfileApi(payload)
+    user.value = data
+    profileLoaded.value = true
+    persist()
+    return data
+  }
+
+  async function uploadAvatar(file: File) {
+    const data = await uploadAvatarApi(file)
+    user.value = data
+    profileLoaded.value = true
+    persist()
+    return data
+  }
+
+  async function deleteAvatar() {
+    const data = await deleteAvatarApi()
     user.value = data
     profileLoaded.value = true
     persist()
@@ -296,6 +314,8 @@ export const useAuthStore = defineStore('auth', () => {
     refresh,
     loadMe,
     updateProfile,
+    uploadAvatar,
+    deleteAvatar,
     changePassword,
     logout,
     clearSession,

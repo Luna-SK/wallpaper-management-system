@@ -25,6 +25,7 @@ export interface User {
   displayName: string
   email: string | null
   phone: string | null
+  avatarUrl: string | null
   status: UserStatus
   roles: Array<{ id: string; code: string; name: string }>
 }

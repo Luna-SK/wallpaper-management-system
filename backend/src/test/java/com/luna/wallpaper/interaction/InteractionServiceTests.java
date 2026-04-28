@@ -60,14 +60,135 @@ class InteractionServiceTests {
 				"image-1", "user-1", "用户一", "你好", "ACTIVE"));
 		ArgumentCaptor<ImageComment> captor = ArgumentCaptor.forClass(ImageComment.class);
 
-		var response = service.createComment("image-1", "user-1", new CommentRequest("  你好  "));
+		var response = service.createComment("image-1", "user-1", new CommentRequest("  你好  ", null));
 
 		verify(comments).insert(captor.capture());
 		assertThat(captor.getValue().content()).isEqualTo("你好");
+		assertThat(captor.getValue().parentCommentId()).isNull();
+		assertThat(captor.getValue().rootCommentId()).isEqualTo(captor.getValue().id());
 		assertThat(response.mine()).isTrue();
 		assertThat(response.authorName()).isEqualTo("用户一");
+		assertThat(response.authorAvatarUrl()).isNull();
 		verify(auditLogService).record("interaction.comment.create", "IMAGE", "image-1",
-				Map.of("commentId", response.id()));
+				Map.of("commentId", response.id(), "parentCommentId", ""));
+	}
+
+	@Test
+	void createReplyStoresParentRootAndDepth() {
+		ImageComment parent = new ImageComment("image-1", "owner-1", "父评论");
+		LocalDateTime parentUpdatedAt = LocalDateTime.now();
+		ReflectionTestUtils.setField(parent, "updatedAt", parentUpdatedAt);
+		when(comments.selectByIdForUpdate(parent.id())).thenReturn(parent);
+		when(comments.selectRowById(anyString())).thenAnswer(invocation -> commentRow(invocation.getArgument(0),
+				"image-1", "user-1", "用户一", parent.id(), parent.id(), 1, "回复", "ACTIVE"));
+		ArgumentCaptor<ImageComment> captor = ArgumentCaptor.forClass(ImageComment.class);
+
+		var response = service.createComment("image-1", "user-1",
+				new CommentRequest(" 回复 ", parent.id(), parentUpdatedAt));
+
+		verify(comments).insert(captor.capture());
+		assertThat(captor.getValue().parentCommentId()).isEqualTo(parent.id());
+		assertThat(captor.getValue().rootCommentId()).isEqualTo(parent.id());
+		assertThat(captor.getValue().depth()).isEqualTo(1);
+		assertThat(response.parentCommentId()).isEqualTo(parent.id());
+	}
+
+	@Test
+	void createReplyRejectsParentFromAnotherImage() {
+		ImageComment parent = new ImageComment("image-2", "owner-1", "父评论");
+		LocalDateTime parentUpdatedAt = LocalDateTime.now();
+		ReflectionTestUtils.setField(parent, "updatedAt", parentUpdatedAt);
+		when(comments.selectByIdForUpdate(parent.id())).thenReturn(parent);
+
+		assertThatThrownBy(() -> service.createComment("image-1", "user-1",
+				new CommentRequest("回复", parent.id(), parentUpdatedAt)))
+				.isInstanceOf(IllegalArgumentException.class)
+				.hasMessageContaining("回复的评论不存在");
+	}
+
+	@Test
+	void createReplyRejectsStaleParentVersion() {
+		ImageComment parent = new ImageComment("image-1", "owner-1", "父评论");
+		LocalDateTime currentUpdatedAt = LocalDateTime.now();
+		ReflectionTestUtils.setField(parent, "updatedAt", currentUpdatedAt);
+		when(comments.selectByIdForUpdate(parent.id())).thenReturn(parent);
+
+		assertThatThrownBy(() -> service.createComment("image-1", "user-1",
+				new CommentRequest("回复", parent.id(), currentUpdatedAt.minusSeconds(1))))
+				.isInstanceOf(IllegalArgumentException.class)
+				.hasMessageContaining("该评论已更新，请刷新后再回复");
+	}
+
+	@Test
+	void updateCommentAllowsOwnerWhenNoReplies() {
+		ImageComment comment = new ImageComment("image-1", "user-1", "原内容");
+		when(comments.selectByIdForUpdate(comment.id())).thenReturn(comment);
+		when(comments.countByParentId(comment.id())).thenReturn(0L);
+		when(comments.selectRowById(comment.id())).thenReturn(commentRow(comment.id(), "image-1", "user-1",
+				"用户一", "新内容", "ACTIVE"));
+
+		var response = service.updateComment("image-1", comment.id(), "user-1",
+				new CommentRequest(" 新内容 ", null));
+
+		assertThat(comment.content()).isEqualTo("新内容");
+		assertThat(response.content()).isEqualTo("新内容");
+		verify(comments).updateById(comment);
+	}
+
+	@Test
+	void updateCommentRejectsCommentWithReplies() {
+		ImageComment comment = new ImageComment("image-1", "user-1", "原内容");
+		when(comments.selectByIdForUpdate(comment.id())).thenReturn(comment);
+		when(comments.countByParentId(comment.id())).thenReturn(1L);
+
+		assertThatThrownBy(() -> service.updateComment("image-1", comment.id(), "user-1",
+				new CommentRequest("新内容", null)))
+				.isInstanceOf(IllegalArgumentException.class)
+				.hasMessageContaining("已有回复的评论不能编辑");
+	}
+
+	@Test
+	void commentsReturnThreadTreeWithAuthorAvatarUrl() {
+		ImageCommentRow root = commentRow("root-1", "image-1", "user-1", "用户一", null, "root-1", 0, "顶层",
+				"ACTIVE");
+		ImageCommentRow child = commentRow("child-1", "image-1", "user-2", "用户二", "root-1", "root-1", 1,
+				"回复", "ACTIVE");
+		ReflectionTestUtils.setField(child, "authorAvatarObjectKey", "avatars/user-2/avatar.png");
+		when(comments.countVisibleRootThreadsByImageId("image-1")).thenReturn(1L);
+		when(comments.countActiveByImageId("image-1")).thenReturn(2L);
+		when(comments.selectVisibleRootRowsByImageId("image-1", 0, 20)).thenReturn(List.of(root));
+		when(comments.selectRowsByRootIds(List.of("root-1"))).thenReturn(List.of(root, child));
+
+		var page = service.comments("image-1", "user-1", 1, 20);
+
+		assertThat(page.total()).isEqualTo(1);
+		assertThat(page.commentTotal()).isEqualTo(2);
+		assertThat(page.items()).hasSize(1);
+		assertThat(page.items().getFirst().depth()).isZero();
+		assertThat(page.items().getFirst().hasReplies()).isTrue();
+		assertThat(page.items().getFirst().replies().getFirst().parentCommentId()).isEqualTo("root-1");
+		assertThat(page.items().getFirst().replies().getFirst().depth()).isEqualTo(1);
+		assertThat(page.items().getFirst().replies().getFirst().authorAvatarUrl())
+				.isEqualTo("/api/users/user-2/avatar?v=0");
+	}
+
+	@Test
+	void deletedCommentWithRepliesIsReturnedAsPlaceholder() {
+		ImageCommentRow root = commentRow("root-1", "image-1", "user-1", "用户一", null, "root-1", 0, "已删内容",
+				"DELETED");
+		ImageCommentRow child = commentRow("child-1", "image-1", "user-2", "用户二", "root-1", "root-1", 1,
+				"回复", "ACTIVE");
+		when(comments.countVisibleRootThreadsByImageId("image-1")).thenReturn(1L);
+		when(comments.countActiveByImageId("image-1")).thenReturn(1L);
+		when(comments.selectVisibleRootRowsByImageId("image-1", 0, 20)).thenReturn(List.of(root));
+		when(comments.selectRowsByRootIds(List.of("root-1"))).thenReturn(List.of(root, child));
+
+		var item = service.comments("image-1", "user-2", 1, 20).items().getFirst();
+
+		assertThat(item.deleted()).isTrue();
+		assertThat(item.content()).isNull();
+		assertThat(item.replies()).hasSize(1);
+		assertThat(item.replies().getFirst().content()).isEqualTo("回复");
 	}
 
 	@Test
@@ -161,11 +282,19 @@ class InteractionServiceTests {
 
 	private static ImageCommentRow commentRow(String id, String imageId, String userId, String authorName,
 			String content, String status) {
+		return commentRow(id, imageId, userId, authorName, null, id, 0, content, status);
+	}
+
+	private static ImageCommentRow commentRow(String id, String imageId, String userId, String authorName,
+			String parentCommentId, String rootCommentId, int depth, String content, String status) {
 		ImageCommentRow row = new ImageCommentRow();
 		ReflectionTestUtils.setField(row, "id", id);
 		ReflectionTestUtils.setField(row, "imageId", imageId);
 		ReflectionTestUtils.setField(row, "userId", userId);
 		ReflectionTestUtils.setField(row, "authorName", authorName);
+		ReflectionTestUtils.setField(row, "parentCommentId", parentCommentId);
+		ReflectionTestUtils.setField(row, "rootCommentId", rootCommentId);
+		ReflectionTestUtils.setField(row, "depth", depth);
 		ReflectionTestUtils.setField(row, "content", content);
 		ReflectionTestUtils.setField(row, "status", status);
 		ReflectionTestUtils.setField(row, "createdAt", LocalDateTime.now());

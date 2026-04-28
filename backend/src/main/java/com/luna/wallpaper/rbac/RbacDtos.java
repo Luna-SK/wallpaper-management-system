@@ -18,10 +18,11 @@ public final class RbacDtos {
 	public record UserPasswordResetRequest(@NotBlank String newPassword) {
 	}
 
-	public record UserResponse(String id, String username, String displayName, String email, String phone, String status,
-			List<RoleBrief> roles) {
+	public record UserResponse(String id, String username, String displayName, String email, String phone,
+			String avatarUrl, String status, List<RoleBrief> roles) {
 		static UserResponse from(AppUser user) {
 			return new UserResponse(user.id(), user.username(), user.displayName(), user.email(), user.phone(),
+					UserAvatars.url(user),
 					user.status().name(), user.roles().stream().map(RoleBrief::from).toList());
 		}
 	}

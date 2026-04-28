@@ -1,6 +1,18 @@
 <script setup lang="ts">
-import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref } from 'vue'
-import { ElMessage, ElMessageBox } from 'element-plus'
+import {
+  computed,
+  defineComponent,
+  h,
+  nextTick,
+  onBeforeUnmount,
+  onMounted,
+  reactive,
+  ref,
+  type Component,
+  type PropType,
+  type VNode,
+} from 'vue'
+import { ElButton, ElInput, ElMessage, ElMessageBox } from 'element-plus'
 import type { TableInstance, UploadFile, UploadFiles, UploadUserFile } from 'element-plus'
 import {
   ArrowLeft,
@@ -17,6 +29,7 @@ import {
   ZoomIn,
 } from '@element-plus/icons-vue'
 import { isAxiosError } from 'axios'
+import UserAvatar from '../components/UserAvatar.vue'
 import {
   batchDisableImages,
   batchPurgeImages,
@@ -151,9 +164,12 @@ const comments = ref<ImageComment[]>([])
 const commentsLoading = ref(false)
 const commentSubmitting = ref(false)
 const commentDraft = ref('')
+const replyDraft = ref('')
+const replyingCommentId = ref('')
+const collapsedCommentIds = ref<Set<string>>(new Set())
 const commentEditingId = ref('')
 const commentEditContent = ref('')
-const commentPagination = reactive({ page: 1, size: 20, total: 0 })
+const commentPagination = reactive({ page: 1, size: 20, total: 0, commentTotal: 0 })
 const editorDrag = ref<EditorDragState | null>(null)
 const editorHoverHandle = ref<EditorDragType | null>(null)
 const imageEditor = reactive({
@@ -262,6 +278,202 @@ const uploadProgressSummary = computed(() => {
   }
   return `已处理 ${uploadProcessedCount.value} / ${uploadSession.value.totalCount} 张${duplicateText}`
 })
+
+function countCommentReplies(comment: ImageComment): number {
+  return (comment.replies ?? []).reduce((total, reply) => total + 1 + countCommentReplies(reply), 0)
+}
+
+function isEditedComment(comment: ImageComment): boolean {
+  const createdAt = Date.parse(comment.createdAt)
+  const updatedAt = Date.parse(comment.updatedAt)
+  if (!Number.isFinite(createdAt) || !Number.isFinite(updatedAt)) {
+    return comment.updatedAt !== comment.createdAt
+  }
+  return Math.abs(updatedAt - createdAt) > 1000
+}
+
+const CommentThreadNode: Component = defineComponent({
+  name: 'CommentThreadNode',
+  props: {
+    comment: { type: Object as PropType<ImageComment>, required: true },
+    editingId: { type: String, default: '' },
+    editContent: { type: String, default: '' },
+    canManageInteractions: { type: Boolean, default: false },
+    level: { type: Number, default: 0 },
+    replyTargetId: { type: String, default: '' },
+    replyDraft: { type: String, default: '' },
+    replySubmitting: { type: Boolean, default: false },
+    collapsedIds: { type: Array as PropType<string[]>, default: () => [] },
+  },
+  emits: [
+    'reply',
+    'edit',
+    'save',
+    'cancel',
+    'delete',
+    'submit-reply',
+    'cancel-reply',
+    'toggle-collapse',
+    'update:editContent',
+    'update:replyDraft',
+  ],
+  setup(props, { emit }): () => VNode {
+    const forwardEvents = (comment: ImageComment): Record<string, unknown> => ({
+      onReply: (value: ImageComment) => emit('reply', value),
+      onEdit: (value: ImageComment) => emit('edit', value),
+      onSave: (value: ImageComment) => emit('save', value),
+      onCancel: () => emit('cancel'),
+      onDelete: (value: ImageComment) => emit('delete', value),
+      onSubmitReply: (value: ImageComment) => emit('submit-reply', value),
+      onCancelReply: () => emit('cancel-reply'),
+      onToggleCollapse: (value: ImageComment) => emit('toggle-collapse', value),
+      'onUpdate:editContent': (value: string) => emit('update:editContent', value),
+      'onUpdate:replyDraft': (value: string) => emit('update:replyDraft', value),
+      comment,
+      editingId: props.editingId,
+      editContent: props.editContent,
+      canManageInteractions: props.canManageInteractions,
+      level: props.level + 1,
+      replyTargetId: props.replyTargetId,
+      replyDraft: props.replyDraft,
+      replySubmitting: props.replySubmitting,
+      collapsedIds: props.collapsedIds,
+    })
+
+    return () => {
+      const comment = props.comment
+      const deleted = comment.deleted
+      const isEditing = props.editingId === comment.id
+      const replies = comment.replies ?? []
+      const replyCount = countCommentReplies(comment)
+      const hasVisibleReplies = replies.length > 0
+      const hasAnyReplies = comment.hasReplies || hasVisibleReplies
+      const collapsed = props.collapsedIds.includes(comment.id)
+      const isReplying = props.replyTargetId === comment.id
+
+      return h(
+        'article',
+        {
+          class: [
+            'comment-thread-node',
+            {
+              'is-deleted': deleted,
+              'is-reply': props.level > 0,
+              'is-collapsed': collapsed,
+              'has-replies': hasVisibleReplies,
+            },
+          ],
+        },
+        [
+          h('div', { class: 'comment-thread-rail' }, [
+            h(UserAvatar, {
+              class: 'comment-avatar',
+              name: deleted ? '已删除评论' : comment.authorName,
+              avatarUrl: deleted ? null : comment.authorAvatarUrl,
+              size: props.level === 0 ? 34 : 30,
+            }),
+            hasVisibleReplies
+              ? h(
+                  'button',
+                  {
+                    type: 'button',
+                    class: 'comment-rail-toggle',
+                    'aria-label': collapsed ? `展开 ${replyCount} 条回复` : '折叠回复',
+                    onClick: () => emit('toggle-collapse', comment),
+                  },
+                  () => (collapsed ? '+' : '−'),
+                )
+              : null,
+          ]),
+          h('div', { class: 'comment-thread-content' }, [
+            h('div', { class: 'comment-thread-body' }, [
+              h('div', { class: 'comment-thread-head' }, [
+                h('strong', deleted ? '已删除评论' : comment.authorName),
+                h('span', formatDateTime(comment.createdAt)),
+                isEditedComment(comment) ? h('span', { class: 'comment-edited' }, '已编辑') : null,
+              ]),
+              isEditing
+                ? [
+                    h(ElInput, {
+                      modelValue: props.editContent,
+                      'onUpdate:modelValue': (value: string) => emit('update:editContent', value),
+                      type: 'textarea',
+                      rows: 3,
+                      maxlength: 1000,
+                      showWordLimit: true,
+                    }),
+                    h('div', { class: 'comment-actions' }, [
+                      h(ElButton, { link: true, type: 'primary', onClick: () => emit('save', comment) }, () => '保存'),
+                      h(ElButton, { link: true, onClick: () => emit('cancel') }, () => '取消'),
+                    ]),
+                  ]
+                : [
+                    deleted
+                      ? h('p', { class: 'comment-deleted-text' }, '该评论已删除')
+                      : h('p', comment.content ?? ''),
+                    h('div', { class: 'comment-actions' }, [
+                      !deleted
+                        ? h(ElButton, { link: true, type: 'primary', onClick: () => emit('reply', comment) }, () => '回复')
+                        : null,
+                      !deleted && comment.mine && !hasAnyReplies
+                        ? h(ElButton, { link: true, type: 'primary', onClick: () => emit('edit', comment) }, () => '编辑')
+                        : null,
+                      !deleted && (comment.mine || props.canManageInteractions)
+                        ? h(ElButton, { link: true, type: 'danger', onClick: () => emit('delete', comment) }, () => '删除')
+                        : null,
+                      hasVisibleReplies
+                        ? h(
+                            ElButton,
+                            { link: true, type: 'info', onClick: () => emit('toggle-collapse', comment) },
+                            () => (collapsed ? `展开 ${replyCount} 条回复` : '折叠'),
+                          )
+                        : null,
+                    ]),
+                  ],
+            ]),
+            isReplying && !deleted
+              ? h('div', { class: 'comment-inline-reply' }, [
+                  h('div', { class: 'comment-reply-target' }, [
+                    h('span', `回复 @${comment.authorName}`),
+                    h(ElButton, { link: true, type: 'primary', onClick: () => emit('cancel-reply') }, () => '取消回复'),
+                  ]),
+                  h(ElInput, {
+                    modelValue: props.replyDraft,
+                    'onUpdate:modelValue': (value: string) => emit('update:replyDraft', value),
+                    type: 'textarea',
+                    rows: 2,
+                    maxlength: 1000,
+                    showWordLimit: true,
+                    placeholder: `回复 @${comment.authorName}`,
+                  }),
+                  h('div', { class: 'comment-actions' }, [
+                    h(
+                      ElButton,
+                      {
+                        class: 'comment-reply-submit-button',
+                        type: 'primary',
+                        loading: props.replySubmitting,
+                        onClick: () => emit('submit-reply', comment),
+                      },
+                      () => '发布回复',
+                    ),
+                  ]),
+                ])
+              : null,
+            hasVisibleReplies && !collapsed
+              ? h(
+                  'div',
+                  { class: 'comment-children' },
+                  replies.map((reply) => h(CommentThreadNode, { key: reply.id, ...forwardEvents(reply) })),
+                )
+              : null,
+          ]),
+        ],
+      )
+    }
+  },
+})
+
 const gridTagDisplayLimit = 4
 
 function errorMessage(error: unknown, fallback: string) {
@@ -982,10 +1194,14 @@ function closePreview() {
   previewLoading.value = false
   comments.value = []
   commentDraft.value = ''
+  replyDraft.value = ''
+  replyingCommentId.value = ''
+  collapsedCommentIds.value = new Set()
   commentEditingId.value = ''
   commentEditContent.value = ''
   commentPagination.page = 1
   commentPagination.total = 0
+  commentPagination.commentTotal = 0
 }
 
 async function loadComments(imageId = previewImageId.value) {
@@ -1000,8 +1216,9 @@ async function loadComments(imageId = previewImageId.value) {
     commentPagination.page = page.page
     commentPagination.size = page.size
     commentPagination.total = page.total
+    commentPagination.commentTotal = page.commentTotal
     const row = rows.value.find((item) => item.id === imageId)
-    if (row) row.commentCount = page.total
+    if (row) row.commentCount = page.commentTotal
   } catch (error) {
     ElMessage.error(errorMessage(error, '评论加载失败'))
   } finally {
@@ -1029,9 +1246,53 @@ async function submitComment() {
   }
 }
 
+function startReplyComment(comment: ImageComment) {
+  if (comment.deleted) return
+  replyingCommentId.value = comment.id
+  replyDraft.value = ''
+  commentEditingId.value = ''
+}
+
+function cancelReplyComment() {
+  replyingCommentId.value = ''
+  replyDraft.value = ''
+}
+
+async function submitReplyComment(comment: ImageComment) {
+  const imageId = previewImageId.value
+  if (!imageId || comment.deleted) return
+  if (!replyDraft.value.trim()) {
+    ElMessage.warning('请输入回复内容')
+    return
+  }
+  commentSubmitting.value = true
+  try {
+    await createImageComment(imageId, replyDraft.value, comment.id, comment.updatedAt)
+    replyDraft.value = ''
+    replyingCommentId.value = ''
+    await refreshImageRecordQuietly(imageId)
+    await loadComments(imageId)
+  } catch (error) {
+    ElMessage.error(errorMessage(error, '回复提交失败'))
+  } finally {
+    commentSubmitting.value = false
+  }
+}
+
+function toggleCommentCollapse(comment: ImageComment) {
+  const next = new Set(collapsedCommentIds.value)
+  if (next.has(comment.id)) {
+    next.delete(comment.id)
+  } else {
+    next.add(comment.id)
+  }
+  collapsedCommentIds.value = next
+}
+
 function startEditComment(comment: ImageComment) {
+  if (comment.deleted) return
   commentEditingId.value = comment.id
-  commentEditContent.value = comment.content
+  commentEditContent.value = comment.content ?? ''
 }
 
 async function saveComment(comment: ImageComment) {
@@ -1048,6 +1309,23 @@ async function saveComment(comment: ImageComment) {
 
 async function removeComment(comment: ImageComment) {
   if (!previewImageId.value) return
+  try {
+    await ElMessageBox.confirm(
+      comment.hasReplies
+        ? h('div', { class: 'comment-delete-confirm-message' }, [
+            h('div', '确定删除这条评论？'),
+            h('div', '其下回复会保留，当前评论将显示为已删除。'),
+          ])
+        : '确定删除这条评论？',
+      '删除评论',
+      {
+        confirmButtonText: '删除',
+        type: 'warning',
+      },
+    )
+  } catch {
+    return
+  }
   try {
     await deleteImageComment(previewImageId.value, comment.id)
     await refreshImageRecordQuietly(previewImageId.value)
@@ -2406,33 +2684,40 @@ onBeforeUnmount(() => {
         <section class="preview-comments" v-loading="commentsLoading">
           <div class="preview-comments-head">
             <strong>评论</strong>
-            <span>{{ commentPagination.total }} 条</span>
+            <span>{{ commentPagination.commentTotal }} 条</span>
           </div>
           <div class="comment-editor">
-            <el-input v-model="commentDraft" type="textarea" :rows="3" maxlength="1000" show-word-limit placeholder="写下评论" />
+            <el-input
+              v-model="commentDraft"
+              type="textarea"
+              :rows="3"
+              maxlength="1000"
+              show-word-limit
+              placeholder="写下评论"
+            />
             <el-button type="primary" :loading="commentSubmitting" @click="submitComment">发布评论</el-button>
           </div>
           <div class="comment-list">
-            <article v-for="comment in comments" :key="comment.id" class="comment-item">
-              <div class="comment-item-head">
-                <strong>{{ comment.authorName }}</strong>
-                <span>{{ formatDateTime(comment.createdAt) }}</span>
-              </div>
-              <template v-if="commentEditingId === comment.id">
-                <el-input v-model="commentEditContent" type="textarea" :rows="3" maxlength="1000" show-word-limit />
-                <div class="comment-actions">
-                  <el-button link type="primary" @click="saveComment(comment)">保存</el-button>
-                  <el-button link @click="commentEditingId = ''">取消</el-button>
-                </div>
-              </template>
-              <template v-else>
-                <p>{{ comment.content }}</p>
-                <div v-if="comment.mine || canManageInteractions" class="comment-actions">
-                  <el-button v-if="comment.mine" link type="primary" @click="startEditComment(comment)">编辑</el-button>
-                  <el-button link type="danger" @click="removeComment(comment)">删除</el-button>
-                </div>
-              </template>
-            </article>
+            <CommentThreadNode
+              v-for="comment in comments"
+              :key="comment.id"
+              v-model:edit-content="commentEditContent"
+              v-model:reply-draft="replyDraft"
+              :comment="comment"
+              :editing-id="commentEditingId"
+              :can-manage-interactions="canManageInteractions"
+              :reply-target-id="replyingCommentId"
+              :reply-submitting="commentSubmitting"
+              :collapsed-ids="[...collapsedCommentIds]"
+              @reply="startReplyComment"
+              @edit="startEditComment"
+              @save="saveComment"
+              @cancel="commentEditingId = ''"
+              @delete="removeComment"
+              @submit-reply="submitReplyComment"
+              @cancel-reply="cancelReplyComment"
+              @toggle-collapse="toggleCommentCollapse"
+            />
             <el-empty v-if="comments.length === 0" description="暂无评论" />
           </div>
           <el-pagination
@@ -3381,7 +3666,7 @@ onBeforeUnmount(() => {
 }
 
 .preview-comments-head span,
-.comment-item-head span {
+.preview-comments :deep(.comment-thread-head span) {
   color: #64748b;
   font-size: 13px;
 }
@@ -3391,32 +3676,151 @@ onBeforeUnmount(() => {
   gap: 10px;
 }
 
+.comment-reply-target {
+  align-items: center;
+  background: #f8fafc;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  color: #475569;
+  display: flex;
+  font-size: 13px;
+  justify-content: space-between;
+  padding: 8px 10px;
+}
+
 .comment-editor .el-button {
   justify-self: flex-start;
 }
 
 .comment-list {
   display: grid;
-  gap: 10px;
+  gap: 6px;
 }
 
-.comment-item {
-  background: #ffffff;
-  border: 1px solid #e5e7eb;
-  border-radius: 8px;
+.preview-comments :deep(.comment-thread-node) {
   display: grid;
-  gap: 8px;
-  padding: 12px;
+  column-gap: 8px;
+  grid-template-columns: 42px minmax(0, 1fr);
+  min-width: 0;
+  position: relative;
 }
 
-.comment-item-head {
+.preview-comments :deep(.comment-thread-node.is-reply) {
+  margin-top: 6px;
+}
+
+.preview-comments :deep(.comment-thread-node.is-reply)::before {
+  border-bottom: 2px solid #d6dee8;
+  border-left: 2px solid #d6dee8;
+  border-bottom-left-radius: 12px;
+  content: '';
+  height: 18px;
+  left: -14px;
+  position: absolute;
+  top: 14px;
+  width: 18px;
+}
+
+.preview-comments :deep(.comment-thread-rail) {
   align-items: center;
   display: flex;
-  gap: 10px;
-  justify-content: space-between;
+  flex-direction: column;
+  justify-content: center;
+  min-height: 100%;
+  position: relative;
 }
 
-.comment-item p {
+.preview-comments :deep(.comment-thread-node.has-replies:not(.is-collapsed) > .comment-thread-rail)::after {
+  background: #d6dee8;
+  border-radius: 999px;
+  content: '';
+  flex: 1 1 auto;
+  margin-top: 4px;
+  min-height: 18px;
+  width: 2px;
+}
+
+.preview-comments :deep(.comment-avatar) {
+  box-shadow: 0 0 0 3px #f8fafc;
+  position: relative;
+  z-index: 1;
+}
+
+.preview-comments :deep(.comment-rail-toggle) {
+  align-items: center;
+  background: transparent;
+  border: 1px solid #cbd5e1;
+  border-radius: 999px;
+  color: #64748b;
+  cursor: pointer;
+  display: inline-flex;
+  font-size: 14px;
+  font-weight: 700;
+  height: 18px;
+  justify-content: center;
+  line-height: 1;
+  margin-top: 6px;
+  padding: 0;
+  transition: background-color 0.16s ease, border-color 0.16s ease, color 0.16s ease;
+  width: 18px;
+  z-index: 1;
+}
+
+.preview-comments :deep(.comment-rail-toggle:hover),
+.preview-comments :deep(.comment-thread-node:hover > .comment-thread-rail .comment-rail-toggle) {
+  background: #eff6ff;
+  border-color: #93c5fd;
+  color: #2563eb;
+}
+
+.preview-comments :deep(.comment-thread-node:hover > .comment-thread-rail)::after,
+.preview-comments :deep(.comment-thread-node:hover::before) {
+  border-color: #93c5fd;
+  background: #93c5fd;
+}
+
+.preview-comments :deep(.comment-thread-content) {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+}
+
+.preview-comments :deep(.comment-thread-body) {
+  border-radius: 8px;
+  display: grid;
+  gap: 7px;
+  min-width: 0;
+  padding: 6px 8px;
+  transition: background-color 0.16s ease;
+}
+
+.preview-comments :deep(.comment-thread-body:hover) {
+  background: #f1f5f9;
+}
+
+.preview-comments :deep(.comment-thread-node.is-deleted > .comment-thread-content > .comment-thread-body) {
+  background: #f8fafc;
+  border: 1px dashed #cbd5e1;
+}
+
+.preview-comments :deep(.comment-thread-head) {
+  align-items: center;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.preview-comments :deep(.comment-thread-head strong) {
+  color: #334155;
+  font-size: 13px;
+}
+
+.preview-comments :deep(.comment-thread-head .comment-edited) {
+  color: #94a3b8;
+  font-size: 12px;
+}
+
+.preview-comments :deep(.comment-thread-body p) {
   color: #334155;
   line-height: 1.55;
   margin: 0;
@@ -3424,9 +3828,42 @@ onBeforeUnmount(() => {
   word-break: break-word;
 }
 
-.comment-actions {
+.preview-comments :deep(.comment-thread-body .comment-deleted-text) {
+  color: #94a3b8;
+  font-style: italic;
+}
+
+.preview-comments :deep(.comment-children) {
+  display: grid;
+  gap: 4px;
+  margin-top: 2px;
+}
+
+.preview-comments :deep(.comment-actions) {
   display: flex;
+  flex-wrap: wrap;
   gap: 8px;
+}
+
+.preview-comments :deep(.comment-actions .el-button) {
+  font-size: 12px;
+  min-height: 22px;
+  padding: 0;
+}
+
+.preview-comments :deep(.comment-inline-reply) {
+  background: #ffffff;
+  border: 1px solid #bfdbfe;
+  border-radius: 8px;
+  display: grid;
+  gap: 8px;
+  margin: 2px 0 4px;
+  padding: 10px;
+}
+
+.preview-comments :deep(.comment-inline-reply .comment-reply-submit-button) {
+  min-height: 32px;
+  padding: 0 14px;
 }
 
 .edit-dialog-layout {
