@@ -36,6 +36,7 @@ import com.luna.wallpaper.rbac.AuthDtos.AuthUserResponse;
 import com.luna.wallpaper.rbac.AuthDtos.LoginRequest;
 import com.luna.wallpaper.rbac.AuthDtos.PasswordChangeRequest;
 import com.luna.wallpaper.rbac.AuthDtos.PasswordResetConfirmRequest;
+import com.luna.wallpaper.rbac.AuthDtos.PasswordResetPolicyResponse;
 import com.luna.wallpaper.rbac.AuthDtos.PasswordResetRequest;
 import com.luna.wallpaper.rbac.AuthDtos.ProfileUpdateRequest;
 import com.luna.wallpaper.rbac.AuthDtos.RefreshRequest;
@@ -65,13 +66,15 @@ public class AuthService {
 	private final MailProperties mailProperties;
 	private final AuditLogService auditLogService;
 	private final SessionLifecyclePolicyService sessionLifecycle;
+	private final PasswordResetPolicyService passwordResetPolicy;
 	private final SecureRandom secureRandom = new SecureRandom();
 
 	AuthService(AppUserMapper users, RoleMapper roles, PermissionMapper permissions, UserRoleMapper userRoles,
 			RolePermissionMapper rolePermissions, AuthRefreshTokenMapper refreshTokens,
 			PasswordResetTokenMapper passwordResetTokens, PasswordResetMailer passwordResetMailer,
 			PasswordEncoder passwordEncoder, JwtTokenService jwtTokenService, SecurityProperties securityProperties,
-			MailProperties mailProperties, AuditLogService auditLogService, SessionLifecyclePolicyService sessionLifecycle) {
+			MailProperties mailProperties, AuditLogService auditLogService, SessionLifecyclePolicyService sessionLifecycle,
+			PasswordResetPolicyService passwordResetPolicy) {
 		this.users = users;
 		this.roles = roles;
 		this.permissions = permissions;
@@ -86,6 +89,7 @@ public class AuthService {
 		this.mailProperties = mailProperties;
 		this.auditLogService = auditLogService;
 		this.sessionLifecycle = sessionLifecycle;
+		this.passwordResetPolicy = passwordResetPolicy;
 	}
 
 	@Transactional
@@ -194,6 +198,7 @@ public class AuthService {
 
 	@Transactional
 	public void requestPasswordReset(PasswordResetRequest request, HttpServletRequest servletRequest) {
+		passwordResetPolicy.requireEmailResetEnabled();
 		String email = EmailAddresses.normalizeRequired(request.email());
 		Instant expiresAt = Instant.now().plus(mailProperties.safePasswordResetTokenTtl());
 		AppUser user = users.selectActiveByEmail(email);
@@ -212,6 +217,7 @@ public class AuthService {
 
 	@Transactional
 	public void confirmPasswordReset(PasswordResetConfirmRequest request) {
+		passwordResetPolicy.requireEmailResetEnabled();
 		requirePassword(request.newPassword());
 		PasswordResetToken resetToken = Optional.ofNullable(passwordResetTokens.selectByTokenHash(sha256(request.token())))
 				.orElseThrow(() -> new BadCredentialsException("重置链接无效或已过期"));
@@ -227,6 +233,11 @@ public class AuthService {
 		passwordResetTokens.consumeOpenTokensByUserId(user.id());
 		refreshTokens.revokeByUserId(user.id());
 		auditLogService.record("auth.password.reset.confirm", "USER", user.id(), Map.of("revokedSessions", true));
+	}
+
+	@Transactional(readOnly = true)
+	public PasswordResetPolicyResponse passwordResetPolicy() {
+		return passwordResetPolicy.response();
 	}
 
 	@Transactional

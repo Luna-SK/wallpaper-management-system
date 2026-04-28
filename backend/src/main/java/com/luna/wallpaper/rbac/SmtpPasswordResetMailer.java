@@ -27,9 +27,9 @@ class SmtpPasswordResetMailer extends PasswordResetMailer {
 	@Override
 	public void send(AppUser user, String token, Instant expiresAt) {
 		String link = resetLink(token);
-		if (!properties.enabled()) {
-			log.info("password reset mail disabled, userId={}, resetLink={}", user.id(), link);
-			return;
+		if (!properties.safeEnabled()) {
+			log.warn("password reset mail transport disabled, userId={}", user.id());
+			throw new PasswordResetMailException("邮件服务暂不可用，请联系管理员");
 		}
 		try {
 			JavaMailSenderImpl sender = mailSender();
@@ -49,6 +49,7 @@ class SmtpPasswordResetMailer extends PasswordResetMailer {
 		}
 		catch (RuntimeException ex) {
 			log.error("failed to send password reset mail, userId={}", user.id(), ex);
+			throw new PasswordResetMailException("邮件服务暂不可用，请联系管理员", ex);
 		}
 	}
 
@@ -66,8 +67,8 @@ class SmtpPasswordResetMailer extends PasswordResetMailer {
 			sender.setPassword(properties.password());
 		}
 		Properties javaMailProperties = sender.getJavaMailProperties();
-		javaMailProperties.put("mail.smtp.auth", Boolean.toString(properties.smtpAuth()));
-		javaMailProperties.put("mail.smtp.starttls.enable", Boolean.toString(properties.smtpStarttls()));
+		javaMailProperties.put("mail.smtp.auth", Boolean.toString(properties.safeSmtpAuth()));
+		javaMailProperties.put("mail.smtp.starttls.enable", Boolean.toString(properties.safeSmtpStarttls()));
 		return sender;
 	}
 }

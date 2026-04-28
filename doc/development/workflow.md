@@ -63,6 +63,34 @@ docker compose -p wallpaper --env-file .env up -d --build
 docker compose -p wallpaper --env-file .env logs -f backend
 ```
 
+## 代码变更后的运行态刷新
+
+本项目开发时需要先确认当前访问的是哪套运行态：
+
+- 访问 `http://localhost:5173` 时，前端由 Vite dev server 提供。前端代码通常会通过 HMR 自动刷新；如果 HMR 未生效，重启 `frontend` 下的 `npm run dev`。后端 Java 代码、配置或 Liquibase 变更仍需要重启 `backend` 下的 `./mvnw spring-boot:run`。
+- 访问 `http://localhost` 时，页面来自 Docker `frontend` 镜像。前端代码变更后需要重建并重启前端容器：
+
+```bash
+cd ops/docker
+docker compose -p wallpaper --env-file .env up -d --build frontend
+```
+
+后端代码、配置或 Liquibase 变更后需要重建并重启后端容器：
+
+```bash
+cd ops/docker
+docker compose -p wallpaper --env-file .env up -d --build backend
+```
+
+如果前后端都改了，可以一次性刷新：
+
+```bash
+cd ops/docker
+docker compose -p wallpaper --env-file .env up -d --build backend frontend
+```
+
+涉及 Docker MySQL 的 schema 或数据迁移时，先按本文件“数据库规则”完成备份和校验，再启动后端应用 Liquibase 迁移。只修改文档、测试或未被运行态读取的文件时，不需要重建镜像。
+
 ## 数据库规则
 
 - Liquibase 是数据库结构唯一真相源。

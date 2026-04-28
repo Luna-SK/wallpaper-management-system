@@ -35,6 +35,7 @@ class SecurityConfig {
 				.cors(Customizer.withDefaults())
 				.authorizeHttpRequests(authorize -> authorize
 						.requestMatchers("/error", "/actuator/health/**", "/api/system/health").permitAll()
+						.requestMatchers(HttpMethod.GET, "/api/auth/password-reset-policy").permitAll()
 						.requestMatchers(SecurityConfig::isPasswordResetEndpoint).permitAll()
 						.requestMatchers(HttpMethod.POST, "/api/auth/login", "/api/auth/register",
 								"/api/auth/refresh").permitAll()

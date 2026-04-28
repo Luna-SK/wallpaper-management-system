@@ -2,10 +2,18 @@ server:
   port: 0
 
 spring:
+  security:
+    user:
+      name: test-user
+      password: test-password
   servlet:
     multipart:
       max-file-size: 50MB
       max-request-size: 500MB
+
+logging:
+  level:
+    liquibase: error
 
 app:
   security:

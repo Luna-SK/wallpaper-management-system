@@ -54,6 +54,10 @@ export interface SessionPolicy {
   serverTime: string
 }
 
+export interface PasswordResetPolicy {
+  emailResetEnabled: boolean
+}
+
 export interface RegisterRequest {
   username: string
   password: string
@@ -79,6 +83,11 @@ export async function refreshSession(refreshToken: string) {
 
 export async function getSessionPolicy() {
   const response = await http.get<ApiResponse<SessionPolicy>>('/auth/session-policy')
+  return response.data.data
+}
+
+export async function getPasswordResetPolicy() {
+  const response = await http.get<ApiResponse<PasswordResetPolicy>>('/auth/password-reset-policy')
   return response.data.data
 }
 

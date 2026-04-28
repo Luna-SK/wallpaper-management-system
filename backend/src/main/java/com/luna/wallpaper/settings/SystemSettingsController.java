@@ -57,6 +57,8 @@ class SystemSettingsController {
 				rangeIntSetting(WatermarkSettings.OPACITY_PERCENT, WatermarkSettings.DEFAULT_OPACITY_PERCENT,
 						WatermarkSettings.MIN_OPACITY_PERCENT, WatermarkSettings.MAX_OPACITY_PERCENT),
 				choiceSetting(WatermarkSettings.TILE_DENSITY, WatermarkSettings.DEFAULT_TILE_DENSITY, WATERMARK_TILE_DENSITIES),
+				booleanSetting(PasswordResetSettings.EMAIL_RESET_ENABLED,
+						PasswordResetSettings.DEFAULT_EMAIL_RESET_ENABLED),
 				booleanSetting(SessionLifecycleSettings.IDLE_TIMEOUT_ENABLED,
 						SessionLifecycleSettings.DEFAULT_IDLE_TIMEOUT_ENABLED),
 				rangeIntSetting(SessionLifecycleSettings.IDLE_TIMEOUT_MINUTES,
@@ -102,6 +104,10 @@ class SystemSettingsController {
 						WatermarkSettings.MAX_OPACITY_PERCENT, "水印透明度必须在 5-40 之间");
 		String watermarkTileDensity = normalizeChoice(request.watermarkTileDensity(), WatermarkSettings.DEFAULT_TILE_DENSITY,
 				WATERMARK_TILE_DENSITIES, "平铺水印密度只能是 SPARSE、NORMAL 或 DENSE");
+		boolean passwordResetEmailEnabled = request.passwordResetEmailEnabled() == null
+				? booleanSetting(PasswordResetSettings.EMAIL_RESET_ENABLED,
+						PasswordResetSettings.DEFAULT_EMAIL_RESET_ENABLED)
+				: request.passwordResetEmailEnabled();
 		boolean sessionIdleTimeoutEnabled = request.sessionIdleTimeoutEnabled() == null
 				? booleanSetting(SessionLifecycleSettings.IDLE_TIMEOUT_ENABLED,
 						SessionLifecycleSettings.DEFAULT_IDLE_TIMEOUT_ENABLED)
@@ -144,6 +150,7 @@ class SystemSettingsController {
 		settings.put(WatermarkSettings.POSITION, watermarkPosition);
 		settings.put(WatermarkSettings.OPACITY_PERCENT, String.valueOf(watermarkOpacityPercent));
 		settings.put(WatermarkSettings.TILE_DENSITY, watermarkTileDensity);
+		settings.put(PasswordResetSettings.EMAIL_RESET_ENABLED, String.valueOf(passwordResetEmailEnabled));
 		settings.put(SessionLifecycleSettings.IDLE_TIMEOUT_ENABLED, String.valueOf(sessionIdleTimeoutEnabled));
 		settings.put(SessionLifecycleSettings.IDLE_TIMEOUT_MINUTES, String.valueOf(sessionIdleTimeoutMinutes));
 		settings.put(SessionLifecycleSettings.ABSOLUTE_LIFETIME_ENABLED, String.valueOf(sessionAbsoluteLifetimeEnabled));
@@ -151,6 +158,7 @@ class SystemSettingsController {
 		auditLogService.record("settings.update", "SYSTEM_SETTINGS", "system",
 				Map.of("previewQuality", quality, "watermarkEnabled", watermarkEnabled,
 						"watermarkPreviewEnabled", watermarkPreviewEnabled, "watermarkMode", watermarkMode,
+						"passwordResetEmailEnabled", passwordResetEmailEnabled,
 						"sessionIdleTimeoutEnabled", sessionIdleTimeoutEnabled,
 						"sessionAbsoluteLifetimeEnabled", sessionAbsoluteLifetimeEnabled));
 		return get();
@@ -222,7 +230,7 @@ class SystemSettingsController {
 			Integer softDeleteRetentionDays, Boolean softDeleteCleanupEnabled, String softDeleteCleanupCron,
 			Boolean watermarkEnabled, Boolean watermarkPreviewEnabled, String watermarkText, String watermarkMode,
 			String watermarkPosition, Integer watermarkOpacityPercent, String watermarkTileDensity,
-			Boolean sessionIdleTimeoutEnabled, Integer sessionIdleTimeoutMinutes,
+			Boolean passwordResetEmailEnabled, Boolean sessionIdleTimeoutEnabled, Integer sessionIdleTimeoutMinutes,
 			Boolean sessionAbsoluteLifetimeEnabled, Integer sessionAbsoluteLifetimeDays) {
 	}
 
@@ -230,7 +238,8 @@ class SystemSettingsController {
 			int maxBatchHardLimitMb, String previewQuality, int softDeleteRetentionDays,
 			boolean softDeleteCleanupEnabled, String softDeleteCleanupCron, boolean watermarkEnabled,
 			boolean watermarkPreviewEnabled, String watermarkText, String watermarkMode, String watermarkPosition,
-			int watermarkOpacityPercent, String watermarkTileDensity, boolean sessionIdleTimeoutEnabled,
+			int watermarkOpacityPercent, String watermarkTileDensity, boolean passwordResetEmailEnabled,
+			boolean sessionIdleTimeoutEnabled,
 			int sessionIdleTimeoutMinutes, boolean sessionAbsoluteLifetimeEnabled, int sessionAbsoluteLifetimeDays) {
 	}
 }

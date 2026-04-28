@@ -25,6 +25,7 @@ const settings = reactive({
   watermarkPosition: 'BOTTOM_RIGHT' as SystemSettings['watermarkPosition'],
   watermarkOpacityPercent: 16,
   watermarkTileDensity: 'SPARSE' as SystemSettings['watermarkTileDensity'],
+  passwordResetEmailEnabled: true,
   sessionIdleTimeoutEnabled: true,
   sessionIdleTimeoutMinutes: 120,
   sessionAbsoluteLifetimeEnabled: true,
@@ -90,6 +91,7 @@ function applySystemSettings(system: SystemSettings) {
   settings.watermarkPosition = system.watermarkPosition
   settings.watermarkOpacityPercent = system.watermarkOpacityPercent
   settings.watermarkTileDensity = system.watermarkTileDensity
+  settings.passwordResetEmailEnabled = system.passwordResetEmailEnabled
   settings.sessionIdleTimeoutEnabled = system.sessionIdleTimeoutEnabled
   settings.sessionIdleTimeoutMinutes = system.sessionIdleTimeoutMinutes
   settings.sessionAbsoluteLifetimeEnabled = system.sessionAbsoluteLifetimeEnabled
@@ -140,6 +142,7 @@ async function saveSettings() {
         watermarkPosition: settings.watermarkPosition,
         watermarkOpacityPercent: settings.watermarkOpacityPercent,
         watermarkTileDensity: settings.watermarkTileDensity,
+        passwordResetEmailEnabled: settings.passwordResetEmailEnabled,
         sessionIdleTimeoutEnabled: settings.sessionIdleTimeoutEnabled,
         sessionIdleTimeoutMinutes: settings.sessionIdleTimeoutMinutes,
         sessionAbsoluteLifetimeEnabled: settings.sessionAbsoluteLifetimeEnabled,
@@ -259,6 +262,14 @@ onMounted(loadSettings)
               show-input
               :disabled="!watermarkActive"
             />
+          </el-form-item>
+        </div>
+
+        <div class="form-section">
+          <h2>账号安全</h2>
+          <p class="section-copy">关闭后，登录页不再提供邮件找回入口，已有邮件重置链接也会失效。</p>
+          <el-form-item label="邮件找回密码">
+            <el-switch v-model="settings.passwordResetEmailEnabled" active-text="启用" inactive-text="停用" />
           </el-form-item>
         </div>
 

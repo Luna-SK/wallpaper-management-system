@@ -2,17 +2,20 @@
 import { ElMessage, type FormInstance, type FormRules } from 'element-plus'
 import { Message } from '@element-plus/icons-vue'
 import { isAxiosError } from 'axios'
-import { computed, reactive, ref } from 'vue'
+import { computed, onMounted, reactive, ref } from 'vue'
 import { useRoute } from 'vue-router'
-import { requestPasswordReset } from '../api/auth'
+import { getPasswordResetPolicy, requestPasswordReset } from '../api/auth'
 
 const route = useRoute()
 
 const formRef = ref<FormInstance>()
 const form = reactive({ email: '' })
 const loading = ref(false)
+const policyLoading = ref(true)
+const emailResetEnabled = ref(false)
 const sent = ref(false)
 const successMessage = '重置链接已发送，请前往邮箱查看'
+const disabledMessage = '邮件找回密码已关闭，请登录后使用原密码修改密码或联系管理员'
 
 const loginRoute = computed(() => ({
   name: 'login',
@@ -34,6 +37,10 @@ function errorMessage(error: unknown) {
 }
 
 async function submit() {
+  if (!emailResetEnabled.value) {
+    ElMessage.warning(disabledMessage)
+    return
+  }
   const valid = await formRef.value?.validate().catch(() => false)
   if (!valid) return
   loading.value = true
@@ -48,6 +55,20 @@ async function submit() {
     loading.value = false
   }
 }
+
+async function loadPasswordResetPolicy() {
+  policyLoading.value = true
+  try {
+    const policy = await getPasswordResetPolicy()
+    emailResetEnabled.value = policy.emailResetEnabled
+  } catch {
+    emailResetEnabled.value = false
+  } finally {
+    policyLoading.value = false
+  }
+}
+
+onMounted(loadPasswordResetPolicy)
 </script>
 
 <template>
@@ -61,6 +82,14 @@ async function submit() {
       <el-form ref="formRef" class="login-form" :model="form" :rules="rules" label-position="top" @submit.prevent="submit">
         <h2>找回密码</h2>
         <el-alert
+          v-if="!policyLoading && !emailResetEnabled"
+          type="warning"
+          show-icon
+          :closable="false"
+          :title="disabledMessage"
+          style="margin-bottom: 18px"
+        />
+        <el-alert
           v-if="sent"
           type="success"
           show-icon
@@ -69,9 +98,18 @@ async function submit() {
           style="margin-bottom: 18px"
         />
         <el-form-item label="邮箱" prop="email">
-          <el-input v-model="form.email" :prefix-icon="Message" size="large" autocomplete="email" />
+          <el-input v-model="form.email" :prefix-icon="Message" size="large" autocomplete="email" :disabled="!emailResetEnabled" />
         </el-form-item>
-        <el-button type="primary" size="large" native-type="submit" :loading="loading" style="width: 100%">发送重置邮件</el-button>
+        <el-button
+          type="primary"
+          size="large"
+          native-type="submit"
+          :loading="loading || policyLoading"
+          :disabled="!emailResetEnabled"
+          style="width: 100%"
+        >
+          发送重置邮件
+        </el-button>
         <div class="auth-form-footer">
           <RouterLink :to="loginRoute">返回登录</RouterLink>
         </div>

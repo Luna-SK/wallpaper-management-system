@@ -34,6 +34,9 @@ public final class AuthDtos {
 	public record PasswordResetConfirmRequest(@NotBlank String token, @NotBlank String newPassword) {
 	}
 
+	public record PasswordResetPolicyResponse(boolean emailResetEnabled) {
+	}
+
 	public record AuthResponse(String username, String tokenType, String accessToken, String refreshToken,
 			Instant accessTokenExpiresAt, Instant refreshTokenExpiresAt, AuthUserResponse user,
 			List<String> permissions, SessionPolicyResponse sessionPolicy) {

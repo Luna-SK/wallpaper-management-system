@@ -2,8 +2,9 @@
 import { ElMessage } from 'element-plus'
 import { Lock, User } from '@element-plus/icons-vue'
 import { isAxiosError } from 'axios'
-import { computed, reactive, ref } from 'vue'
+import { computed, onMounted, reactive, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
+import { getPasswordResetPolicy } from '../api/auth'
 import { useAuthStore } from '../stores/auth'
 
 const route = useRoute()
@@ -16,6 +17,7 @@ const form = reactive({
 })
 
 const loading = ref(false)
+const passwordResetEnabled = ref(false)
 const registerRoute = computed(() => ({
   name: 'register',
   query: route.query.redirect ? { redirect: route.query.redirect } : undefined,
@@ -44,6 +46,17 @@ async function submit() {
     loading.value = false
   }
 }
+
+async function loadPasswordResetPolicy() {
+  try {
+    const policy = await getPasswordResetPolicy()
+    passwordResetEnabled.value = policy.emailResetEnabled
+  } catch {
+    passwordResetEnabled.value = false
+  }
+}
+
+onMounted(loadPasswordResetPolicy)
 </script>
 
 <template>
@@ -63,7 +76,7 @@ async function submit() {
           <el-input v-model="form.password" :prefix-icon="Lock" type="password" size="large" show-password />
         </el-form-item>
         <el-button type="primary" size="large" native-type="submit" :loading="loading" style="width: 100%">登录</el-button>
-        <div class="auth-form-link-row">
+        <div v-if="passwordResetEnabled" class="auth-form-link-row">
           <RouterLink :to="forgotPasswordRoute">忘记密码？</RouterLink>
         </div>
         <div class="auth-form-footer">

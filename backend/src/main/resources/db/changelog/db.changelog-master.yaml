@@ -29,3 +29,5 @@ databaseChangeLog:
       file: db/changelog/014-unique-user-email.yaml
   - include:
       file: db/changelog/015-user-interactions-feedback.yaml
+  - include:
+      file: db/changelog/016-password-reset-email-settings.yaml

@@ -2,9 +2,9 @@
 import { ElMessage, type FormInstance, type FormRules } from 'element-plus'
 import { Lock } from '@element-plus/icons-vue'
 import { isAxiosError } from 'axios'
-import { computed, reactive, ref } from 'vue'
+import { computed, onMounted, reactive, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { confirmPasswordReset } from '../api/auth'
+import { confirmPasswordReset, getPasswordResetPolicy } from '../api/auth'
 
 const route = useRoute()
 const router = useRouter()
@@ -15,6 +15,9 @@ const form = reactive({
   confirmPassword: '',
 })
 const loading = ref(false)
+const policyLoading = ref(true)
+const emailResetEnabled = ref(false)
+const disabledMessage = '邮件找回密码已关闭，请登录后使用原密码修改密码或联系管理员'
 const token = computed(() => typeof route.query.token === 'string' ? route.query.token : '')
 const loginRoute = computed(() => ({
   name: 'login',
@@ -49,6 +52,10 @@ function errorMessage(error: unknown) {
 }
 
 async function submit() {
+  if (!emailResetEnabled.value) {
+    ElMessage.warning(disabledMessage)
+    return
+  }
   if (!token.value) {
     ElMessage.error('重置链接无效，请重新申请')
     return
@@ -66,6 +73,20 @@ async function submit() {
     loading.value = false
   }
 }
+
+async function loadPasswordResetPolicy() {
+  policyLoading.value = true
+  try {
+    const policy = await getPasswordResetPolicy()
+    emailResetEnabled.value = policy.emailResetEnabled
+  } catch {
+    emailResetEnabled.value = false
+  } finally {
+    policyLoading.value = false
+  }
+}
+
+onMounted(loadPasswordResetPolicy)
 </script>
 
 <template>
@@ -79,6 +100,14 @@ async function submit() {
       <el-form ref="formRef" class="login-form" :model="form" :rules="rules" label-position="top" @submit.prevent="submit">
         <h2>重置密码</h2>
         <el-alert
+          v-if="!policyLoading && !emailResetEnabled"
+          type="warning"
+          show-icon
+          :closable="false"
+          :title="disabledMessage"
+          style="margin-bottom: 18px"
+        />
+        <el-alert
           v-if="!token"
           type="warning"
           show-icon
@@ -87,12 +116,37 @@ async function submit() {
           style="margin-bottom: 18px"
         />
         <el-form-item label="新密码" prop="password">
-          <el-input v-model="form.password" :prefix-icon="Lock" type="password" size="large" show-password autocomplete="new-password" />
+          <el-input
+            v-model="form.password"
+            :prefix-icon="Lock"
+            type="password"
+            size="large"
+            show-password
+            autocomplete="new-password"
+            :disabled="!emailResetEnabled"
+          />
         </el-form-item>
         <el-form-item label="确认新密码" prop="confirmPassword">
-          <el-input v-model="form.confirmPassword" :prefix-icon="Lock" type="password" size="large" show-password autocomplete="new-password" />
+          <el-input
+            v-model="form.confirmPassword"
+            :prefix-icon="Lock"
+            type="password"
+            size="large"
+            show-password
+            autocomplete="new-password"
+            :disabled="!emailResetEnabled"
+          />
         </el-form-item>
-        <el-button type="primary" size="large" native-type="submit" :loading="loading" :disabled="!token" style="width: 100%">重置密码</el-button>
+        <el-button
+          type="primary"
+          size="large"
+          native-type="submit"
+          :loading="loading || policyLoading"
+          :disabled="!token || !emailResetEnabled"
+          style="width: 100%"
+        >
+          重置密码
+        </el-button>
         <div class="auth-form-footer">
           <RouterLink :to="loginRoute">返回登录</RouterLink>
         </div>

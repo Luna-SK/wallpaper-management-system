@@ -29,6 +29,7 @@ import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.test.web.servlet.MockMvc;
 
 import com.luna.wallpaper.TestcontainersConfiguration;
+import com.luna.wallpaper.settings.PasswordResetSettings;
 import com.luna.wallpaper.settings.SessionLifecycleSettings;
 import com.luna.wallpaper.settings.SystemSettingService;
 
@@ -85,6 +86,7 @@ class AuthControllerTests {
 		settings.put(SessionLifecycleSettings.IDLE_TIMEOUT_MINUTES, "120");
 		settings.put(SessionLifecycleSettings.ABSOLUTE_LIFETIME_ENABLED, "true");
 		settings.put(SessionLifecycleSettings.ABSOLUTE_LIFETIME_DAYS, "7");
+		settings.put(PasswordResetSettings.EMAIL_RESET_ENABLED, "true");
 		resetMailer.clear();
 	}
 
@@ -149,6 +151,24 @@ class AuthControllerTests {
 		assertThat(policy.path("idleTimeoutMinutes").asInt()).isEqualTo(120);
 		assertThat(policy.path("absoluteLifetimeEnabled").asBoolean()).isTrue();
 		assertThat(policy.path("absoluteLifetimeDays").asInt()).isEqualTo(7);
+	}
+
+	@Test
+	void passwordResetPolicyEndpointIsPublicAndReflectsSetting() throws Exception {
+		String enabled = mvc.perform(get("/api/auth/password-reset-policy"))
+				.andExpect(status().isOk())
+				.andReturn()
+				.getResponse()
+				.getContentAsString();
+		assertThat(data(enabled).path("emailResetEnabled").asBoolean()).isTrue();
+
+		settings.put(PasswordResetSettings.EMAIL_RESET_ENABLED, "false");
+		String disabled = mvc.perform(get("/api/auth/password-reset-policy"))
+				.andExpect(status().isOk())
+				.andReturn()
+				.getResponse()
+				.getContentAsString();
+		assertThat(data(disabled).path("emailResetEnabled").asBoolean()).isFalse();
 	}
 
 	@Test
@@ -373,6 +393,63 @@ class AuthControllerTests {
 				.getContentAsString();
 		assertThat(objectMapper.readTree(disabled).path("message").asString()).isEqualTo("该邮箱未绑定启用账号");
 		assertThat(resetMailer.sent()).hasSize(1);
+	}
+
+	@Test
+	void disabledPasswordResetPolicyRejectsRequestAndConfirmWithoutAffectingPasswordChange() throws Exception {
+		AppUser user = createUser("reset-policy-off", "oldpass123", "reset-policy-off@example.test", UserStatus.ACTIVE);
+		requestReset(user.email());
+		String token = resetMailer.sent().getFirst().token();
+		settings.put(PasswordResetSettings.EMAIL_RESET_ENABLED, "false");
+
+		String requestDisabled = mvc.perform(post("/api/auth/password-reset/request")
+						.contentType(MediaType.APPLICATION_JSON)
+						.content(json(Map.of("email", user.email()))))
+				.andExpect(status().isBadRequest())
+				.andReturn()
+				.getResponse()
+				.getContentAsString();
+		assertThat(objectMapper.readTree(requestDisabled).path("message").asString())
+				.isEqualTo(PasswordResetPolicyService.DISABLED_MESSAGE);
+		assertThat(resetMailer.sent()).hasSize(1);
+		assertThat(openPasswordResetTokenCount(user.id())).isEqualTo(1);
+
+		String confirmDisabled = mvc.perform(post("/api/auth/password-reset/confirm")
+						.contentType(MediaType.APPLICATION_JSON)
+						.content(json(Map.of("token", token, "newPassword", "newpass123"))))
+				.andExpect(status().isBadRequest())
+				.andReturn()
+				.getResponse()
+				.getContentAsString();
+		assertThat(objectMapper.readTree(confirmDisabled).path("message").asString())
+				.isEqualTo(PasswordResetPolicyService.DISABLED_MESSAGE);
+		assertThat(login(user.username(), "oldpass123").path("username").asString()).isEqualTo(user.username());
+
+		mvc.perform(patch("/api/auth/password")
+						.header("Authorization", bearer(accessToken(login(user.username(), "oldpass123"))))
+						.contentType(MediaType.APPLICATION_JSON)
+						.content(json(Map.of("currentPassword", "oldpass123", "newPassword", "manualpass123"))))
+				.andExpect(status().isOk());
+		assertThat(login(user.username(), "manualpass123").path("username").asString()).isEqualTo(user.username());
+	}
+
+	@Test
+	void passwordResetRequestRollsBackTokenWhenMailerFails() throws Exception {
+		AppUser user = createUser("reset-mail-fail", "oldpass123", "reset-mail-fail@example.test", UserStatus.ACTIVE);
+		resetMailer.failNext();
+
+		String response = mvc.perform(post("/api/auth/password-reset/request")
+						.contentType(MediaType.APPLICATION_JSON)
+						.content(json(Map.of("email", user.email()))))
+				.andExpect(status().isServiceUnavailable())
+				.andReturn()
+				.getResponse()
+				.getContentAsString();
+
+		assertThat(objectMapper.readTree(response).path("message").asString())
+				.isEqualTo("邮件服务暂不可用，请联系管理员");
+		assertThat(resetMailer.sent()).isEmpty();
+		assertThat(openPasswordResetTokenCount(user.id())).isZero();
 	}
 
 	@Test
@@ -647,6 +724,13 @@ class AuthControllerTests {
 		return UUID.randomUUID().toString().replace("-", "").substring(0, 8);
 	}
 
+	private long openPasswordResetTokenCount(String userId) {
+		return passwordResetTokens.selectList(null).stream()
+				.filter(token -> token.userId().equals(userId))
+				.filter(token -> token.usedAt() == null)
+				.count();
+	}
+
 	@TestConfiguration
 	static class PasswordResetMailTestConfiguration {
 
@@ -660,18 +744,28 @@ class AuthControllerTests {
 	static class CapturingPasswordResetMailer extends PasswordResetMailer {
 
 		private final List<SentReset> sent = new ArrayList<>();
+		private boolean failNext;
 
 		@Override
 		public void send(AppUser user, String token, Instant expiresAt) {
+			if (failNext) {
+				failNext = false;
+				throw new PasswordResetMailException("邮件服务暂不可用，请联系管理员");
+			}
 			sent.add(new SentReset(user.id(), user.email(), token, expiresAt));
 		}
 
 		void clear() {
 			sent.clear();
+			failNext = false;
 		}
 
 		List<SentReset> sent() {
 			return sent;
+		}
+
+		void failNext() {
+			failNext = true;
 		}
 
 		record SentReset(String userId, String email, String token, Instant expiresAt) {

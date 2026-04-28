@@ -25,6 +25,7 @@ export interface SystemSettings {
     | 'BOTTOM_RIGHT'
   watermarkOpacityPercent: number
   watermarkTileDensity: 'SPARSE' | 'NORMAL' | 'DENSE'
+  passwordResetEmailEnabled: boolean
   sessionIdleTimeoutEnabled: boolean
   sessionIdleTimeoutMinutes: number
   sessionAbsoluteLifetimeEnabled: boolean

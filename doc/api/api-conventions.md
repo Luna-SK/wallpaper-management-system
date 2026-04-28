@@ -138,7 +138,7 @@
 
 `POST /api/auth/register` 公开注册启用用户，默认分配 `VIEWER` 角色并返回 token 对。用户邮箱不是必填项，但非空邮箱会统一去空格并保存为小写，且在系统内唯一。`POST /api/auth/refresh` 使用 refresh token 轮换新的 token 对；refresh session 同时受空闲超时和绝对会话时长约束，默认空闲 2 小时退出、最长 7 天必须重新登录。`GET /api/auth/session-policy` 返回当前登录会话的空闲超时开关、空闲分钟数、绝对会话开关、绝对到期时间和服务器时间。`POST /api/auth/logout` 撤销当前 session。用户可通过 `PATCH /api/auth/profile` 修改个人资料，通过 `PATCH /api/auth/password` 修改自己的密码。管理员通过 `PUT /api/users/{id}/password` 重置用户密码，重置后该用户已有 session 会被撤销。
 
-邮件找回密码使用公开接口。`POST /api/auth/reset-password/request` 接收邮箱；若邮箱唯一匹配启用用户，后端生成 30 分钟有效的一次性重置令牌，仅保存 SHA-256 哈希，并通过 SMTP 发送包含账号名的重置链接；若邮箱未绑定启用账号，返回 `400 VALIDATION_ERROR` 和“该邮箱未绑定启用账号”。`POST /api/auth/reset-password/confirm` 接收重置令牌和新密码，令牌有效且用户仍启用时更新密码、标记令牌已使用并撤销该用户全部 refresh session。后端同时保留 `/api/auth/password-reset/*` 兼容路径。
+邮件找回密码使用公开接口。`GET /api/auth/password-reset-policy` 返回邮件找回密码是否启用。`POST /api/auth/reset-password/request` 接收邮箱；若邮箱唯一匹配启用用户且业务开关开启，后端生成 30 分钟有效的一次性重置令牌，仅保存 SHA-256 哈希，并通过 SMTP 发送包含账号名的重置链接；若邮箱未绑定启用账号，返回 `400 VALIDATION_ERROR` 和“该邮箱未绑定启用账号”。邮件找回密码关闭时，申请和确认接口都返回 `400 VALIDATION_ERROR`；SMTP 未启用、配置错误或发送失败时返回 `503 SERVICE_UNAVAILABLE`，本次生成的重置令牌会随事务回滚。`POST /api/auth/reset-password/confirm` 接收重置令牌和新密码，令牌有效、业务开关仍开启且用户仍启用时更新密码、标记令牌已使用并撤销该用户全部 refresh session。后端同时保留 `/api/auth/password-reset/*` 兼容路径。
 
 权限来自当前启用用户、启用角色和角色权限关系，请求鉴权时动态加载；角色权限调整后无需用户重新登录即可在下一次请求生效。开发令牌旁路默认关闭，仅在显式配置 `APP_SECURITY_DEVELOPMENT_TOKEN_ENABLED=true` 时启用。
 
@@ -167,6 +167,7 @@
   "watermarkPosition": "BOTTOM_RIGHT",
   "watermarkOpacityPercent": 16,
   "watermarkTileDensity": "SPARSE",
+  "passwordResetEmailEnabled": true,
   "sessionIdleTimeoutEnabled": true,
   "sessionIdleTimeoutMinutes": 120,
   "sessionAbsoluteLifetimeEnabled": true,
@@ -174,7 +175,7 @@
 }
 ```
 
-`PATCH /api/system-settings` 需要 `setting:manage` 权限。上传业务上限不能超过硬上限；下载/导出水印与预览水印可独立开关，任一水印开启时必须填写不超过 64 个字符的水印文字；水印样式支持角落水印 `CORNER` 和斜向平铺 `TILED`，角落位置支持九宫格，透明度范围为 `5-40`，平铺密度支持 `SPARSE`、`NORMAL`、`DENSE`。空闲超时范围为 `15-1440` 分钟，绝对会话时长范围为 `1-30` 天，两个机制均可独立开关且默认开启。软删除自动清理 cron 使用 Spring 6 段表达式，默认每周日 03:00。保存后无需重启，下一次预览、下载或会话校验会读取最新配置，下一次调度会读取最新 cron；后端启动后仍会补偿检查一次已到期的停用图片。
+`PATCH /api/system-settings` 需要 `setting:manage` 权限。上传业务上限不能超过硬上限；下载/导出水印与预览水印可独立开关，任一水印开启时必须填写不超过 64 个字符的水印文字；水印样式支持角落水印 `CORNER` 和斜向平铺 `TILED`，角落位置支持九宫格，透明度范围为 `5-40`，平铺密度支持 `SPARSE`、`NORMAL`、`DENSE`。邮件找回密码可独立开关，关闭后公开找回入口不可用，已有邮件重置链接也不能继续使用。空闲超时范围为 `15-1440` 分钟，绝对会话时长范围为 `1-30` 天，两个机制均可独立开关且默认开启。软删除自动清理 cron 使用 Spring 6 段表达式，默认每周日 03:00。保存后无需重启，下一次预览、下载、密码找回或会话校验会读取最新配置，下一次调度会读取最新 cron；后端启动后仍会补偿检查一次已到期的停用图片。
 
 ## Audit Log Retention
 
@@ -212,4 +213,5 @@
 - `DUPLICATE_IMAGE`
 - `UNSUPPORTED_FILE_TYPE`
 - `STORAGE_ERROR`
+- `SERVICE_UNAVAILABLE`
 - `INTERNAL_ERROR`
