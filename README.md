@@ -10,8 +10,9 @@
 wzut-wallpaper-manager/
 ├── backend/             # Spring Boot 4 + Java 25 + MyBatis-Plus + Liquibase
 ├── frontend/            # Vue 3 + TypeScript + Vite
+├── image-uploader/      # Current textile defect image upload CLI for the new API
 ├── ops/docker/          # Docker Compose deployment
-├── tools/image-importer/# Batch import tool
+├── tools/image-importer/# Earlier batch import prototype
 └── doc/                 # Planning, architecture, API, deployment, acceptance docs
 ```
 
