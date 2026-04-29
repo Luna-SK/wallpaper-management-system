@@ -25,7 +25,7 @@ const settings = reactive({
   watermarkPosition: 'BOTTOM_RIGHT' as SystemSettings['watermarkPosition'],
   watermarkOpacityPercent: 16,
   watermarkTileDensity: 'SPARSE' as SystemSettings['watermarkTileDensity'],
-  passwordResetEmailEnabled: true,
+  passwordResetEmailEnabled: false,
   sessionIdleTimeoutEnabled: true,
   sessionIdleTimeoutMinutes: 120,
   sessionAbsoluteLifetimeEnabled: true,

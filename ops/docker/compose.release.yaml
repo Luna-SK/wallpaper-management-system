@@ -1,0 +1,8 @@
+services:
+  backend:
+    image: ${BACKEND_IMAGE:-ghcr.io/luna-sk/wallpaper-management-system/backend:${IMAGE_TAG:-latest}}
+    pull_policy: always
+
+  frontend:
+    image: ${FRONTEND_IMAGE:-ghcr.io/luna-sk/wallpaper-management-system/frontend:${IMAGE_TAG:-latest}}
+    pull_policy: always

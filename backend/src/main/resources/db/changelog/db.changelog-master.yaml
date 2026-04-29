@@ -35,3 +35,5 @@ databaseChangeLog:
       file: db/changelog/017-comment-threaded-replies.yaml
   - include:
       file: db/changelog/018-user-avatars.yaml
+  - include:
+      file: db/changelog/019-disable-password-reset-email-by-default.yaml

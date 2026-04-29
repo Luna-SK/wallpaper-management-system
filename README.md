@@ -30,6 +30,28 @@ docs(workflow): add development handoff guide
 
 ## Quick Start
 
+### One-Click Docker Deploy
+
+本地演示：
+
+```bash
+sh scripts/deploy.sh --mode local
+```
+
+Windows PowerShell：
+
+```powershell
+.\scripts\deploy.ps1 -Mode local
+```
+
+Linux 云服务器开启 HTTPS：
+
+```bash
+sh scripts/deploy.sh --mode production --domain example.com --email admin@example.com --https
+```
+
+脚本会生成 `ops/docker/.env`、强随机密钥和初始 `admin` 密码，执行 Compose 配置校验、构建/拉取镜像、启动服务并等待健康检查。生产模式默认只公开 Web 入口，不公开 MySQL、Redis、RustFS 或后端调试端口；邮件找回密码默认关闭，需要配置 SMTP 后由管理员在系统设置中开启。完整说明见 [doc/deployment/one-click-deploy.md](doc/deployment/one-click-deploy.md)。
+
 Backend local configuration is independent from the frontend and Docker Compose configuration.
 The backend reads only `backend/.env` when it is started from the `backend/` directory.
 Create the local file from the committed template. The template keeps the original local defaults that previously lived in `application.yml`; `DB_URL` is not written to `.env`, because Spring builds it from `DB_HOST`, `DB_PORT`, and `DB_NAME`.
@@ -64,7 +86,7 @@ Docker config check:
 
 ```bash
 cd ops/docker
-docker compose --env-file .env.example config
+docker compose -f compose.yaml -f compose.build.yaml -f compose.local.yaml --env-file .env.example config
 ```
 
 ## Configuration Boundaries

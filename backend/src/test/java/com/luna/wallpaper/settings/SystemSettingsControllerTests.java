@@ -230,7 +230,7 @@ class SystemSettingsControllerTests {
 	void getReturnsSessionLifecycleDefaults() {
 		var response = controller.get();
 
-		assertThat(response.passwordResetEmailEnabled()).isTrue();
+		assertThat(response.passwordResetEmailEnabled()).isFalse();
 		assertThat(response.sessionIdleTimeoutEnabled()).isTrue();
 		assertThat(response.sessionIdleTimeoutMinutes()).isEqualTo(120);
 		assertThat(response.sessionAbsoluteLifetimeEnabled()).isTrue();

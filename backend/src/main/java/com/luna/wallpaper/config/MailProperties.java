@@ -7,7 +7,8 @@ import org.springframework.boot.convert.DurationStyle;
 
 @ConfigurationProperties(prefix = "app.mail")
 public record MailProperties(String enabled, String host, String port, String username, String password,
-		String smtpAuth, String smtpStarttls, String from, String frontendBaseUrl, String passwordResetTokenTtl) {
+		String smtpAuth, String smtpStarttls, String smtpSsl, String from, String frontendBaseUrl,
+		String passwordResetTokenTtl) {
 
 	private static final Duration DEFAULT_PASSWORD_RESET_TOKEN_TTL = Duration.ofMinutes(30);
 
@@ -65,5 +66,9 @@ public record MailProperties(String enabled, String host, String port, String us
 
 	public boolean safeSmtpStarttls() {
 		return Boolean.parseBoolean(smtpStarttls);
+	}
+
+	public boolean safeSmtpSsl() {
+		return Boolean.parseBoolean(smtpSsl);
 	}
 }

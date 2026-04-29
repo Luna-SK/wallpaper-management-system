@@ -1,0 +1,5 @@
+{$CADDY_DOMAIN} {
+	encode zstd gzip
+	reverse_proxy frontend:80
+	tls {$CADDY_EMAIL}
+}

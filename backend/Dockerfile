@@ -8,6 +8,9 @@ RUN ./mvnw -q -DskipTests package
 
 FROM eclipse-temurin:25-jre
 WORKDIR /app
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends curl \
+    && rm -rf /var/lib/apt/lists/*
 COPY --from=build /workspace/target/*.jar app.jar
 EXPOSE 18090
 ENTRYPOINT ["java", "-jar", "/app/app.jar"]

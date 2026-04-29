@@ -11,7 +11,7 @@ class MailPropertiesTests {
 	@Test
 	void invalidMailTransportValuesFallBackWithoutFailing() {
 		MailProperties properties = new MailProperties("true", " ", "not-a-port", null, null,
-				"not-a-boolean", "not-a-boolean", " ", " http://localhost/ ", "bad-duration");
+				"not-a-boolean", "not-a-boolean", "not-a-boolean", " ", " http://localhost/ ", "bad-duration");
 
 		assertThat(properties.safeEnabled()).isTrue();
 		assertThat(properties.safeHost()).isEqualTo("localhost");
@@ -21,5 +21,14 @@ class MailPropertiesTests {
 		assertThat(properties.safePasswordResetTokenTtl()).isEqualTo(Duration.ofMinutes(30));
 		assertThat(properties.safeSmtpAuth()).isFalse();
 		assertThat(properties.safeSmtpStarttls()).isFalse();
+		assertThat(properties.safeSmtpSsl()).isFalse();
+	}
+
+	@Test
+	void smtpSslCanBeEnabled() {
+		MailProperties properties = new MailProperties("true", "smtp.example.test", "465", "sender", "secret",
+				"true", "false", "true", "no-reply@example.test", "https://app.example.test", "30m");
+
+		assertThat(properties.safeSmtpSsl()).isTrue();
 	}
 }

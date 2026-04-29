@@ -25,6 +25,7 @@ app:
     refresh-token-ttl: 7d
   mail:
     enabled: true
+    smtp-ssl: false
     from: no-reply@example.test
     frontend-base-url: http://localhost:5173
     password-reset-token-ttl: 30m

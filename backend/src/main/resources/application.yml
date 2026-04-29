@@ -40,6 +40,9 @@ management:
         enabled: true
 
 app:
+  bootstrap:
+    admin-password: ${APP_BOOTSTRAP_ADMIN_PASSWORD:}
+    demo-users-enabled: ${APP_BOOTSTRAP_DEMO_USERS_ENABLED:true}
   security:
     allowed-origins: ${APP_ALLOWED_ORIGINS}
     development-token: ${APP_SECURITY_DEVELOPMENT_TOKEN}
@@ -55,6 +58,7 @@ app:
     password: ${APP_MAIL_PASSWORD:}
     smtp-auth: ${APP_MAIL_SMTP_AUTH:false}
     smtp-starttls: ${APP_MAIL_SMTP_STARTTLS:false}
+    smtp-ssl: ${APP_MAIL_SMTP_SSL:false}
     from: ${APP_MAIL_FROM:no-reply@example.local}
     frontend-base-url: ${APP_MAIL_FRONTEND_BASE_URL:http://localhost:5173}
     password-reset-token-ttl: ${APP_MAIL_PASSWORD_RESET_TOKEN_TTL:30m}

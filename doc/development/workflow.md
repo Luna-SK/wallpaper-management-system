@@ -58,8 +58,8 @@ npm run dev
 ```bash
 cd ops/docker
 cp .env.example .env
-docker compose -p wallpaper --env-file .env config
-docker compose -p wallpaper --env-file .env up -d --build
+docker compose -p wallpaper --env-file .env -f compose.yaml -f compose.build.yaml -f compose.local.yaml config
+docker compose -p wallpaper --env-file .env -f compose.yaml -f compose.build.yaml -f compose.local.yaml up -d --build
 docker compose -p wallpaper --env-file .env logs -f backend
 ```
 
@@ -72,21 +72,21 @@ docker compose -p wallpaper --env-file .env logs -f backend
 
 ```bash
 cd ops/docker
-docker compose -p wallpaper --env-file .env up -d --build frontend
+docker compose -p wallpaper --env-file .env -f compose.yaml -f compose.build.yaml -f compose.local.yaml up -d --build frontend
 ```
 
 后端代码、配置或 Liquibase 变更后需要重建并重启后端容器：
 
 ```bash
 cd ops/docker
-docker compose -p wallpaper --env-file .env up -d --build backend
+docker compose -p wallpaper --env-file .env -f compose.yaml -f compose.build.yaml -f compose.local.yaml up -d --build backend
 ```
 
 如果前后端都改了，可以一次性刷新：
 
 ```bash
 cd ops/docker
-docker compose -p wallpaper --env-file .env up -d --build backend frontend
+docker compose -p wallpaper --env-file .env -f compose.yaml -f compose.build.yaml -f compose.local.yaml up -d --build backend frontend
 ```
 
 涉及 Docker MySQL 的 schema 或数据迁移时，先按本文件“数据库规则”完成备份和校验，再启动后端应用 Liquibase 迁移。只修改文档、测试或未被运行态读取的文件时，不需要重建镜像。
@@ -140,7 +140,7 @@ Docker 配置：
 
 ```bash
 cd ops/docker
-docker compose -p wallpaper --env-file .env config
+docker compose -p wallpaper --env-file .env -f compose.yaml -f compose.build.yaml -f compose.local.yaml config
 ```
 
 导入工具：

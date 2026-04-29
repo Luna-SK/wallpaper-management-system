@@ -69,6 +69,7 @@ class SmtpPasswordResetMailer extends PasswordResetMailer {
 		Properties javaMailProperties = sender.getJavaMailProperties();
 		javaMailProperties.put("mail.smtp.auth", Boolean.toString(properties.safeSmtpAuth()));
 		javaMailProperties.put("mail.smtp.starttls.enable", Boolean.toString(properties.safeSmtpStarttls()));
+		javaMailProperties.put("mail.smtp.ssl.enable", Boolean.toString(properties.safeSmtpSsl()));
 		return sender;
 	}
 }

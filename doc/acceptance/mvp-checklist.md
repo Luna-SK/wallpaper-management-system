@@ -16,7 +16,7 @@
 - `/api/system/health` 未登录可访问。
 - 需要登录的接口未认证时返回拒绝。
 - 认证使用 JWT access token 和 MySQL refresh session；登录、注册、刷新、退出、个人资料、修改密码、管理员重置密码和邮件找回密码接口可用。
-- 邮件找回密码有独立业务开关；关闭后公开申请和确认接口不可用，登录页不显示入口，已生成邮件重置链接不能继续改密。
+- 邮件找回密码有独立业务开关且默认关闭；关闭后公开申请和确认接口不可用，登录页不显示入口，已生成邮件重置链接不能继续改密。
 - 邮件服务配置错误或 SMTP 不可用时，项目可正常启动；申请找回密码返回明确错误，且不会留下可用重置令牌。
 - 会话生命周期控制已验证：空闲超时默认 2 小时、绝对会话时长默认 7 天，两个机制均可在系统设置中独立开关和配置；access token 与 refresh token 都受后端强制校验。
 - 开发令牌旁路默认关闭；权限按当前启用用户、启用角色和角色权限关系动态加载，角色权限变更后下一次请求生效。
@@ -60,12 +60,12 @@
 
 ## Deployment
 
-- `docker compose -p wallpaper --env-file .env.example config` 通过。
-- MySQL、Redis、RustFS、后端、前端服务配置完整。
-- Compose project 名为 `wallpaper`，依赖端口为 MySQL `13316`、Redis `16389`、RustFS `19010/19011`。
+- `docker compose -p wallpaper -f compose.yaml -f compose.build.yaml -f compose.local.yaml --env-file .env.example config` 通过。
+- MySQL、Redis、RustFS、RustFS 初始化任务、后端、前端服务配置完整。
+- Compose project 名为 `wallpaper`；本地模式依赖端口为 MySQL `13316`、Redis `16389`、RustFS `19010/19011`，生产模式默认只公开 Web 入口。
 - 备份 profile 可以生成压缩 SQL 文件。
 - Docker Compose 只读取 `ops/docker/.env`，不读取或复用 `backend/.env`。
-- Docker 后端容器默认监听并暴露 `18090`，前端 Nginx 代理 `/api` 到 `backend:18090`。
+- Docker 后端容器内部监听 `18090`，本地模式可暴露 `18090` 调试端口，生产模式默认不暴露；前端 Nginx 代理 `/api` 到 `backend:18090`。
 - `ops/docker/.env.example` 提供后端容器所需的数据库、Redis、RustFS、上传大小和安全令牌变量，且不包含 `DB_URL`。
 - 真实 `backend/.env`、`ops/docker/.env`、其它项目内 `.env` 文件和前端本地 IDE 配置不应被暂存或提交。
 
