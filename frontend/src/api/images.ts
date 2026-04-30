@@ -1,6 +1,18 @@
 import { http } from './http'
 
 export type ImageStatus = 'ACTIVE' | 'DELETED'
+export type ImageSortBy =
+  | 'createdAt'
+  | 'updatedAt'
+  | 'title'
+  | 'sizeBytes'
+  | 'resolution'
+  | 'commentCount'
+  | 'favoriteCount'
+  | 'likeCount'
+  | 'viewCount'
+  | 'downloadCount'
+export type ImageSortDirection = 'asc' | 'desc'
 export type UploadBatchStatus = 'CREATED' | 'STAGING' | 'STAGED' | 'PARTIAL_FAILED' | 'CONFIRMED' | 'CANCELLED' | 'EXPIRED'
 export type UploadBatchItemStatus = 'PROCESSING' | 'STAGED' | 'DUPLICATE' | 'FAILED' | 'CONFIRMED' | 'CANCELLED'
 
@@ -37,6 +49,7 @@ export interface ImageRecord {
   category: ImageCategory | null
   tags: ImageTag[]
   createdAt: string
+  updatedAt: string | null
 }
 
 export interface ImagePage {
@@ -63,15 +76,39 @@ export interface ImageVersionRecord {
   createdAt: string
 }
 
+export interface UploadDuplicateImage {
+  id: string
+  title: string
+  originalFilename: string
+  mimeType: string
+  sizeBytes: number
+  width: number | null
+  height: number | null
+  status: ImageStatus
+  createdAt: string
+  updatedAt: string | null
+}
+
+export interface UploadDuplicateSessionItem {
+  id: string
+  imageId: string | null
+  originalFilename: string
+  title: string | null
+  status: UploadBatchItemStatus
+}
+
 export interface UploadBatchItem {
   id: string
   imageId: string | null
   candidateImageId: string | null
   originalFilename: string
+  title: string | null
   status: UploadBatchItemStatus
   progressPercent: number
   retryCount: number
   errorMessage: string | null
+  duplicateImages: UploadDuplicateImage[]
+  duplicateSessionItems: UploadDuplicateSessionItem[]
 }
 
 export interface UploadBatch {
@@ -122,7 +159,17 @@ export interface StatisticsRankingItem {
   downloadCount: number
 }
 
-export async function getImages(params: { keyword?: string; categoryId?: string; tagId?: string; status?: ImageStatus; favoriteOnly?: boolean; page?: number; size?: number } = {}) {
+export async function getImages(params: {
+  keyword?: string
+  categoryId?: string
+  tagId?: string
+  status?: ImageStatus
+  favoriteOnly?: boolean
+  sortBy?: ImageSortBy
+  sortDirection?: ImageSortDirection
+  page?: number
+  size?: number
+} = {}) {
   const response = await http.get<ImagePage>('/images', { params })
   return response.data
 }
@@ -188,15 +235,15 @@ export async function purgeDeletedImages() {
   return response.data
 }
 
-export async function uploadImages(files: File[], categoryId: string, tagIds: string[]) {
+export async function uploadImages(files: File[], categoryId: string, tagIds: string[], titles: Array<string | null | undefined> = []) {
   let session = await createUploadSession({
     mode: files.length === 1 ? 'SINGLE' : 'BATCH',
     categoryId,
     tagIds,
     totalCount: files.length,
   })
-  for (const file of files) {
-    session = await uploadSessionItem(session.id, file)
+  for (const [index, file] of files.entries()) {
+    session = await uploadSessionItem(session.id, file, titles[index])
   }
   return confirmUploadSession(session.id)
 }
@@ -221,16 +268,22 @@ export async function getUploadSession(id: string) {
   return response.data
 }
 
-export async function uploadSessionItem(sessionId: string, file: File, signal?: AbortSignal) {
+export async function uploadSessionItem(sessionId: string, file: File, title?: string | null, signal?: AbortSignal) {
   const form = new FormData()
   form.append('file', file)
+  if (title !== undefined && title !== null) {
+    form.append('title', title)
+  }
   const response = await http.post<UploadBatch>(`/image-upload-sessions/${sessionId}/items`, form, { timeout: 120000, signal })
   return response.data
 }
 
-export async function retryUploadSessionItem(sessionId: string, itemId: string, file: File, signal?: AbortSignal) {
+export async function retryUploadSessionItem(sessionId: string, itemId: string, file: File, title?: string | null, signal?: AbortSignal) {
   const form = new FormData()
   form.append('file', file)
+  if (title !== undefined && title !== null) {
+    form.append('title', title)
+  }
   const response = await http.post<UploadBatch>(`/image-upload-sessions/${sessionId}/items/${itemId}/retry`, form, { timeout: 120000, signal })
   return response.data
 }
@@ -245,8 +298,11 @@ export async function cancelUploadSession(id: string) {
   return response.data
 }
 
-export async function imageBlobUrl(id: string, kind: 'thumbnail' | 'preview') {
-  const response = await http.get<Blob>(`/images/${id}/${kind}`, { responseType: 'blob' })
+export async function imageBlobUrl(id: string, kind: 'thumbnail' | 'preview', cacheKey?: string | number) {
+  const response = await http.get<Blob>(`/images/${id}/${kind}`, {
+    params: cacheKey === undefined ? undefined : { v: cacheKey },
+    responseType: 'blob',
+  })
   return URL.createObjectURL(response.data)
 }
 

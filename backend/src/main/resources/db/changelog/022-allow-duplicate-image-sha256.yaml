@@ -1,0 +1,13 @@
+databaseChangeLog:
+  - changeSet:
+      id: 001-allow-duplicate-image-sha256
+      author: codex
+      changes:
+        - dropUniqueConstraint:
+            tableName: images
+            constraintName: sha256
+        - createIndex:
+            tableName: images
+            indexName: idx_images_sha256
+            columns:
+              - column: { name: sha256 }

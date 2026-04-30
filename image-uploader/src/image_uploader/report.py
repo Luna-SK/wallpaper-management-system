@@ -18,8 +18,6 @@ REPORT_FIELDS = (
     "sessionId",
     "imageId",
     "errorMessage",
-    "titleUpdated",
-    "titleError",
     "updatedAt",
 )
 

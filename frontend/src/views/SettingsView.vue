@@ -14,6 +14,7 @@ const settings = reactive({
   maxBatchSizeMb: 500,
   maxFileHardLimitMb: 0,
   maxBatchHardLimitMb: 0,
+  uploadDeduplicationEnabled: false,
   previewQuality: 'ORIGINAL' as SystemSettings['previewQuality'],
   softDeleteRetentionDays: 180,
   softDeleteCleanupEnabled: false,
@@ -80,6 +81,7 @@ function applySystemSettings(system: SystemSettings) {
   settings.maxBatchHardLimitMb = system.maxBatchHardLimitMb
   settings.maxFileSizeMb = system.maxFileSizeMb
   settings.maxBatchSizeMb = system.maxBatchSizeMb
+  settings.uploadDeduplicationEnabled = system.uploadDeduplicationEnabled
   settings.previewQuality = system.previewQuality
   settings.softDeleteRetentionDays = system.softDeleteRetentionDays
   settings.softDeleteCleanupEnabled = system.softDeleteCleanupEnabled
@@ -131,6 +133,7 @@ async function saveSettings() {
       updateSystemSettings({
         maxFileSizeMb: settings.maxFileSizeMb,
         maxBatchSizeMb: settings.maxBatchSizeMb,
+        uploadDeduplicationEnabled: settings.uploadDeduplicationEnabled,
         previewQuality: settings.previewQuality,
         softDeleteRetentionDays: settings.softDeleteRetentionDays,
         softDeleteCleanupEnabled: settings.softDeleteCleanupEnabled,
@@ -190,11 +193,17 @@ onMounted(loadSettings)
             <el-input-number v-model="settings.maxBatchSizeMb" :min="settings.maxFileSizeMb" :max="settings.maxBatchHardLimitMb" controls-position="right" />
             <span class="unit-label">MB</span>
           </el-form-item>
+          <el-form-item label="上传去重">
+            <div class="setting-inline-control">
+              <el-switch v-model="settings.uploadDeduplicationEnabled" active-text="启用" inactive-text="停用" />
+              <p class="field-copy">开启后按内容 SHA256 阻止后续重复上传；关闭时允许重复图片作为新图片入库。</p>
+            </div>
+          </el-form-item>
           <el-form-item label="预览质量">
             <el-radio-group v-model="settings.previewQuality">
-              <el-radio-button label="ORIGINAL">原图</el-radio-button>
-              <el-radio-button label="HIGH">高清</el-radio-button>
-              <el-radio-button label="STANDARD">标准</el-radio-button>
+              <el-radio-button value="ORIGINAL">原图</el-radio-button>
+              <el-radio-button value="HIGH">高清</el-radio-button>
+              <el-radio-button value="STANDARD">标准</el-radio-button>
             </el-radio-group>
           </el-form-item>
           <el-form-item label="软删除保留期">
@@ -235,22 +244,22 @@ onMounted(loadSettings)
           </el-form-item>
           <el-form-item label="水印样式">
             <el-radio-group v-model="settings.watermarkMode" :disabled="!watermarkActive">
-              <el-radio-button label="CORNER">角落水印</el-radio-button>
-              <el-radio-button label="TILED">斜向平铺</el-radio-button>
+              <el-radio-button value="CORNER">角落水印</el-radio-button>
+              <el-radio-button value="TILED">斜向平铺</el-radio-button>
             </el-radio-group>
           </el-form-item>
           <el-form-item v-if="settings.watermarkMode === 'CORNER'" label="水印位置">
             <el-radio-group v-model="settings.watermarkPosition" class="watermark-position-grid" :disabled="!watermarkActive">
-              <el-radio-button v-for="position in watermarkPositions" :key="position.value" :label="position.value">
+              <el-radio-button v-for="position in watermarkPositions" :key="position.value" :value="position.value">
                 {{ position.label }}
               </el-radio-button>
             </el-radio-group>
           </el-form-item>
           <el-form-item v-if="settings.watermarkMode === 'TILED'" label="平铺密度">
             <el-radio-group v-model="settings.watermarkTileDensity" :disabled="!watermarkActive">
-              <el-radio-button label="SPARSE">稀疏</el-radio-button>
-              <el-radio-button label="NORMAL">标准</el-radio-button>
-              <el-radio-button label="DENSE">密集</el-radio-button>
+              <el-radio-button value="SPARSE">稀疏</el-radio-button>
+              <el-radio-button value="NORMAL">标准</el-radio-button>
+              <el-radio-button value="DENSE">密集</el-radio-button>
             </el-radio-group>
           </el-form-item>
           <el-form-item label="水印透明度">
@@ -394,6 +403,19 @@ onMounted(loadSettings)
   flex-direction: column;
   gap: 6px;
   width: 100%;
+}
+
+.setting-inline-control {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.field-copy {
+  color: #64748b;
+  font-size: 13px;
+  line-height: 1.5;
+  margin: 0;
 }
 
 .cron-help {

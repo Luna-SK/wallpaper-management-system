@@ -58,6 +58,45 @@ class SystemSettingsControllerTests {
 	}
 
 	@Test
+	void getReturnsUploadDeduplicationDefaultDisabled() {
+		var response = controller.get();
+
+		assertThat(response.uploadDeduplicationEnabled()).isFalse();
+	}
+
+	@Test
+	void getReturnsSavedUploadDeduplicationSetting() {
+		when(settings.get(eq("upload.deduplication.enabled"), anyString())).thenReturn("true");
+
+		var response = controller.get();
+
+		assertThat(response.uploadDeduplicationEnabled()).isTrue();
+	}
+
+	@Test
+	void updateSavesUploadDeduplicationSetting() {
+		var request = new SystemSettingsController.SystemSettingsRequest(10, 100, true, "ORIGINAL", 180,
+				false, "0 0 3 * * SUN", true, false, "版权文字", "CORNER",
+				"BOTTOM_RIGHT", 16, "SPARSE", true, true, 120, true, 7);
+
+		controller.update(request);
+
+		verify(settings).put("upload.deduplication.enabled", "true");
+	}
+
+	@Test
+	void updatePreservesUploadDeduplicationWhenRequestOmitsIt() {
+		when(settings.get(eq("upload.deduplication.enabled"), anyString())).thenReturn("true");
+		var request = new SystemSettingsController.SystemSettingsRequest(10, 100, null, "ORIGINAL", 180,
+				false, "0 0 3 * * SUN", true, false, "版权文字", "CORNER",
+				"BOTTOM_RIGHT", 16, "SPARSE", true, true, 120, true, 7);
+
+		controller.update(request);
+
+		verify(settings).put("upload.deduplication.enabled", "true");
+	}
+
+	@Test
 	void updateRejectsFileLimitAboveHardLimit() {
 		var request = request(60, 100, "ORIGINAL", 180, false, "0 0 3 * * SUN", true, false,
 				"仅供授权使用", "CORNER", "BOTTOM_RIGHT", 16, "SPARSE");
@@ -239,7 +278,7 @@ class SystemSettingsControllerTests {
 
 	@Test
 	void updateSavesPasswordResetEmailSetting() {
-		var request = new SystemSettingsController.SystemSettingsRequest(10, 100, "ORIGINAL", 180,
+		var request = new SystemSettingsController.SystemSettingsRequest(10, 100, null, "ORIGINAL", 180,
 				false, "0 0 3 * * SUN", true, false, "版权文字", "CORNER",
 				"BOTTOM_RIGHT", 16, "SPARSE", false, true, 120, true, 7);
 
@@ -250,7 +289,7 @@ class SystemSettingsControllerTests {
 
 	@Test
 	void updateSavesSessionLifecycleSettings() {
-		var request = new SystemSettingsController.SystemSettingsRequest(10, 100, "ORIGINAL", 180,
+		var request = new SystemSettingsController.SystemSettingsRequest(10, 100, null, "ORIGINAL", 180,
 				false, "0 0 3 * * SUN", true, false, "版权文字", "CORNER",
 				"BOTTOM_RIGHT", 16, "SPARSE", true, true, 60, false, 14);
 
@@ -264,14 +303,14 @@ class SystemSettingsControllerTests {
 
 	@Test
 	void updateRejectsInvalidSessionLifecycleRanges() {
-		var invalidIdle = new SystemSettingsController.SystemSettingsRequest(10, 100, "ORIGINAL", 180,
+		var invalidIdle = new SystemSettingsController.SystemSettingsRequest(10, 100, null, "ORIGINAL", 180,
 				false, "0 0 3 * * SUN", true, false, "版权文字", "CORNER",
 				"BOTTOM_RIGHT", 16, "SPARSE", true, true, 10, true, 7);
 		assertThatThrownBy(() -> controller.update(invalidIdle))
 				.isInstanceOf(IllegalArgumentException.class)
 				.hasMessage("登录空闲超时必须在 15-1440 分钟之间");
 
-		var invalidAbsolute = new SystemSettingsController.SystemSettingsRequest(10, 100, "ORIGINAL", 180,
+		var invalidAbsolute = new SystemSettingsController.SystemSettingsRequest(10, 100, null, "ORIGINAL", 180,
 				false, "0 0 3 * * SUN", true, false, "版权文字", "CORNER",
 				"BOTTOM_RIGHT", 16, "SPARSE", true, true, 120, true, 31);
 		assertThatThrownBy(() -> controller.update(invalidAbsolute))
@@ -283,7 +322,7 @@ class SystemSettingsControllerTests {
 			String previewQuality, Integer softDeleteRetentionDays, Boolean softDeleteCleanupEnabled,
 			String softDeleteCleanupCron, Boolean watermarkEnabled, Boolean watermarkPreviewEnabled, String watermarkText,
 			String watermarkMode, String watermarkPosition, Integer watermarkOpacityPercent, String watermarkTileDensity) {
-		return new SystemSettingsController.SystemSettingsRequest(maxFileSizeMb, maxBatchSizeMb, previewQuality,
+		return new SystemSettingsController.SystemSettingsRequest(maxFileSizeMb, maxBatchSizeMb, null, previewQuality,
 				softDeleteRetentionDays, softDeleteCleanupEnabled, softDeleteCleanupCron, watermarkEnabled,
 				watermarkPreviewEnabled, watermarkText, watermarkMode, watermarkPosition, watermarkOpacityPercent,
 				watermarkTileDensity, true, true, 120, true, 7);

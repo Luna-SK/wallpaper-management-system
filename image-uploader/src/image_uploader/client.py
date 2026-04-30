@@ -76,11 +76,9 @@ class ApiClient:
     def tags(self, group_id: str) -> list[JsonObject]:
         return self._json_list(self._request("GET", "tags", params={"groupId": group_id}))
 
-    def image_detail(self, image_id: str) -> JsonObject:
-        return self._json_object(self._request("GET", f"images/{image_id}"))
-
-    def update_image(self, image_id: str, payload: JsonObject) -> JsonObject:
-        return self._json_object(self._request("PATCH", f"images/{image_id}", json=payload))
+    def upload_deduplication_enabled(self) -> bool:
+        payload = self._json_object(self._request("GET", "image-upload-settings"))
+        return bool(payload.get("deduplicationEnabled", False))
 
     def create_upload_session(self, category_id: str, tag_ids: list[str], total_count: int) -> JsonObject:
         mode = "SINGLE" if total_count == 1 else "BATCH"
@@ -97,7 +95,7 @@ class ApiClient:
             )
         )
 
-    def stage_upload_item(self, session_id: str, file_path: Path) -> JsonObject:
+    def stage_upload_item(self, session_id: str, file_path: Path, title: str) -> JsonObject:
         mime_type = mimetypes.guess_type(file_path.name)[0] or "application/octet-stream"
 
         def send_once() -> httpx.Response:
@@ -106,6 +104,7 @@ class ApiClient:
                 return self._send(
                     "POST",
                     url,
+                    data={"title": title},
                     files={"file": (file_path.name, file, mime_type)},
                 )
 

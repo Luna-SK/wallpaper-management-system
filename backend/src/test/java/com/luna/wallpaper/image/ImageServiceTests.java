@@ -1,6 +1,7 @@
 package com.luna.wallpaper.image;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.doAnswer;
@@ -9,9 +10,12 @@ import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
+import java.util.HexFormat;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -27,6 +31,7 @@ import com.luna.wallpaper.interaction.InteractionService;
 import com.luna.wallpaper.settings.SystemSettingService;
 import com.luna.wallpaper.settings.UploadLimitService;
 import com.luna.wallpaper.settings.UploadLimitService.UploadLimitSettings;
+import com.luna.wallpaper.taxonomy.Category;
 import com.luna.wallpaper.taxonomy.CategoryMapper;
 import com.luna.wallpaper.taxonomy.Tag;
 import com.luna.wallpaper.taxonomy.TagGroup;
@@ -62,6 +67,7 @@ class ImageServiceTests {
 		when(settings.get("watermark.position", "BOTTOM_RIGHT")).thenAnswer(invocation -> invocation.getArgument(1));
 		when(settings.get("watermark.opacity_percent", "16")).thenAnswer(invocation -> invocation.getArgument(1));
 		when(settings.get("watermark.tile_density", "SPARSE")).thenAnswer(invocation -> invocation.getArgument(1));
+		when(images.selectBySha256InAndStatusNot(any(), any())).thenReturn(List.of());
 		when(interactionService.summaries(any(), any())).thenReturn(Map.of());
 	}
 
@@ -109,11 +115,12 @@ class ImageServiceTests {
 		ImageAsset deleted = image("image-deleted", "已停用未分类", 0, 0);
 		ReflectionTestUtils.setField(deleted, "status", ImageStatus.DELETED);
 		when(images.countSearch(null, null, null, ImageStatus.DELETED, false, "viewer-1")).thenReturn(1L);
-		when(images.searchIds(null, null, null, ImageStatus.DELETED, false, "viewer-1", 0L, 20)).thenReturn(List.of(deleted.id()));
+		when(images.searchIds(null, null, null, ImageStatus.DELETED, false, "viewer-1",
+				"CREATED_AT", "desc", 0L, 20L)).thenReturn(List.of(deleted.id()));
 		when(images.selectImagesByIds(List.of(deleted.id()))).thenReturn(List.of(deleted));
 		when(imageTags.selectByImageIds(List.of(deleted.id()))).thenReturn(List.of());
 
-		var page = service.list(null, null, null, "DELETED", false, "viewer-1", 1, 20);
+		var page = service.list(null, null, null, "DELETED", false, "viewer-1", null, null, 1, 20);
 
 		assertThat(page.items()).hasSize(1);
 		assertThat(page.items().getFirst().category()).isNull();
@@ -130,7 +137,8 @@ class ImageServiceTests {
 		TagGroup activeGroup = tagGroup("group-active", "启用组", true);
 		TagGroup disabledGroup = tagGroup("group-disabled", "停用组", false);
 		when(images.countSearch(null, null, null, null, false, "viewer-1")).thenReturn(1L);
-		when(images.searchIds(null, null, null, null, false, "viewer-1", 0L, 20)).thenReturn(List.of(image.id()));
+		when(images.searchIds(null, null, null, null, false, "viewer-1",
+				"CREATED_AT", "desc", 0L, 20L)).thenReturn(List.of(image.id()));
 		when(images.selectImagesByIds(List.of(image.id()))).thenReturn(List.of(image));
 		when(imageTags.selectByImageIds(List.of(image.id()))).thenReturn(List.of(
 				imageTagLink(image.id(), visibleTag.id()),
@@ -140,13 +148,39 @@ class ImageServiceTests {
 				.thenReturn(List.of(visibleTag, disabledTag, hiddenByGroupTag));
 		when(tagGroups.selectBatchIds(any())).thenReturn(List.of(activeGroup, disabledGroup));
 
-		var page = service.list(null, null, null, null, false, "viewer-1", 1, 20);
+		var page = service.list(null, null, null, null, false, "viewer-1", null, null, 1, 20);
 
 		assertThat(page.items()).hasSize(1);
 		assertThat(page.items().getFirst().tags())
 				.extracting(ImageDtos.TagBrief::id)
 				.containsExactly(visibleTag.id());
 		assertThat(page.items().getFirst().tags().getFirst().groupName()).isEqualTo(activeGroup.name());
+	}
+
+	@Test
+	void imageSortParsesSupportedFieldsAndDefaultsInvalidValues() {
+		assertThat(ImageSort.parse("title", "asc"))
+				.isEqualTo(new ImageSort(ImageSortField.TITLE, ImageSortDirection.ASC));
+		assertThat(ImageSort.parse("download_count", "DESC"))
+				.isEqualTo(new ImageSort(ImageSortField.DOWNLOAD_COUNT, ImageSortDirection.DESC));
+		assertThat(ImageSort.parse("unknown", "asc")).isEqualTo(ImageSort.defaultSort());
+		assertThat(ImageSort.parse(null, null)).isEqualTo(ImageSort.defaultSort());
+	}
+
+	@Test
+	void listPassesParsedSortToImageSearch() {
+		ImageAsset image = image("image-title-sort", "标题排序", 0, 0);
+		when(images.countSearch(null, null, null, null, false, "viewer-1")).thenReturn(1L);
+		when(images.searchIds(null, null, null, null, false, "viewer-1",
+				"TITLE", "asc", 0L, 20L)).thenReturn(List.of(image.id()));
+		when(images.selectImagesByIds(List.of(image.id()))).thenReturn(List.of(image));
+		when(imageTags.selectByImageIds(List.of(image.id()))).thenReturn(List.of());
+
+		var page = service.list(null, null, null, null, false, "viewer-1", "title", "asc", 1, 20);
+
+		assertThat(page.items()).hasSize(1);
+		verify(images).searchIds(null, null, null, null, false, "viewer-1",
+				"TITLE", "asc", 0L, 20L);
 	}
 
 	@Test
@@ -195,6 +229,220 @@ class ImageServiceTests {
 		assertThat(response.items().get(1).status()).isEqualTo("FAILED");
 		assertThat(response.items().get(1).errorMessage()).contains("本次上传总大小超过批量上传上限 2 MB");
 		verify(storage, never()).store(any(), anyString());
+	}
+
+	@Test
+	void confirmUploadSessionUsesProvidedTitle() {
+		UploadBatch batch = new UploadBatch("SINGLE", 1, "category-1", List.of("tag-1"));
+		List<UploadBatchItem> items = new ArrayList<>();
+		setupUploadSession(batch, items);
+		setupUploadTaxonomy(batch);
+		when(uploadLimitService.current()).thenReturn(new UploadLimitSettings(10, 100, 50, 500));
+		when(images.findBySha256AndStatusNot(anyString(), any())).thenReturn(Optional.empty());
+		when(storage.store(any(), anyString())).thenReturn(stored("raw.jpg", "stored-sha"));
+		ArgumentCaptor<ImageAsset> insertedImage = ArgumentCaptor.forClass(ImageAsset.class);
+
+		var file = new MockMultipartFile("file", "raw.jpg", "image/jpeg", new byte[] { 1, 2, 3 });
+		service.stageUploadSessionItem(batch.id(), file, "  自定义标题  ");
+		service.confirmUploadSession(batch.id());
+
+		verify(images).insert(insertedImage.capture());
+		assertThat(insertedImage.getValue().title()).isEqualTo("自定义标题");
+		assertThat(insertedImage.getValue().titleSortKey()).isEqualTo(ImageTitleSortKeyGenerator.generate("自定义标题"));
+	}
+
+	@Test
+	void confirmUploadSessionFallsBackToFilenameWithoutExtensionWhenTitleBlank() {
+		UploadBatch batch = new UploadBatch("SINGLE", 1, "category-1", List.of("tag-1"));
+		List<UploadBatchItem> items = new ArrayList<>();
+		setupUploadSession(batch, items);
+		setupUploadTaxonomy(batch);
+		when(uploadLimitService.current()).thenReturn(new UploadLimitSettings(10, 100, 50, 500));
+		when(images.findBySha256AndStatusNot(anyString(), any())).thenReturn(Optional.empty());
+		when(storage.store(any(), anyString())).thenReturn(stored("fabric.defect.jpg", "stored-sha"));
+		ArgumentCaptor<ImageAsset> insertedImage = ArgumentCaptor.forClass(ImageAsset.class);
+
+		var file = new MockMultipartFile("file", "fabric.defect.jpg", "image/jpeg", new byte[] { 1, 2, 3 });
+		service.stageUploadSessionItem(batch.id(), file, "   ");
+		service.confirmUploadSession(batch.id());
+
+		verify(images).insert(insertedImage.capture());
+		assertThat(insertedImage.getValue().title()).isEqualTo("fabric.defect");
+	}
+
+	@Test
+	void stageUploadSessionItemRejectsOverlongTitleBeforeStoringFile() {
+		UploadBatch batch = new UploadBatch("SINGLE", 1, "category-1", List.of("tag-1"));
+		when(batches.selectById(batch.id())).thenReturn(batch);
+		when(uploadBatchTags.selectTagIdsByBatchId(batch.id())).thenReturn(batch.tagIds());
+		var file = new MockMultipartFile("file", "raw.jpg", "image/jpeg", new byte[] { 1, 2, 3 });
+
+		assertThatThrownBy(() -> service.stageUploadSessionItem(batch.id(), file, "x".repeat(256)))
+				.isInstanceOf(IllegalArgumentException.class)
+				.hasMessageContaining("图片标题不能超过 255 个字符");
+		verify(batchItems, never()).insert(any(UploadBatchItem.class));
+		verify(storage, never()).store(any(), anyString());
+	}
+
+	@Test
+	void retryUploadSessionItemCanUpdateFailedItemTitle() {
+		UploadBatch batch = new UploadBatch("SINGLE", 1, "category-1", List.of("tag-1"));
+		UploadBatchItem item = new UploadBatchItem(batch.id(), "old.jpg", "旧标题");
+		item.failed("previous failure");
+		List<UploadBatchItem> items = new ArrayList<>(List.of(item));
+		setupUploadSession(batch, items);
+		when(batchItems.selectById(item.id())).thenReturn(item);
+		when(uploadLimitService.current()).thenReturn(new UploadLimitSettings(10, 100, 50, 500));
+		when(images.findBySha256AndStatusNot(anyString(), any())).thenReturn(Optional.empty());
+		when(storage.store(any(), anyString())).thenReturn(stored("retry.jpg", "retry-sha"));
+
+		var file = new MockMultipartFile("file", "retry.jpg", "image/jpeg", new byte[] { 1, 2, 3 });
+		var response = service.retryUploadSessionItem(batch.id(), item.id(), file, "重试标题");
+
+		assertThat(response.items().getFirst().title()).isEqualTo("重试标题");
+		assertThat(response.items().getFirst().status()).isEqualTo("STAGED");
+	}
+
+	@Test
+	void duplicateUploadDoesNotOverwriteExistingImageTitle() {
+		UploadBatch batch = new UploadBatch("SINGLE", 1, "category-1", List.of("tag-1"));
+		List<UploadBatchItem> items = new ArrayList<>();
+		String sha256 = sha256(new byte[] { 1, 2, 3 });
+		ImageAsset existing = imageWithSha("image-existing", "旧标题", sha256);
+		ImageAsset anotherExisting = imageWithSha("image-existing-second", "旧标题 2", sha256);
+		setupUploadSession(batch, items);
+		setupUploadTaxonomy(batch);
+		when(settings.get("upload.deduplication.enabled", "false")).thenReturn("true");
+		when(uploadLimitService.current()).thenReturn(new UploadLimitSettings(10, 100, 50, 500));
+		when(images.findBySha256AndStatusNot(anyString(), any())).thenReturn(Optional.of(existing));
+		when(images.selectBySha256InAndStatusNot(any(), any())).thenReturn(List.of(existing, anotherExisting));
+
+		var file = new MockMultipartFile("file", "duplicate.jpg", "image/jpeg", new byte[] { 1, 2, 3 });
+		var staged = service.stageUploadSessionItem(batch.id(), file, "新标题");
+		var confirmed = service.confirmUploadSession(batch.id());
+
+		assertThat(staged.duplicateCount()).isEqualTo(1);
+		assertThat(staged.items().getFirst().status()).isEqualTo("DUPLICATE");
+		assertThat(staged.items().getFirst().imageId()).isNull();
+		assertThat(staged.items().getFirst().duplicateImages())
+				.extracting(ImageDtos.UploadDuplicateImageResponse::id)
+				.containsExactly(existing.id(), anotherExisting.id());
+		assertThat(staged.items().getFirst().duplicateSessionItems()).isEmpty();
+		assertThat(staged.items().getFirst().errorMessage()).isEqualTo("图片内容重复，确认后不会新增");
+		assertThat(confirmed.status()).isEqualTo("CONFIRMED");
+		assertThat(confirmed.duplicateCount()).isEqualTo(1);
+		assertThat(confirmed.items().getFirst().status()).isEqualTo("DUPLICATE");
+		assertThat(confirmed.items().getFirst().imageId()).isNull();
+		assertThat(confirmed.items().getFirst().duplicateImages())
+				.extracting(ImageDtos.UploadDuplicateImageResponse::id)
+				.containsExactly(existing.id(), anotherExisting.id());
+		assertThat(existing.title()).isEqualTo("旧标题");
+		verify(images, never()).insert(any(ImageAsset.class));
+		verify(images, never()).updateById(existing);
+		verify(storage, never()).store(any(), anyString());
+	}
+
+	@Test
+	void duplicateUploadCreatesNewImageWhenDeduplicationIsDisabledByDefault() {
+		UploadBatch batch = new UploadBatch("SINGLE", 1, "category-1", List.of("tag-1"));
+		List<UploadBatchItem> items = new ArrayList<>();
+		ImageAsset existing = image("image-existing", "旧标题", 0, 0);
+		setupUploadSession(batch, items);
+		setupUploadTaxonomy(batch);
+		when(uploadLimitService.current()).thenReturn(new UploadLimitSettings(10, 100, 50, 500));
+		when(images.findBySha256AndStatusNot(anyString(), any())).thenReturn(Optional.of(existing));
+		when(storage.store(any(), anyString())).thenReturn(stored("duplicate.jpg", existing.sha256()));
+		ArgumentCaptor<ImageAsset> insertedImage = ArgumentCaptor.forClass(ImageAsset.class);
+
+		var file = new MockMultipartFile("file", "duplicate.jpg", "image/jpeg", new byte[] { 1, 2, 3 });
+		var staged = service.stageUploadSessionItem(batch.id(), file, "新标题");
+		var confirmed = service.confirmUploadSession(batch.id());
+
+		assertThat(staged.duplicateCount()).isZero();
+		assertThat(staged.items().getFirst().status()).isEqualTo("STAGED");
+		assertThat(confirmed.duplicateCount()).isZero();
+		assertThat(confirmed.items().getFirst().status()).isEqualTo("CONFIRMED");
+		verify(storage).store(any(), anyString());
+		verify(images).insert(insertedImage.capture());
+		assertThat(insertedImage.getValue().title()).isEqualTo("新标题");
+		assertThat(insertedImage.getValue().sha256()).isEqualTo(existing.sha256());
+		verify(images, never()).findBySha256AndStatusNot(anyString(), any());
+	}
+
+	@Test
+	void confirmUploadSessionRechecksDuplicateWhenDeduplicationEnabled() {
+		UploadBatch batch = new UploadBatch("SINGLE", 1, "category-1", List.of("tag-1"));
+		UploadBatchItem item = new UploadBatchItem(batch.id(), "duplicate.jpg", "新标题");
+		StoredImage stagedImage = stored("duplicate.jpg", "same-sha");
+		item.staged("candidate-image", stagedImage);
+		List<UploadBatchItem> items = new ArrayList<>(List.of(item));
+		ImageAsset existing = imageWithSha("image-existing", "旧标题", stagedImage.sha256());
+		ImageAsset anotherExisting = imageWithSha("image-existing-second", "旧标题 2", stagedImage.sha256());
+		setupUploadSession(batch, items);
+		setupUploadTaxonomy(batch);
+		when(settings.get("upload.deduplication.enabled", "false")).thenReturn("true");
+		when(images.findBySha256AndStatusNot(stagedImage.sha256(), ImageStatus.DELETED)).thenReturn(Optional.of(existing));
+		when(images.selectBySha256InAndStatusNot(any(), any())).thenReturn(List.of(existing, anotherExisting));
+
+		var confirmed = service.confirmUploadSession(batch.id());
+
+		assertThat(confirmed.duplicateCount()).isEqualTo(1);
+		assertThat(confirmed.items().getFirst().status()).isEqualTo("DUPLICATE");
+		assertThat(confirmed.items().getFirst().imageId()).isNull();
+		assertThat(confirmed.items().getFirst().duplicateImages())
+				.extracting(ImageDtos.UploadDuplicateImageResponse::id)
+				.containsExactly(existing.id(), anotherExisting.id());
+		verify(storage).deleteQuietly(stagedImage);
+		verify(images, never()).insert(any(ImageAsset.class));
+	}
+
+	@Test
+	void duplicateUploadListsSessionDuplicatesWhenLibraryHasNoDuplicate() {
+		UploadBatch batch = new UploadBatch("BATCH", 2, "category-1", List.of("tag-1"));
+		List<UploadBatchItem> items = new ArrayList<>();
+		byte[] bytes = new byte[] { 7, 8, 9 };
+		String sha256 = sha256(bytes);
+		setupUploadSession(batch, items);
+		setupUploadTaxonomy(batch);
+		when(settings.get("upload.deduplication.enabled", "false")).thenReturn("true");
+		when(uploadLimitService.current()).thenReturn(new UploadLimitSettings(10, 100, 50, 500));
+		when(images.findBySha256AndStatusNot(anyString(), any())).thenReturn(Optional.empty());
+		when(storage.store(any(), anyString())).thenReturn(stored("first.jpg", sha256));
+
+		service.stageUploadSessionItem(batch.id(), new MockMultipartFile("file", "first.jpg", "image/jpeg", bytes), "第一张");
+		var response = service.stageUploadSessionItem(batch.id(),
+				new MockMultipartFile("file", "second.jpg", "image/jpeg", bytes), "第二张");
+
+		var duplicate = response.items().get(1);
+		assertThat(response.duplicateCount()).isEqualTo(1);
+		assertThat(duplicate.status()).isEqualTo("DUPLICATE");
+		assertThat(duplicate.imageId()).isNull();
+		assertThat(duplicate.duplicateImages()).isEmpty();
+		assertThat(duplicate.duplicateSessionItems())
+				.extracting(ImageDtos.UploadDuplicateSessionItemResponse::originalFilename)
+				.containsExactly("first.jpg");
+		verify(storage).store(any(), anyString());
+	}
+
+	@Test
+	void confirmUploadSessionDoesNotRecheckDuplicateWhenDeduplicationDisabled() {
+		UploadBatch batch = new UploadBatch("SINGLE", 1, "category-1", List.of("tag-1"));
+		UploadBatchItem item = new UploadBatchItem(batch.id(), "duplicate.jpg", "新标题");
+		StoredImage stagedImage = stored("duplicate.jpg", "same-sha");
+		item.staged("candidate-image", stagedImage);
+		List<UploadBatchItem> items = new ArrayList<>(List.of(item));
+		ImageAsset existing = image("image-existing", "旧标题", 0, 0);
+		setupUploadSession(batch, items);
+		setupUploadTaxonomy(batch);
+		when(images.findBySha256AndStatusNot(stagedImage.sha256(), ImageStatus.DELETED)).thenReturn(Optional.of(existing));
+
+		var confirmed = service.confirmUploadSession(batch.id());
+
+		assertThat(confirmed.duplicateCount()).isZero();
+		assertThat(confirmed.items().getFirst().status()).isEqualTo("CONFIRMED");
+		verify(images).insert(any(ImageAsset.class));
+		verify(storage, never()).deleteQuietly(any());
+		verify(images, never()).findBySha256AndStatusNot(anyString(), any());
 	}
 
 	@Test
@@ -538,10 +786,57 @@ class ImageServiceTests {
 	}
 
 	private ImageAsset image(String id, String title, long viewCount, long downloadCount) {
-		ImageAsset image = new ImageAsset(id, title, title + ".jpg", id + "-sha", "image/jpeg", 1024, 100, 100);
+		ImageAsset image = imageWithSha(id, title, id + "-sha");
 		ReflectionTestUtils.setField(image, "viewCount", viewCount);
 		ReflectionTestUtils.setField(image, "downloadCount", downloadCount);
 		return image;
+	}
+
+	private ImageAsset imageWithSha(String id, String title, String sha256) {
+		return new ImageAsset(id, title, title + ".jpg", sha256, "image/jpeg", 1024, 100, 100);
+	}
+
+	private void setupUploadSession(UploadBatch batch, List<UploadBatchItem> items) {
+		when(batches.selectById(batch.id())).thenReturn(batch);
+		when(uploadBatchTags.selectTagIdsByBatchId(batch.id())).thenReturn(batch.tagIds());
+		when(batchItems.selectByBatchIdOrdered(batch.id())).thenAnswer(invocation -> List.copyOf(items));
+		doAnswer(invocation -> {
+			UploadBatchItem item = invocation.getArgument(0);
+			items.add(item);
+			return 1;
+		}).when(batchItems).insert(any(UploadBatchItem.class));
+	}
+
+	private void setupUploadTaxonomy(UploadBatch batch) {
+		Category category = category(batch.categoryId(), true);
+		Tag tag = tag(batch.tagIds().getFirst(), "group-1", "瑕疵", true);
+		TagGroup group = tagGroup("group-1", "瑕疵", true);
+		when(categories.selectById(batch.categoryId())).thenReturn(category);
+		when(tags.selectBatchIds(any())).thenReturn(List.of(tag));
+		when(tagGroups.selectBatchIds(any())).thenReturn(List.of(group));
+	}
+
+	private StoredImage stored(String originalFilename, String sha256) {
+		return new StoredImage(originalFilename, sha256, "image/jpeg", 1024, 100, 100,
+				"bucket", "original-key", "thumb-key", "high-key", "standard-key");
+	}
+
+	private static String sha256(byte[] bytes) {
+		try {
+			return HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(bytes));
+		}
+		catch (NoSuchAlgorithmException ex) {
+			throw new IllegalStateException(ex);
+		}
+	}
+
+	private Category category(String id, boolean enabled) {
+		Category category = instantiate(Category.class);
+		ReflectionTestUtils.setField(category, "id", id);
+		ReflectionTestUtils.setField(category, "code", "TEXTILE_DEFECT");
+		ReflectionTestUtils.setField(category, "name", "纺织瑕疵");
+		ReflectionTestUtils.setField(category, "enabled", enabled);
+		return category;
 	}
 
 	private Tag tag(String id, String groupId, String name, boolean enabled) {

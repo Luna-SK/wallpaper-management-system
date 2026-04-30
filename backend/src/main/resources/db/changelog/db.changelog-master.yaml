@@ -37,3 +37,9 @@ databaseChangeLog:
       file: db/changelog/018-user-avatars.yaml
   - include:
       file: db/changelog/019-disable-password-reset-email-by-default.yaml
+  - include:
+      file: db/changelog/020-image-title-sort-key.yaml
+  - include:
+      file: db/changelog/021-upload-batch-item-title.yaml
+  - include:
+      file: db/changelog/022-allow-duplicate-image-sha256.yaml

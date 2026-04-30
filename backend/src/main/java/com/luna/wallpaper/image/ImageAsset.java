@@ -21,6 +21,8 @@ class ImageAsset {
 
 	private String title;
 
+	private String titleSortKey;
+
 	private String originalFilename;
 
 	private String sha256;
@@ -73,6 +75,7 @@ class ImageAsset {
 			Integer height) {
 		this.id = id;
 		this.title = title;
+		this.titleSortKey = ImageTitleSortKeyGenerator.generate(title);
 		this.originalFilename = originalFilename;
 		this.sha256 = sha256;
 		this.mimeType = mimeType;
@@ -83,6 +86,7 @@ class ImageAsset {
 
 	String id() { return id; }
 	String title() { return title; }
+	String titleSortKey() { return titleSortKey; }
 	String originalFilename() { return originalFilename; }
 	String sha256() { return sha256; }
 	String mimeType() { return mimeType; }
@@ -97,6 +101,7 @@ class ImageAsset {
 	Category category() { return category; }
 	Set<Tag> tags() { return tags; }
 	LocalDateTime createdAt() { return createdAt; }
+	LocalDateTime updatedAt() { return updatedAt; }
 	LocalDateTime deletedAt() { return deletedAt; }
 
 	void setCurrentVersionId(String currentVersionId) {
@@ -112,7 +117,12 @@ class ImageAsset {
 
 	void updateMetadata(String title, ImageStatus status) {
 		this.title = title;
+		this.titleSortKey = ImageTitleSortKeyGenerator.generate(title);
 		this.status = status;
+	}
+
+	void refreshTitleSortKey() {
+		this.titleSortKey = ImageTitleSortKeyGenerator.generate(title);
 	}
 
 	void replaceCurrentFile(StoredImage stored) {

@@ -444,8 +444,8 @@ onMounted(refresh)
           <div class="workspace-tab-panel">
             <div class="toolbar-row">
               <el-radio-group v-model="userStatusFilter">
-                <el-radio-button label="ACTIVE">启用</el-radio-button>
-                <el-radio-button label="DISABLED">已停用</el-radio-button>
+                <el-radio-button value="ACTIVE">启用</el-radio-button>
+                <el-radio-button value="DISABLED">已停用</el-radio-button>
               </el-radio-group>
               <el-input v-model="userKeyword" placeholder="搜索用户名、姓名或角色" :prefix-icon="Search" style="max-width: 320px" />
               <el-button type="primary" :icon="Plus" @click="openUser()">新增用户</el-button>
@@ -497,8 +497,8 @@ onMounted(refresh)
           <div class="workspace-tab-panel">
             <div class="toolbar-row">
               <el-radio-group v-model="roleStatusFilter">
-                <el-radio-button label="ENABLED">启用</el-radio-button>
-                <el-radio-button label="DISABLED">已停用</el-radio-button>
+                <el-radio-button value="ENABLED">启用</el-radio-button>
+                <el-radio-button value="DISABLED">已停用</el-radio-button>
               </el-radio-group>
               <el-input v-model="roleKeyword" placeholder="搜索角色编码或名称" :prefix-icon="Search" style="max-width: 320px" />
               <el-button type="primary" :icon="Plus" @click="openRole()">新增角色</el-button>

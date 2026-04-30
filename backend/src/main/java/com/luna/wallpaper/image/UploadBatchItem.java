@@ -23,6 +23,8 @@ class UploadBatchItem {
 
 	private String originalFilename;
 
+	private String title;
+
 	private String sha256 = "";
 
 	private String mimeType;
@@ -61,9 +63,14 @@ class UploadBatchItem {
 	}
 
 	UploadBatchItem(String batchId, String originalFilename) {
+		this(batchId, originalFilename, null);
+	}
+
+	UploadBatchItem(String batchId, String originalFilename, String title) {
 		this.id = UUID.randomUUID().toString();
 		this.batchId = batchId;
 		this.originalFilename = originalFilename;
+		this.title = title;
 	}
 
 	String id() { return id; }
@@ -71,6 +78,7 @@ class UploadBatchItem {
 	String imageId() { return imageId; }
 	String candidateImageId() { return candidateImageId; }
 	String originalFilename() { return originalFilename; }
+	String title() { return title; }
 	String sha256() { return sha256; }
 	UploadBatchItemStatus status() { return status; }
 	int progressPercent() { return progressPercent; }
@@ -106,16 +114,17 @@ class UploadBatchItem {
 		this.errorMessage = null;
 	}
 
-	void duplicated(String imageId) {
-		duplicated(imageId, this.sha256);
+	void duplicated() {
+		duplicated(this.sha256);
 	}
 
-	void duplicated(String imageId, String sha256) {
-		this.imageId = imageId;
+	void duplicated(String sha256) {
+		this.imageId = null;
 		this.sha256 = sha256 == null ? "" : sha256;
 		this.status = UploadBatchItemStatus.DUPLICATE;
 		this.progressPercent = 100;
-		this.errorMessage = "图片内容重复，已关联既有图片";
+		this.errorMessage = "图片内容重复，确认后不会新增";
+		clearStoredObjects();
 	}
 
 	void failed(String message) {
@@ -129,9 +138,10 @@ class UploadBatchItem {
 		failed(message);
 	}
 
-	void retrying(String originalFilename) {
+	void retrying(String originalFilename, String title) {
 		this.retryCount++;
 		this.originalFilename = originalFilename;
+		this.title = title;
 		this.sha256 = "";
 		this.sizeBytes = null;
 		this.status = UploadBatchItemStatus.PROCESSING;

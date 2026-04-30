@@ -1,38 +1,18 @@
-import json
 from pathlib import Path
 
-import httpx
 import pytest
 
-from image_uploader.client import ApiClient
 from image_uploader.main import (
     GracefulInterrupt,
-    ImportPlan,
     collect_images,
     friendly_title,
-    update_title_for_record,
-    update_titles_for_records,
     upload_chunk,
 )
 from image_uploader.models import (
     STATUS_INTERRUPTED,
-    STATUS_SKIPPED_COMPLETED,
     STATUS_UPLOADED,
-    ImportRecord,
     ScannedImage,
 )
-from image_uploader.settings import Settings
-from image_uploader.state import StateStore
-
-
-def settings(tmp_path, **kwargs) -> Settings:
-    values = {
-        "api_base_url": "http://example.test/api",
-        "authorization_header": "Bearer token",
-        "data_dir": tmp_path,
-    }
-    values.update(kwargs)
-    return Settings(**values)
 
 
 def image(relative_path: str, desired_title: str = "破洞001") -> ScannedImage:
@@ -71,75 +51,32 @@ def test_collect_images_assigns_independent_title_sequences(tmp_path) -> None:
     ]
 
 
-def test_update_title_preserves_existing_status_category_and_tags(tmp_path) -> None:
-    patch_payloads: list[dict[str, object]] = []
+def test_upload_chunk_sends_desired_title() -> None:
+    class FakeClient:
+        titles: list[str] = []
 
-    def handler(request: httpx.Request) -> httpx.Response:
-        if request.method == "GET" and request.url.path == "/api/images/img-1":
-            return httpx.Response(
-                200,
-                json={
-                    "id": "img-1",
-                    "title": "old-title",
-                    "status": "PUBLISHED",
-                    "category": {"id": "cat-1", "name": "纺织瑕疵"},
-                    "tags": [{"id": "tag-1"}, {"id": "tag-2"}],
-                },
-            )
-        if request.method == "PATCH" and request.url.path == "/api/images/img-1":
-            patch_payloads.append(json.loads(request.content))
-            return httpx.Response(200, json={"id": "img-1", "title": "破洞001"})
-        raise AssertionError(f"unexpected request {request.method} {request.url.path}")
+        def create_upload_session(self, **_kwargs):
+            return {"id": "session-1", "items": []}
 
-    client = ApiClient(settings(tmp_path), transport=httpx.MockTransport(handler))
-    try:
-        record = ImportRecord.from_image(image("1/a.jpg"), STATUS_UPLOADED, image_id="img-1")
-        updated = update_title_for_record(client, record)
-    finally:
-        client.close()
+        def stage_upload_item(self, _session_id, _file_path, title):
+            self.titles.append(title)
+            return {"id": "session-1", "items": [{"status": "STAGED", "candidateImageId": "img-1"}]}
 
-    assert updated.title_updated is True
-    assert updated.title_error == ""
-    assert patch_payloads == [
-        {
-            "title": "破洞001",
-            "status": "PUBLISHED",
-            "categoryId": "cat-1",
-            "tagIds": ["tag-1", "tag-2"],
-        }
-    ]
+        def confirm_upload_session(self, session_id):
+            return {
+                "id": session_id,
+                "status": "CONFIRMED",
+                "items": [{"status": "CONFIRMED", "imageId": "img-1"}],
+            }
 
+        def cancel_upload_session(self, _session_id):
+            raise AssertionError("upload session should not be canceled")
 
-def test_skipped_completed_title_update_keeps_completed_checkpoint_status(tmp_path) -> None:
-    def handler(request: httpx.Request) -> httpx.Response:
-        if request.method == "GET":
-            return httpx.Response(
-                200,
-                json={
-                    "id": "img-1",
-                    "title": "破洞001",
-                    "status": "PUBLISHED",
-                    "category": {"id": "cat-1"},
-                    "tags": [{"id": "tag-1"}],
-                },
-            )
-        raise AssertionError(f"unexpected request {request.method} {request.url.path}")
+    fake = FakeClient()
+    batch = upload_chunk(fake, "cat-1", [image("1/a.jpg", "破洞001")], ["tag-1"])
 
-    scanned = image("1/a.jpg")
-    state = StateStore(tmp_path / "state.jsonl")
-    state.append(ImportRecord.from_image(scanned, STATUS_UPLOADED, image_id="img-1"))
-    current = ImportRecord.from_image(scanned, STATUS_SKIPPED_COMPLETED, image_id="img-1")
-    plan = ImportPlan([scanned], {scanned.relative_path: current}, [])
-    client = ApiClient(settings(tmp_path), transport=httpx.MockTransport(handler))
-    try:
-        updated = update_titles_for_records(client, [current], plan, state)
-    finally:
-        client.close()
-
-    assert updated[0].title_updated is True
-    assert plan.records()[0].status == STATUS_SKIPPED_COMPLETED
-    assert state.latest_by_path[scanned.relative_path].status == STATUS_UPLOADED
-    assert state.latest_by_path[scanned.relative_path].title_updated is True
+    assert fake.titles == ["破洞001"]
+    assert batch["status"] == "CONFIRMED"
 
 
 def test_keyboard_interrupt_before_confirm_cancels_session() -> None:

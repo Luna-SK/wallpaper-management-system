@@ -8,6 +8,7 @@ import {
   onMounted,
   reactive,
   ref,
+  watch,
   type Component,
   type PropType,
   type VNode,
@@ -55,9 +56,12 @@ import {
   restoreImage,
   updateImage,
   uploadSessionItem,
+  type ImageSortBy,
+  type ImageSortDirection,
   type ImageStatus,
   type ImageRecord,
   type ImageVersionRecord,
+  type UploadDuplicateImage,
   type UploadBatch,
   type UploadBatchItemStatus,
   type UploadBatchItem,
@@ -117,6 +121,8 @@ const keyword = ref('')
 const selectedCategoryId = ref('')
 const selectedTagId = ref('')
 const favoriteOnly = ref(false)
+const sortBy = ref<ImageSortBy>('createdAt')
+const sortDirection = ref<ImageSortDirection>('desc')
 const imageScope = ref<ImageStatus>('ACTIVE')
 const displayMode = ref<'grid' | 'list'>('grid')
 const rows = ref<ImageRecord[]>([])
@@ -136,6 +142,7 @@ const previewLoading = ref(false)
 const previewIndex = ref(-1)
 const previewImageId = ref('')
 const previewUrl = ref('')
+const detachedPreviewImage = ref<ImageRecord | null>(null)
 const editing = ref<ImageRecord | null>(null)
 const editVisible = ref(false)
 const editForm = reactive<{ title: string; status: ImageStatus; categoryId: string; tagIds: string[] }>({
@@ -199,9 +206,27 @@ const uploadTags = ref<Tag[]>([])
 const uploadSession = ref<UploadBatch | null>(null)
 const uploadAbortController = ref<AbortController | null>(null)
 const uploadItemFiles = reactive<Record<string, File>>({})
+const uploadTitles = reactive<Record<string, string>>({})
+const uploadDuplicatePreviewImages = reactive<Record<string, ImageRecord>>({})
+const uploadDuplicateThumbnailUrls = reactive<Record<string, string>>({})
+const uploadDuplicateLoading = reactive<Record<string, boolean>>({})
+const uploadDuplicateErrors = reactive<Record<string, string>>({})
+const uploadDuplicateLoadToken = ref(0)
 const uploadForm = reactive({ categoryId: '', tagIds: [] as string[] })
 const confirmableUploadItemStatuses: UploadBatchItemStatus[] = ['STAGED', 'DUPLICATE']
 const terminalUploadBatchStatuses: UploadBatchStatus[] = ['CONFIRMED', 'CANCELLED', 'EXPIRED']
+const sortOptions: Array<{ label: string; value: ImageSortBy }> = [
+  { label: '上传时间', value: 'createdAt' },
+  { label: '更新时间', value: 'updatedAt' },
+  { label: '标题', value: 'title' },
+  { label: '文件大小', value: 'sizeBytes' },
+  { label: '分辨率', value: 'resolution' },
+  { label: '评论数', value: 'commentCount' },
+  { label: '收藏数', value: 'favoriteCount' },
+  { label: '点赞数', value: 'likeCount' },
+  { label: '浏览数', value: 'viewCount' },
+  { label: '下载数', value: 'downloadCount' },
+]
 
 const categoryOptions = computed(() => categories.value.filter((category) => category.enabled))
 const tagOptions = computed(() => tags.value.filter((tag) => tag.enabled))
@@ -219,7 +244,8 @@ const canUpload = computed(() => auth.hasPermission('image:upload'))
 const canEdit = computed(() => auth.hasPermission('image:edit'))
 const canDelete = computed(() => auth.hasPermission('image:delete'))
 const canManageInteractions = computed(() => auth.hasPermission('interaction:manage'))
-const currentPreview = computed(() => previewIndex.value >= 0 ? rows.value[previewIndex.value] ?? null : null)
+const currentPreview = computed(() => detachedPreviewImage.value ?? (previewIndex.value >= 0 ? rows.value[previewIndex.value] ?? null : null))
+const currentPreviewActionable = computed(() => Boolean(currentPreview.value && currentPreview.value.status !== 'DELETED'))
 const currentPreviewTagGroups = computed(() => groupTagsByGroup(currentPreview.value?.tags ?? []))
 const imageEditorReady = computed(() => Boolean(editSourceImage.value && imageEditor.cropWidth > 0 && imageEditor.cropHeight > 0))
 const imageEditorCursor = computed(() => {
@@ -245,14 +271,18 @@ const versionPreviewTitle = computed(() => {
   if (!version) return '版本预览'
   return `版本预览 V${version.versionNo}${version.current ? '（当前）' : ''}`
 })
-const canPreviewPrevious = computed(() => previewIndex.value > 0)
-const canPreviewNext = computed(() => previewIndex.value >= 0 && previewIndex.value < rows.value.length - 1)
+const canPreviewPrevious = computed(() => !detachedPreviewImage.value && previewIndex.value > 0)
+const canPreviewNext = computed(() => !detachedPreviewImage.value && previewIndex.value >= 0 && previewIndex.value < rows.value.length - 1)
+const previewPositionText = computed(() => previewIndex.value >= 0 ? `${previewIndex.value + 1} / ${rows.value.length}` : '已有图片')
 const selectedSingleUploadFile = computed(() => uploadFileList.value[0] ?? null)
 const uploadHasStagedItems = computed(() => Boolean(uploadSession.value?.items.some((item) => confirmableUploadItemStatuses.includes(item.status))))
 const uploadHasFailedItems = computed(() => Boolean(uploadSession.value?.items.some((item) => item.status === 'FAILED')))
-const uploadCanConfirmSession = computed(() => Boolean(uploadSession.value && uploadHasStagedItems.value && !uploadHasFailedItems.value))
+const uploadDuplicateItems = computed(() => uploadSession.value?.items.filter((item) => item.status === 'DUPLICATE') ?? [])
+const uploadCanConfirmSession = computed(() => Boolean(uploadSession.value && !terminalUploadBatchStatuses.includes(uploadSession.value.status) && uploadHasStagedItems.value && !uploadHasFailedItems.value))
+const uploadCanFinishConfirmedDuplicates = computed(() => uploadSession.value?.status === 'CONFIRMED' && uploadDuplicateItems.value.length > 0)
 const uploadLocked = computed(() => Boolean(uploadSession.value) || uploadLoading.value || uploadConfirming.value || uploadCancelling.value)
 const uploadFailedItems = computed(() => uploadSession.value?.items.filter((item) => item.status === 'FAILED') ?? [])
+const uploadPrimaryButtonText = computed(() => uploadCanFinishConfirmedDuplicates.value ? '完成' : '确认')
 const uploadProcessedCount = computed(() => {
   if (!uploadSession.value) return 0
   const processed = uploadSession.value.successCount + uploadSession.value.failedCount + uploadSession.value.duplicateCount
@@ -267,6 +297,7 @@ const uploadProgressStatus = computed(() => {
 const uploadProgressTitle = computed(() => {
   if (!uploadSession.value) return ''
   if (uploadFailedItems.value.length > 0) return '部分图片上传失败'
+  if (uploadSession.value.duplicateCount > 0 && uploadSession.value.successCount === 0 && uploadProgressPercentage.value >= 100) return '发现重复图片'
   if (uploadProgressPercentage.value >= 100) return '图片处理完成'
   return '正在上传图片'
 })
@@ -275,6 +306,12 @@ const uploadProgressSummary = computed(() => {
   const duplicateText = uploadSession.value.duplicateCount > 0 ? `，${uploadSession.value.duplicateCount} 张重复` : ''
   if (uploadFailedItems.value.length > 0) {
     return `${uploadFailedItems.value.length} 张失败，可单独重新上传${duplicateText}`
+  }
+  if (uploadSession.value.duplicateCount > 0 && uploadSession.value.successCount === 0) {
+    return `发现 ${uploadSession.value.duplicateCount} 张重复，未新增图片`
+  }
+  if (uploadSession.value.duplicateCount > 0) {
+    return `已处理 ${uploadProcessedCount.value} / ${uploadSession.value.totalCount} 张，其中 ${uploadSession.value.duplicateCount} 张重复`
   }
   return `已处理 ${uploadProcessedCount.value} / ${uploadSession.value.totalCount} 张${duplicateText}`
 })
@@ -528,6 +565,9 @@ function replaceImageRecord(record: ImageRecord) {
   if (index !== -1) {
     rows.value[index] = record
   }
+  if (detachedPreviewImage.value?.id === record.id) {
+    detachedPreviewImage.value = record
+  }
   return record
 }
 
@@ -540,6 +580,16 @@ function applyInteractionState(state: InteractionState) {
     row.favoritedByMe = state.favoritedByMe
     row.likedByMe = state.likedByMe
   }
+  if (detachedPreviewImage.value?.id === state.imageId) {
+    detachedPreviewImage.value = {
+      ...detachedPreviewImage.value,
+      favoriteCount: state.favoriteCount,
+      likeCount: state.likeCount,
+      commentCount: state.commentCount,
+      favoritedByMe: state.favoritedByMe,
+      likedByMe: state.likedByMe,
+    }
+  }
 }
 
 async function refreshImageRecord(id: string) {
@@ -551,6 +601,26 @@ async function refreshImageRecordQuietly(id: string) {
     await refreshImageRecord(id)
   } catch {
     ElMessage.warning('图片计数刷新失败，请稍后刷新列表')
+  }
+}
+
+async function refreshOpenPreviewImage(imageId: string, record: ImageRecord, reloadBlob: boolean) {
+  if (!previewVisible.value || previewImageId.value !== imageId) return
+  replaceImageRecord(record)
+  if (!reloadBlob) return
+  try {
+    const nextPreviewUrl = await imageBlobUrl(imageId, 'preview', `${record.updatedAt || ''}-${Date.now()}`)
+    if (!previewVisible.value || previewImageId.value !== imageId) {
+      URL.revokeObjectURL(nextPreviewUrl)
+      return
+    }
+    const previousPreviewUrl = previewUrl.value
+    previewUrl.value = nextPreviewUrl
+    if (previousPreviewUrl) {
+      URL.revokeObjectURL(previousPreviewUrl)
+    }
+  } catch {
+    ElMessage.warning('图片预览刷新失败，请稍后重试')
   }
 }
 
@@ -573,6 +643,19 @@ function revokeThumbnailUrl(id: string) {
   }
 }
 
+async function refreshThumbnailUrl(id: string, cacheKey: string | number = Date.now()) {
+  try {
+    const nextThumbnailUrl = await imageBlobUrl(id, 'thumbnail', cacheKey)
+    const previousThumbnailUrl = thumbnailUrls[id]
+    thumbnailUrls[id] = nextThumbnailUrl
+    if (previousThumbnailUrl) {
+      URL.revokeObjectURL(previousThumbnailUrl)
+    }
+  } catch {
+    ElMessage.warning('图片缩略图刷新失败，请稍后刷新列表')
+  }
+}
+
 function revokeStaleThumbnailUrls() {
   const activeIds = new Set(rows.value.map((row) => row.id))
   Object.keys(thumbnailUrls).forEach((id) => {
@@ -591,6 +674,44 @@ function revokePreviewUrl() {
     URL.revokeObjectURL(previewUrl.value)
     previewUrl.value = ''
   }
+}
+
+function revokeUploadDuplicateThumbnailUrl(imageId: string) {
+  if (uploadDuplicateThumbnailUrls[imageId]) {
+    URL.revokeObjectURL(uploadDuplicateThumbnailUrls[imageId])
+    delete uploadDuplicateThumbnailUrls[imageId]
+  }
+}
+
+function clearUploadDuplicateDetails() {
+  uploadDuplicateLoadToken.value++
+  Object.keys(uploadDuplicateThumbnailUrls).forEach(revokeUploadDuplicateThumbnailUrl)
+  Object.keys(uploadDuplicatePreviewImages).forEach((imageId) => delete uploadDuplicatePreviewImages[imageId])
+  Object.keys(uploadDuplicateLoading).forEach((imageId) => delete uploadDuplicateLoading[imageId])
+  Object.keys(uploadDuplicateErrors).forEach((imageId) => delete uploadDuplicateErrors[imageId])
+}
+
+function pruneUploadDuplicateDetails(activeImageIds: Set<string>) {
+  Object.keys(uploadDuplicatePreviewImages).forEach((imageId) => {
+    if (!activeImageIds.has(imageId)) {
+      delete uploadDuplicatePreviewImages[imageId]
+    }
+  })
+  Object.keys(uploadDuplicateThumbnailUrls).forEach((imageId) => {
+    if (!activeImageIds.has(imageId)) {
+      revokeUploadDuplicateThumbnailUrl(imageId)
+    }
+  })
+  Object.keys(uploadDuplicateLoading).forEach((imageId) => {
+    if (!activeImageIds.has(imageId)) {
+      delete uploadDuplicateLoading[imageId]
+    }
+  })
+  Object.keys(uploadDuplicateErrors).forEach((imageId) => {
+    if (!activeImageIds.has(imageId)) {
+      delete uploadDuplicateErrors[imageId]
+    }
+  })
 }
 
 function revokeEditSourceUrl() {
@@ -672,14 +793,51 @@ function uploadFileSize(file: UploadUserFile) {
   return typeof file.size === 'number' ? formatBytes(file.size) : '未知大小'
 }
 
+function rawUploadFileKey(file: File) {
+  return `${file.name}:${file.size}:${file.lastModified}`
+}
+
 function uploadFileKey(file: UploadUserFile) {
   const raw = file.raw as unknown as File | undefined
-  if (raw) return `${raw.name}:${raw.size}:${raw.lastModified}`
+  if (raw) return rawUploadFileKey(raw)
   return `${file.name}:${file.size ?? 0}`
+}
+
+function uploadTitleKey(file: UploadUserFile) {
+  return uploadFileKey(file)
 }
 
 function uploadPreviewKey(file: UploadUserFile) {
   return file.uid === undefined ? uploadFileKey(file) : String(file.uid)
+}
+
+function uploadDefaultTitle(filename: string) {
+  const cleaned = filename.replace(/\\/g, '/').split('/').pop() || 'image'
+  const dot = cleaned.lastIndexOf('.')
+  return dot > 0 ? cleaned.slice(0, dot) : cleaned
+}
+
+function uploadTitlePlaceholder(file: UploadUserFile, includeLabel = false) {
+  const defaultTitle = uploadDefaultTitle(file.name)
+  return includeLabel ? `图片标题，默认：${defaultTitle}` : `默认：${defaultTitle}`
+}
+
+function normalizedUploadTitle(file: UploadUserFile) {
+  const title = uploadTitles[uploadTitleKey(file)]?.trim()
+  return title ? title : null
+}
+
+function clearUploadTitles() {
+  Object.keys(uploadTitles).forEach((key) => delete uploadTitles[key])
+}
+
+function syncUploadTitles(files = uploadFileList.value) {
+  const activeKeys = new Set(files.map(uploadTitleKey))
+  Object.keys(uploadTitles).forEach((key) => {
+    if (!activeKeys.has(key)) {
+      delete uploadTitles[key]
+    }
+  })
 }
 
 function isAcceptedUploadFile(file: UploadUserFile) {
@@ -716,8 +874,11 @@ function normalizeUploadFiles(files: UploadUserFile[]) {
   return normalized.slice(0, uploadModeLimit())
 }
 
-function selectedUploadFiles() {
-  return uploadFileList.value.flatMap((item) => (item.raw ? [item.raw as unknown as File] : []))
+function selectedUploadEntries() {
+  return uploadFileList.value.flatMap((item) => {
+    const raw = item.raw as unknown as File | undefined
+    return raw ? [{ file: raw, title: normalizedUploadTitle(item) }] : []
+  })
 }
 
 function revokeSingleUploadPreview() {
@@ -796,6 +957,8 @@ async function loadImages() {
       tagId: selectedTagId.value || undefined,
       status: showingDeletedImages.value ? 'DELETED' : undefined,
       favoriteOnly: favoriteOnly.value || undefined,
+      sortBy: sortBy.value,
+      sortDirection: sortDirection.value,
       page: pagination.page,
       size: pagination.size,
     })
@@ -806,7 +969,7 @@ async function loadImages() {
     selectedRows.value = []
     imageTableRef.value?.clearSelection()
     revokeStaleThumbnailUrls()
-    if (activePreviewId) {
+    if (activePreviewId && !detachedPreviewImage.value) {
       const nextPreviewIndex = rows.value.findIndex((row) => row.id === activePreviewId)
       if (nextPreviewIndex === -1) {
         previewVisible.value = false
@@ -837,7 +1000,14 @@ function resetFilters() {
   selectedCategoryId.value = ''
   selectedTagId.value = ''
   favoriteOnly.value = false
+  sortBy.value = 'createdAt'
+  sortDirection.value = 'desc'
   tags.value = []
+  pagination.page = 1
+  void loadImages()
+}
+
+function handleSortChange() {
   pagination.page = 1
   void loadImages()
 }
@@ -919,8 +1089,10 @@ async function openUploadDialog() {
   uploadForm.categoryId = textile?.id ?? fallback?.id ?? ''
   uploadForm.tagIds = []
   uploadFileList.value = []
+  clearUploadTitles()
   revokeSingleUploadPreview()
   revokeAllBatchUploadPreviews()
+  clearUploadDuplicateDetails()
   uploadSession.value = null
   Object.keys(uploadItemFiles).forEach((key) => delete uploadItemFiles[key])
   uploadTags.value = await getTags()
@@ -929,8 +1101,10 @@ async function openUploadDialog() {
 
 function handleUploadModeChange() {
   uploadFileList.value = []
+  clearUploadTitles()
   revokeSingleUploadPreview()
   revokeAllBatchUploadPreviews()
+  clearUploadDuplicateDetails()
   uploadSession.value = null
   Object.keys(uploadItemFiles).forEach((key) => delete uploadItemFiles[key])
 }
@@ -943,19 +1117,27 @@ function handleUploadFileChange(_file: UploadFile, files: UploadFiles) {
   const normalized = normalizeUploadFiles(files as UploadUserFile[])
   if (uploadMode.value === 'SINGLE') {
     uploadFileList.value = normalized.slice(0, 1)
+    syncUploadTitles()
     refreshSingleUploadPreview()
     revokeAllBatchUploadPreviews()
     return
   }
   uploadFileList.value = normalized
+  syncUploadTitles()
   syncBatchUploadPreviews(normalized)
 }
 
 function removeSelectedUploadFile(file?: UploadUserFile) {
   if (uploadLocked.value) return
+  if (file === undefined) {
+    clearUploadTitles()
+  } else {
+    delete uploadTitles[uploadTitleKey(file)]
+  }
   uploadFileList.value = file === undefined
     ? []
     : uploadFileList.value.filter((item) => uploadPreviewKey(item) !== uploadPreviewKey(file))
+  syncUploadTitles()
   if (uploadMode.value === 'SINGLE') {
     refreshSingleUploadPreview()
   } else {
@@ -966,6 +1148,7 @@ function removeSelectedUploadFile(file?: UploadUserFile) {
 function clearSelectedUploadFiles() {
   if (uploadLocked.value) return
   uploadFileList.value = []
+  clearUploadTitles()
   revokeSingleUploadPreview()
   revokeAllBatchUploadPreviews()
 }
@@ -974,12 +1157,12 @@ function validateUploadSelection() {
   if (!ensureOperationAllowed(canUpload.value)) {
     return null
   }
-  const files = selectedUploadFiles()
-  if (files.length === 0) {
+  const entries = selectedUploadEntries()
+  if (entries.length === 0) {
     ElMessage.warning('请先选择图片文件')
     return null
   }
-  if (uploadMode.value === 'SINGLE' && files.length !== 1) {
+  if (uploadMode.value === 'SINGLE' && entries.length !== 1) {
     ElMessage.warning('单张上传只能选择 1 张图片')
     return null
   }
@@ -991,10 +1174,10 @@ function validateUploadSelection() {
     ElMessage.warning('请至少选择一个标签')
     return null
   }
-  return files
+  return entries
 }
 
-async function stageSelectedUploadFiles(files: File[]) {
+async function stageSelectedUploadFiles(entries: Array<{ file: File; title: string | null }>) {
   if (!ensureOperationAllowed(canUpload.value)) {
     return null
   }
@@ -1005,15 +1188,15 @@ async function stageSelectedUploadFiles(files: File[]) {
       mode: uploadMode.value,
       categoryId: uploadForm.categoryId,
       tagIds: uploadForm.tagIds,
-      totalCount: files.length,
+      totalCount: entries.length,
     })
     uploadSession.value = session
     revokeAllBatchUploadPreviews()
-    for (const file of files) {
-      session = await uploadSessionItem(session.id, file, uploadAbortController.value.signal)
+    for (const entry of entries) {
+      session = await uploadSessionItem(session.id, entry.file, entry.title, uploadAbortController.value.signal)
       const latestItem = session.items.at(-1)
       if (latestItem) {
-        uploadItemFiles[latestItem.id] = file
+        uploadItemFiles[latestItem.id] = entry.file
       }
       uploadSession.value = session
     }
@@ -1040,7 +1223,7 @@ async function retryUploadItem(item: UploadBatchItem) {
   uploadLoading.value = true
   uploadAbortController.value = new AbortController()
   try {
-    uploadSession.value = await retryUploadSessionItem(uploadSession.value.id, item.id, file, uploadAbortController.value.signal)
+    uploadSession.value = await retryUploadSessionItem(uploadSession.value.id, item.id, file, item.title, uploadAbortController.value.signal)
     ElMessage.success('文件已重新上传')
   } catch (error) {
     if (!uploadCancelling.value) {
@@ -1054,6 +1237,11 @@ async function retryUploadItem(item: UploadBatchItem) {
 
 async function confirmUploadDialog() {
   if (!ensureOperationAllowed(canUpload.value)) return
+  if (uploadCanFinishConfirmedDuplicates.value) {
+    uploadVisible.value = false
+    resetUploadDialog()
+    return
+  }
   if (!uploadSession.value) {
     const files = validateUploadSelection()
     if (!files) return
@@ -1084,7 +1272,17 @@ async function confirmUploadDialog() {
   uploadConfirming.value = true
   try {
     const session = await confirmUploadSession(uploadSession.value.id)
-    ElMessage.success(session.duplicateCount > 0 ? '图片已上传，重复图片已关联既有记录' : '图片已上传')
+    uploadSession.value = session
+    if (session.duplicateCount > 0) {
+      if (session.successCount === 0) {
+        ElMessage.warning('发现重复图片，未新增')
+      } else {
+        ElMessage.success(`已上传 ${session.successCount} 张，${session.duplicateCount} 张重复`)
+        await loadImages()
+      }
+      return
+    }
+    ElMessage.success('图片已上传')
     uploadVisible.value = false
     resetUploadDialog()
     await loadImages()
@@ -1131,12 +1329,14 @@ function resetUploadDialog() {
   uploadFileList.value = []
   revokeSingleUploadPreview()
   revokeAllBatchUploadPreviews()
+  clearUploadDuplicateDetails()
   uploadSession.value = null
   uploadLoading.value = false
   uploadConfirming.value = false
   uploadCancelling.value = false
   uploadAbortController.value = null
   Object.keys(uploadItemFiles).forEach((key) => delete uploadItemFiles[key])
+  clearUploadTitles()
 }
 
 function uploadModeLimit() {
@@ -1152,7 +1352,7 @@ function uploadDialogTip() {
 function uploadItemMeta(item: UploadBatchItem) {
   const file = uploadItemFiles[item.id]
   if (file) return `${file.type || '图片文件'} · ${formatBytes(file.size)}`
-  if (item.status === 'DUPLICATE') return '系统中已有相同图片'
+  if (item.status === 'DUPLICATE') return uploadDuplicateGroupMeta(item)
   return '等待处理结果'
 }
 
@@ -1162,14 +1362,103 @@ function uploadItemDescription(item: UploadBatchItem) {
   return ''
 }
 
-async function showPreviewAt(index: number) {
-  const row = rows.value[index]
-  if (!row) return
+function uploadDuplicateGroupMeta(item: UploadBatchItem) {
+  if (item.duplicateImages.length > 0) return `系统中已有 ${item.duplicateImages.length} 张相同图片`
+  if (item.duplicateSessionItems.length > 0) return `与本次上传中的 ${item.duplicateSessionItems.length} 张图片重复`
+  return '图片内容重复'
+}
+
+function uploadDuplicateGroupDescription(item: UploadBatchItem) {
+  if (item.duplicateImages.length > 0) return item.errorMessage || '系统中已有相同图片，确认后不会新增'
+  if (item.duplicateSessionItems.length > 0) return '与本次上传中的其他图片重复，确认后不会新增'
+  return item.errorMessage || '确认后不会新增'
+}
+
+function uploadDuplicateImageMeta(image: UploadDuplicateImage) {
+  return `${image.originalFilename} · ${formatBytes(image.sizeBytes)}`
+}
+
+function uploadDuplicateImageDescription(image: UploadDuplicateImage) {
+  if (uploadDuplicateErrors[image.id]) return uploadDuplicateErrors[image.id]
+  const resolution = image.width && image.height ? `${image.width} × ${image.height}` : '未知分辨率'
+  return `${resolution} · ${formatDateTime(image.createdAt)}`
+}
+
+function uploadDuplicateSessionTitle(item: UploadBatchItem['duplicateSessionItems'][number]) {
+  return item.title || item.originalFilename
+}
+
+function uploadDuplicateSessionMeta(item: UploadBatchItem['duplicateSessionItems'][number]) {
+  if (item.imageId) return `${item.originalFilename} · 已入库`
+  return `${item.originalFilename} · ${item.status === 'STAGED' ? '待确认' : '本次重复'}`
+}
+
+async function syncUploadDuplicateDetails(session = uploadSession.value) {
+  const duplicateItems = session?.items.filter((item) => item.status === 'DUPLICATE') ?? []
+  const activeImageIds = new Set(duplicateItems.flatMap((item) => item.duplicateImages.map((image) => image.id)))
+  pruneUploadDuplicateDetails(activeImageIds)
+  for (const item of duplicateItems) {
+    for (const image of item.duplicateImages) {
+      void loadUploadDuplicateThumbnail(image)
+    }
+  }
+}
+
+async function loadUploadDuplicateThumbnail(image: UploadDuplicateImage) {
+  if (uploadDuplicateLoading[image.id] || uploadDuplicateThumbnailUrls[image.id]) return
+  const loadToken = uploadDuplicateLoadToken.value
+  uploadDuplicateLoading[image.id] = true
+  delete uploadDuplicateErrors[image.id]
+  try {
+    const thumbnailUrl = await imageBlobUrl(image.id, 'thumbnail')
+    if (loadToken === uploadDuplicateLoadToken.value) {
+      uploadDuplicateThumbnailUrls[image.id] = thumbnailUrl
+    } else {
+      URL.revokeObjectURL(thumbnailUrl)
+    }
+  } catch {
+    if (loadToken === uploadDuplicateLoadToken.value) {
+      uploadDuplicateErrors[image.id] = '重复图片缩略图加载失败'
+    }
+  } finally {
+    if (loadToken === uploadDuplicateLoadToken.value) {
+      uploadDuplicateLoading[image.id] = false
+    }
+  }
+}
+
+async function previewUploadDuplicate(image: UploadDuplicateImage) {
+  let record = uploadDuplicatePreviewImages[image.id]
+  if (!record) {
+    const loadToken = uploadDuplicateLoadToken.value
+    uploadDuplicateLoading[image.id] = true
+    delete uploadDuplicateErrors[image.id]
+    try {
+      record = await getImage(image.id)
+      if (loadToken !== uploadDuplicateLoadToken.value) return
+      uploadDuplicatePreviewImages[image.id] = record
+    } catch {
+      if (loadToken === uploadDuplicateLoadToken.value) {
+        uploadDuplicateErrors[image.id] = '重复图片详情加载失败'
+      }
+      ElMessage.warning('暂时无法打开已有图片')
+      return
+    } finally {
+      if (loadToken === uploadDuplicateLoadToken.value) {
+        uploadDuplicateLoading[image.id] = false
+      }
+    }
+  }
+  await showPreviewRecord(record, rows.value.findIndex((row) => row.id === record.id))
+}
+
+async function showPreviewRecord(row: ImageRecord, index = rows.value.findIndex((item) => item.id === row.id)) {
   previewLoading.value = true
   try {
     const url = await imageBlobUrl(row.id, 'preview')
     revokePreviewUrl()
     previewIndex.value = index
+    detachedPreviewImage.value = index === -1 ? row : null
     previewImageId.value = row.id
     previewUrl.value = url
     previewVisible.value = true
@@ -1182,15 +1471,22 @@ async function showPreviewAt(index: number) {
   }
 }
 
+async function showPreviewAt(index: number) {
+  const row = rows.value[index]
+  if (!row) return
+  await showPreviewRecord(row, index)
+}
+
 async function preview(row: ImageRecord) {
   const index = rows.value.findIndex((item) => item.id === row.id)
-  await showPreviewAt(index)
+  await showPreviewRecord(row, index)
 }
 
 function closePreview() {
   revokePreviewUrl()
   previewIndex.value = -1
   previewImageId.value = ''
+  detachedPreviewImage.value = null
   previewLoading.value = false
   comments.value = []
   commentDraft.value = ''
@@ -1904,9 +2200,9 @@ async function restoreVersion(version: ImageVersionRecord) {
   try {
     const saved = await restoreImageVersion(editing.value.id, version.id)
     editing.value = await refreshImageRecord(saved.id)
-    revokeThumbnailUrl(saved.id)
+    await refreshThumbnailUrl(saved.id, `${editing.value.updatedAt || ''}-${Date.now()}`)
     if (previewImageId.value === saved.id) {
-      await refreshImageRecordQuietly(saved.id)
+      await refreshOpenPreviewImage(saved.id, editing.value, true)
     }
     if (versionPreviewVersion.value?.id === version.id) {
       closeVersionPreview()
@@ -2025,8 +2321,9 @@ async function saveEdit() {
         rotation: imageEditor.rotation,
         scale: imageEditor.outputScale,
       }))
-      revokeThumbnailUrl(saved.id)
+      await refreshThumbnailUrl(saved.id, `${saved.updatedAt || ''}-${Date.now()}`)
     }
+    await refreshOpenPreviewImage(saved.id, saved, imageEditor.dirty)
     ElMessage.success('图片信息已保存')
     editing.value = null
     editVisible.value = false
@@ -2045,19 +2342,28 @@ function closeEditDialog() {
   resetImageEditor()
 }
 
-async function remove(row: ImageRecord) {
-  if (!ensureOperationAllowed(canDelete.value)) return
+async function remove(row: ImageRecord): Promise<boolean> {
+  if (!ensureOperationAllowed(canDelete.value)) return false
   try {
     await ElMessageBox.confirm(`确定停用图片“${row.title}”？`, '停用图片', { type: 'warning' })
   } catch {
-    return
+    return false
   }
   try {
     await deleteImage(row.id)
     ElMessage.success('图片已停用')
     await loadImages()
+    return true
   } catch (error) {
     ElMessage.error(errorMessage(error, '图片停用失败'))
+    return false
+  }
+}
+
+async function removeFromPreview(row: ImageRecord) {
+  if (await remove(row)) {
+    previewVisible.value = false
+    closePreview()
   }
 }
 
@@ -2218,11 +2524,18 @@ async function batchDownloadSelected() {
 }
 
 function isUploadConfirmDisabled() {
-  return uploadCancelling.value || uploadConfirming.value || uploadLoading.value || Boolean(uploadSession.value && !uploadCanConfirmSession.value)
+  return uploadCancelling.value
+    || uploadConfirming.value
+    || uploadLoading.value
+    || Boolean(uploadSession.value && !uploadCanConfirmSession.value && !uploadCanFinishConfirmedDuplicates.value)
 }
 
 useDialogEnterSubmit(uploadVisible, confirmUploadDialog, { disabled: isUploadConfirmDisabled })
 useDialogEnterSubmit(editVisible, saveEdit, { disabled: () => editSaving.value })
+
+watch(uploadSession, (session) => {
+  void syncUploadDuplicateDetails(session)
+})
 
 onMounted(async () => {
   window.addEventListener('keydown', handlePreviewKeydown)
@@ -2237,6 +2550,7 @@ onBeforeUnmount(() => {
   resetImageEditor()
   revokeSingleUploadPreview()
   revokeAllBatchUploadPreviews()
+  clearUploadDuplicateDetails()
 })
 </script>
 
@@ -2245,15 +2559,15 @@ onBeforeUnmount(() => {
     <div class="surface surface-pad image-library-panel">
       <div class="image-scope-row">
         <el-radio-group v-model="imageScope" @change="handleImageScopeChange">
-          <el-radio-button label="ACTIVE">启用</el-radio-button>
-          <el-radio-button label="DELETED">已停用</el-radio-button>
+          <el-radio-button value="ACTIVE">启用</el-radio-button>
+          <el-radio-button value="DELETED">已停用</el-radio-button>
         </el-radio-group>
         <el-button v-if="canUpload" type="primary" :icon="UploadFilled" @click="openUploadDialog">上传图片</el-button>
       </div>
 
       <div class="toolbar-row image-toolbar">
         <div class="image-filter-group">
-          <el-input v-model="keyword" placeholder="文件名、标签、备注" :prefix-icon="Search" clearable />
+          <el-input v-model="keyword" placeholder="标题" :prefix-icon="Search" clearable @keyup.enter="applyFilters" />
           <el-select v-model="selectedCategoryId" placeholder="分类" clearable @change="loadTagsForFilter">
             <el-option v-for="category in categoryOptions" :key="category.id" :label="category.name" :value="category.id" />
           </el-select>
@@ -2269,9 +2583,18 @@ onBeforeUnmount(() => {
           </div>
         </div>
         <div class="image-toolbar-actions">
+          <div class="image-sort-controls">
+            <el-select v-model="sortBy" class="image-sort-select" placeholder="排序" @change="handleSortChange">
+              <el-option v-for="option in sortOptions" :key="option.value" :label="option.label" :value="option.value" />
+            </el-select>
+            <el-radio-group v-model="sortDirection" class="sort-direction-toggle" @change="handleSortChange">
+              <el-radio-button value="desc">降序</el-radio-button>
+              <el-radio-button value="asc">升序</el-radio-button>
+            </el-radio-group>
+          </div>
           <el-radio-group v-model="displayMode" class="display-mode-toggle" @change="handleDisplayModeChange">
-            <el-radio-button label="grid">网格</el-radio-button>
-            <el-radio-button label="list">列表</el-radio-button>
+            <el-radio-button value="grid">网格</el-radio-button>
+            <el-radio-button value="list">列表</el-radio-button>
           </el-radio-group>
         </div>
       </div>
@@ -2612,7 +2935,7 @@ onBeforeUnmount(() => {
       </div>
       <div v-if="currentPreview" class="preview-meta">
         <span>{{ currentPreview.originalFilename }}</span>
-        <span>{{ previewIndex + 1 }} / {{ rows.length }}</span>
+        <span>{{ previewPositionText }}</span>
       </div>
       <div v-if="currentPreview" class="preview-details">
         <div class="preview-detail-row">
@@ -2673,12 +2996,21 @@ onBeforeUnmount(() => {
         </div>
       </div>
       <div v-if="currentPreview" class="preview-interactions">
-        <div class="preview-interaction-actions">
-          <el-button type="primary" plain @click="toggleFavorite(currentPreview)">
-            {{ currentPreview.favoritedByMe ? '取消收藏' : '收藏图片' }}
+        <div v-if="currentPreviewActionable" class="preview-interaction-actions">
+          <el-button v-if="canView" type="primary" plain @click="toggleFavorite(currentPreview)">
+            {{ currentPreview.favoritedByMe ? '取消收藏' : '收藏' }}
           </el-button>
-          <el-button type="primary" plain @click="toggleLike(currentPreview)">
-            {{ currentPreview.likedByMe ? '取消点赞' : '点赞图片' }}
+          <el-button v-if="canView" type="primary" plain @click="toggleLike(currentPreview)">
+            {{ currentPreview.likedByMe ? '取消点赞' : '点赞' }}
+          </el-button>
+          <el-button v-if="canEdit" :icon="EditPen" plain @click="openEdit(currentPreview)">
+            编辑
+          </el-button>
+          <el-button v-if="canView" :icon="Download" plain @click="download(currentPreview)">
+            下载
+          </el-button>
+          <el-button v-if="canDelete" type="warning" plain :icon="Warning" @click="removeFromPreview(currentPreview)">
+            停用
           </el-button>
         </div>
         <section class="preview-comments" v-loading="commentsLoading">
@@ -2738,8 +3070,8 @@ onBeforeUnmount(() => {
       <el-form label-width="88px">
         <el-form-item label="上传模式">
           <el-radio-group v-model="uploadMode" :disabled="uploadLocked" @change="handleUploadModeChange">
-            <el-radio-button label="SINGLE">单张</el-radio-button>
-            <el-radio-button label="BATCH">批量</el-radio-button>
+            <el-radio-button value="SINGLE">单张</el-radio-button>
+            <el-radio-button value="BATCH">批量</el-radio-button>
           </el-radio-group>
         </el-form-item>
         <el-form-item label="图片文件" required>
@@ -2768,6 +3100,18 @@ onBeforeUnmount(() => {
               <div class="single-preview-info">
                 <strong>{{ selectedSingleUploadFile.name }}</strong>
                 <span>{{ uploadFileSize(selectedSingleUploadFile) }}</span>
+                <div class="single-upload-title-field">
+                  <span class="single-upload-title-label">图片标题</span>
+                  <el-input
+                    v-model="uploadTitles[uploadTitleKey(selectedSingleUploadFile)]"
+                    class="single-upload-title"
+                    clearable
+                    maxlength="255"
+                    aria-label="图片标题"
+                    :disabled="uploadLocked"
+                    :placeholder="uploadTitlePlaceholder(selectedSingleUploadFile)"
+                  />
+                </div>
                 <div class="single-preview-actions">
                   <el-button link type="primary" :disabled="uploadLocked" @click="removeSelectedUploadFile(selectedSingleUploadFile)">重新选择</el-button>
                   <el-button link type="danger" :disabled="uploadLocked" @click="removeSelectedUploadFile(selectedSingleUploadFile)">移除</el-button>
@@ -2797,6 +3141,9 @@ onBeforeUnmount(() => {
                 清空
               </el-button>
             </div>
+            <div v-if="!uploadSession && uploadFileList.length" class="batch-upload-hint">
+              可为每张图片填写标题，不填则使用文件名（不含后缀）
+            </div>
             <div v-if="!uploadSession && uploadFileList.length" class="batch-preview-grid">
               <div v-for="file in uploadFileList" :key="uploadPreviewKey(file)" class="batch-preview-card">
                 <div class="batch-preview-thumb">
@@ -2806,6 +3153,16 @@ onBeforeUnmount(() => {
                 <div class="batch-preview-main">
                   <strong :title="file.name">{{ file.name }}</strong>
                   <span>{{ uploadFileSize(file) }}</span>
+                  <el-input
+                    v-model="uploadTitles[uploadTitleKey(file)]"
+                    class="batch-title-input"
+                    clearable
+                    maxlength="255"
+                    size="small"
+                    aria-label="图片标题"
+                    :disabled="uploadLocked"
+                    :placeholder="uploadTitlePlaceholder(file, true)"
+                  />
                 </div>
                 <el-button class="batch-preview-remove" link type="danger" :disabled="uploadLocked" @click="removeSelectedUploadFile(file)">移除</el-button>
               </div>
@@ -2858,10 +3215,77 @@ onBeforeUnmount(() => {
           <el-button link type="primary" :loading="uploadLoading" @click="retryUploadItem(item)">重新上传</el-button>
         </div>
       </div>
+      <div v-if="uploadSession && uploadDuplicateItems.length" class="upload-duplicate-list">
+        <div class="upload-result-head">重复图片</div>
+        <div v-for="item in uploadDuplicateItems" :key="item.id" class="upload-duplicate-group">
+          <div class="upload-duplicate-group-head">
+            <div class="upload-result-title">
+              <strong>{{ item.originalFilename }}</strong>
+              <el-tag type="warning" effect="light">重复</el-tag>
+            </div>
+            <span>{{ uploadDuplicateGroupMeta(item) }}</span>
+            <p>{{ uploadDuplicateGroupDescription(item) }}</p>
+          </div>
+          <div v-if="item.duplicateImages.length" class="upload-duplicate-targets">
+            <div v-for="image in item.duplicateImages" :key="image.id" class="upload-result-row upload-duplicate-row">
+              <div class="upload-result-thumb">
+                <img v-if="uploadDuplicateThumbnailUrls[image.id]" :src="uploadDuplicateThumbnailUrls[image.id]" alt="" />
+                <span v-else>重复</span>
+              </div>
+              <div class="upload-result-main">
+                <div class="upload-result-title">
+                  <strong>{{ image.title }}</strong>
+                  <el-tag type="info" effect="light">{{ image.status === 'ACTIVE' ? '启用' : '已停用' }}</el-tag>
+                </div>
+                <span>{{ uploadDuplicateImageMeta(image) }}</span>
+                <p>{{ uploadDuplicateImageDescription(image) }}</p>
+              </div>
+              <div class="upload-result-actions">
+                <el-button
+                  link
+                  type="primary"
+                  :loading="uploadDuplicateLoading[image.id]"
+                  @click="previewUploadDuplicate(image)"
+                >
+                  查看
+                </el-button>
+              </div>
+            </div>
+          </div>
+          <div v-else-if="item.duplicateSessionItems.length" class="upload-duplicate-targets">
+            <div v-for="sessionItem in item.duplicateSessionItems" :key="sessionItem.id" class="upload-result-row upload-duplicate-row">
+              <div class="upload-result-thumb">
+                <span>本次</span>
+              </div>
+              <div class="upload-result-main">
+                <div class="upload-result-title">
+                  <strong>{{ uploadDuplicateSessionTitle(sessionItem) }}</strong>
+                  <el-tag type="info" effect="light">本次上传</el-tag>
+                </div>
+                <span>{{ uploadDuplicateSessionMeta(sessionItem) }}</span>
+                <p>确认后只保留其中一张为新图片</p>
+              </div>
+            </div>
+          </div>
+          <div v-else class="upload-result-row upload-duplicate-row">
+            <div class="upload-result-thumb">
+              <span>重复</span>
+            </div>
+            <div class="upload-result-main">
+              <div class="upload-result-title">
+                <strong>{{ item.originalFilename }}</strong>
+                <el-tag type="warning" effect="light">重复</el-tag>
+              </div>
+              <span>图片内容重复</span>
+              <p>{{ item.errorMessage || '确认后不会新增' }}</p>
+            </div>
+          </div>
+        </div>
+      </div>
       <template #footer>
-        <el-button :loading="uploadCancelling" @click="cancelUploadDialog()">取消</el-button>
-        <el-button type="primary" :loading="uploadConfirming || uploadLoading" :disabled="uploadCancelling || Boolean(uploadSession && !uploadCanConfirmSession)" @click="confirmUploadDialog">
-          确认
+        <el-button :loading="uploadCancelling" @click="cancelUploadDialog()">{{ uploadCanFinishConfirmedDuplicates ? '关闭' : '取消' }}</el-button>
+        <el-button type="primary" :loading="uploadConfirming || uploadLoading" :disabled="isUploadConfirmDisabled()" @click="confirmUploadDialog">
+          {{ uploadPrimaryButtonText }}
         </el-button>
       </template>
     </el-dialog>
@@ -3081,6 +3505,22 @@ onBeforeUnmount(() => {
 }
 
 .display-mode-toggle {
+  flex: 0 0 auto;
+}
+
+.image-sort-controls {
+  align-items: center;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  justify-content: flex-end;
+}
+
+.image-sort-select {
+  width: 150px;
+}
+
+.sort-direction-toggle {
   flex: 0 0 auto;
 }
 
@@ -3648,6 +4088,11 @@ onBeforeUnmount(() => {
   display: flex;
   flex-wrap: wrap;
   gap: 10px;
+  justify-content: flex-start;
+}
+
+.preview-interaction-actions :deep(.el-button) {
+  margin-left: 0;
 }
 
 .preview-comments {
@@ -4218,6 +4663,22 @@ onBeforeUnmount(() => {
   min-width: 0;
 }
 
+.single-upload-title,
+.batch-title-input {
+  width: 100%;
+}
+
+.single-upload-title-field {
+  display: grid;
+  gap: 4px;
+}
+
+.single-upload-title-label {
+  color: #475569;
+  font-size: 13px;
+  font-weight: 600;
+}
+
 .single-preview-info strong,
 .batch-preview-main strong,
 .upload-result-title strong {
@@ -4249,10 +4710,17 @@ onBeforeUnmount(() => {
   gap: 10px;
 }
 
+.batch-upload-hint {
+  color: #64748b;
+  font-size: 13px;
+  line-height: 1.5;
+  margin-top: 10px;
+}
+
 .batch-preview-grid {
   display: grid;
   gap: 10px;
-  grid-template-columns: repeat(auto-fill, minmax(118px, 1fr));
+  grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
   margin-top: 12px;
   max-height: 330px;
   overflow: auto;
@@ -4282,15 +4750,44 @@ onBeforeUnmount(() => {
   font-size: 14px;
 }
 
-.upload-failed-list {
+.upload-failed-list,
+.upload-duplicate-list {
   display: grid;
   gap: 8px;
   margin-top: 12px;
 }
 
-.upload-failed-head {
+.upload-failed-head,
+.upload-result-head {
   color: #64748b;
   font-size: 13px;
+}
+
+.upload-duplicate-group {
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  display: grid;
+  gap: 8px;
+  padding: 10px;
+}
+
+.upload-duplicate-group-head {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+
+.upload-duplicate-group-head span,
+.upload-duplicate-group-head p {
+  color: #64748b;
+  font-size: 12px;
+  line-height: 1.5;
+  margin: 0;
+}
+
+.upload-duplicate-targets {
+  display: grid;
+  gap: 8px;
 }
 
 .batch-preview-card {
@@ -4360,9 +4857,34 @@ onBeforeUnmount(() => {
   border: 1px solid #e2e8f0;
   border-radius: 8px;
   display: flex;
+  flex-wrap: wrap;
   gap: 12px;
   justify-content: space-between;
   padding: 10px 12px;
+}
+
+.upload-duplicate-row {
+  align-items: flex-start;
+}
+
+.upload-result-thumb {
+  align-items: center;
+  aspect-ratio: 4 / 3;
+  background: #e2e8f0;
+  border-radius: 6px;
+  color: #64748b;
+  display: flex;
+  flex: 0 0 72px;
+  font-size: 12px;
+  justify-content: center;
+  overflow: hidden;
+}
+
+.upload-result-thumb img {
+  display: block;
+  height: 100%;
+  object-fit: cover;
+  width: 100%;
 }
 
 .upload-result-main {
@@ -4380,8 +4902,23 @@ onBeforeUnmount(() => {
   min-width: 0;
 }
 
+.upload-result-title strong {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .upload-result-main p {
+  color: #64748b;
+  font-size: 12px;
+  line-height: 1.5;
   margin: 0;
+}
+
+.upload-result-actions {
+  align-items: flex-start;
+  display: flex;
+  flex: 0 0 auto;
 }
 
 @media (max-width: 980px) {
@@ -4409,6 +4946,16 @@ onBeforeUnmount(() => {
 
   .image-toolbar-actions .display-mode-toggle {
     width: auto;
+  }
+
+  .image-sort-controls {
+    justify-content: flex-start;
+    width: 100%;
+  }
+
+  .image-sort-select {
+    flex: 1;
+    min-width: 160px;
   }
 
   .image-filter-group .el-input,

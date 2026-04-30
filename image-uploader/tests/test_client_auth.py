@@ -74,6 +74,31 @@ def test_username_password_login_sets_bearer_token(tmp_path) -> None:
     assert seen_headers == ["Bearer access-1"]
 
 
+def test_upload_deduplication_setting_is_read_from_backend(tmp_path) -> None:
+    seen_headers: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/api/auth/login":
+            return httpx.Response(
+                200,
+                json={"code": "OK", "data": {"accessToken": "access-1", "refreshToken": "refresh-1"}},
+            )
+        if request.url.path == "/api/image-upload-settings":
+            seen_headers.append(request.headers.get("Authorization", ""))
+            return httpx.Response(200, json={"deduplicationEnabled": True})
+        raise AssertionError(f"unexpected path {request.url.path}")
+
+    client = ApiClient(settings(tmp_path), transport=httpx.MockTransport(handler))
+    try:
+        client.authenticate()
+        enabled = client.upload_deduplication_enabled()
+    finally:
+        client.close()
+
+    assert enabled is True
+    assert seen_headers == ["Bearer access-1"]
+
+
 def test_refresh_token_retries_once_after_unauthorized(tmp_path) -> None:
     categories_calls = 0
     refresh_calls = 0
@@ -126,7 +151,7 @@ def test_manual_authorization_401_suggests_username_password(tmp_path) -> None:
 
 
 def test_file_upload_refresh_reopens_file_for_retry(tmp_path) -> None:
-    upload_body_sizes: list[int] = []
+    upload_bodies: list[bytes] = []
 
     def handler(request: httpx.Request) -> httpx.Response:
         if request.url.path == "/api/auth/login":
@@ -140,8 +165,8 @@ def test_file_upload_refresh_reopens_file_for_retry(tmp_path) -> None:
                 json={"code": "OK", "data": {"accessToken": "access-2", "refreshToken": "refresh-2"}},
             )
         if request.url.path == "/api/image-upload-sessions/session-1/items":
-            upload_body_sizes.append(len(request.read()))
-            if len(upload_body_sizes) == 1:
+            upload_bodies.append(request.read())
+            if len(upload_bodies) == 1:
                 return httpx.Response(401, json={"code": "UNAUTHORIZED", "message": "expired"})
             return httpx.Response(
                 200,
@@ -157,10 +182,11 @@ def test_file_upload_refresh_reopens_file_for_retry(tmp_path) -> None:
     client = ApiClient(settings(tmp_path), transport=httpx.MockTransport(handler))
     try:
         client.authenticate()
-        response = client.stage_upload_item("session-1", file_path)
+        response = client.stage_upload_item("session-1", file_path, "友好标题")
     finally:
         client.close()
 
     assert response["items"][0]["status"] == "STAGED"
-    assert len(upload_body_sizes) == 2
-    assert all(size > len(b"image-bytes") for size in upload_body_sizes)
+    assert len(upload_bodies) == 2
+    assert all(len(body) > len(b"image-bytes") for body in upload_bodies)
+    assert all(b'name="title"' in body and "友好标题".encode() in body for body in upload_bodies)

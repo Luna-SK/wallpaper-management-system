@@ -92,6 +92,27 @@ def test_local_duplicate_is_skipped() -> None:
     assert plan.records_by_path[duplicate.relative_path].status == STATUS_SKIPPED_LOCAL_DUPLICATE
 
 
+def test_local_duplicate_is_planned_when_deduplication_disabled() -> None:
+    first = image("0/a.jpg", "same")
+    duplicate = image("1/b.jpg", "same")
+
+    plan = prepare_import_plan([first, duplicate], {}, resume=False, retry_failed=False, deduplication_enabled=False)
+
+    assert plan.upload_images == [first, duplicate]
+    assert plan.records_by_path[first.relative_path].status == STATUS_PLANNED
+    assert plan.records_by_path[duplicate.relative_path].status == STATUS_PLANNED
+
+
+def test_local_duplicate_is_skipped_when_deduplication_enabled() -> None:
+    first = image("0/a.jpg", "same")
+    duplicate = image("1/b.jpg", "same")
+
+    plan = prepare_import_plan([first, duplicate], {}, resume=False, retry_failed=False, deduplication_enabled=True)
+
+    assert plan.upload_images == [first]
+    assert plan.records_by_path[duplicate.relative_path].status == STATUS_SKIPPED_LOCAL_DUPLICATE
+
+
 def test_resume_skip_does_not_overwrite_completed_checkpoint(tmp_path) -> None:
     path = tmp_path / "state.jsonl"
     store = StateStore(path)

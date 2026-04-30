@@ -15,7 +15,6 @@ STATUS_SKIPPED_LOCAL_DUPLICATE = "skipped_local_duplicate"
 
 COMPLETED_STATUSES = frozenset({STATUS_UPLOADED, STATUS_DUPLICATE})
 RETRYABLE_STATUSES = frozenset({STATUS_FAILED, STATUS_INTERRUPTED})
-TITLE_UPDATE_STATUSES = frozenset({STATUS_UPLOADED, STATUS_DUPLICATE, STATUS_SKIPPED_COMPLETED})
 
 
 @dataclass(frozen=True)
@@ -43,8 +42,6 @@ class ImportRecord:
     session_id: str = ""
     image_id: str = ""
     error_message: str = ""
-    title_updated: bool = False
-    title_error: str = ""
     updated_at: str = field(default_factory=lambda: datetime.now(UTC).isoformat())
 
     @classmethod
@@ -92,8 +89,6 @@ class ImportRecord:
             "sessionId": self.session_id,
             "imageId": self.image_id,
             "errorMessage": self.error_message,
-            "titleUpdated": self.title_updated,
-            "titleError": self.title_error,
             "updatedAt": self.updated_at,
         }
 
@@ -114,8 +109,6 @@ class ImportRecord:
             session_id=str(data.get("sessionId") or ""),
             image_id=str(data.get("imageId") or ""),
             error_message=str(data.get("errorMessage") or ""),
-            title_updated=bool(data.get("titleUpdated") or False),
-            title_error=str(data.get("titleError") or ""),
             updated_at=str(data.get("updatedAt") or ""),
         )
 

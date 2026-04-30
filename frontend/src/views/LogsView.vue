@@ -270,8 +270,8 @@ onMounted(refreshAuditState)
       <div class="audit-fixed-region">
         <div class="audit-scope-row">
           <el-radio-group v-model="auditTab">
-            <el-radio-button label="logs">近期审计记录</el-radio-button>
-            <el-radio-button label="archives">归档历史</el-radio-button>
+            <el-radio-button value="logs">近期审计记录</el-radio-button>
+            <el-radio-button value="archives">归档历史</el-radio-button>
           </el-radio-group>
         </div>
 

@@ -113,13 +113,13 @@
 - `GET /api/system-settings`
 - `PATCH /api/system-settings`
 
-上传使用会话化接口：`POST /api/image-upload-sessions` 创建会话，`POST /api/image-upload-sessions/{id}/items` 上传文件到 RustFS 暂存区，`POST /api/image-upload-sessions/{id}/confirm` 确认入库，`POST /api/image-upload-sessions/{id}/cancel` 取消并清理未确认对象。创建会话必须包含 `categoryId`，并至少提交一个 `tagIds`；分类、标签和标签组都必须处于启用状态。旧 `POST /api/images/batch` 仅作为兼容接口保留。
+上传使用会话化接口：`POST /api/image-upload-sessions` 创建会话，`POST /api/image-upload-sessions/{id}/items` 上传文件到 RustFS 暂存区，`POST /api/image-upload-sessions/{id}/confirm` 确认入库，`POST /api/image-upload-sessions/{id}/cancel` 取消并清理未确认对象。创建会话必须包含 `categoryId`，并至少提交一个 `tagIds`；分类、标签和标签组都必须处于启用状态。上传 item 和 retry item 的 multipart 请求可额外提交 `title` 字段；标题为空时默认使用原文件名去掉扩展名，标题最长 255 个字符。重复图片只关联既有图片，不会覆盖既有图片标题。旧 `POST /api/images/batch` 仅作为兼容接口保留。
 
 确认入库前，暂存文件不会出现在图片库。取消会话、过期会话和孤儿对象清理都会删除未被 `image_versions` 引用的 RustFS 对象。
 
 图片记录只关联一个分类。`GET /api/images` 和 `GET /api/images/{id}` 返回 `category` 对象或 `null`，`PATCH /api/images/{id}` 使用单个 `categoryId` 更新分类，标签使用 `tagIds` 多选且不受分类限制。标签响应包含 `groupId` 和 `groupName`。
 
-图片列表和详情响应同时返回互动统计：`favoriteCount`、`likeCount`、`commentCount`、`favoritedByMe`、`likedByMe`。`GET /api/images` 支持 `favoriteOnly=true`，用于只查看当前登录用户收藏的图片，并可与关键词、分类、标签和状态筛选叠加。
+图片列表和详情响应同时返回互动统计：`favoriteCount`、`likeCount`、`commentCount`、`favoritedByMe`、`likedByMe`。`GET /api/images` 支持 `favoriteOnly=true`，用于只查看当前登录用户收藏的图片；`keyword` 仅搜索图片标题，分类和标签筛选分别使用 `categoryId`、`tagId`，并可与状态筛选叠加。图片列表支持 `sortBy` 与 `sortDirection` 分页排序，`sortBy` 可选 `createdAt`、`updatedAt`、`title`、`sizeBytes`、`resolution`、`commentCount`、`favoriteCount`、`likeCount`、`viewCount`、`downloadCount`，其中 `title` 表示按标题拼音排序；`sortDirection` 可选 `asc` 或 `desc`，默认按 `createdAt desc` 返回。
 
 图片互动接口使用 `image:view` 权限。登录用户可对可查看图片评论、收藏和点赞；评论分页通过 `GET /api/images/{id}/comments` 返回，发布、编辑和删除评论分别使用 `POST`、`PATCH` 和 `DELETE`。评论支持楼中楼回复，发布回复时传入 `parentCommentId` 和当前父评论 `parentUpdatedAt`，若父评论已被更新则拒绝提交并提示刷新；响应按顶层评论分页，并在当前页顶层评论下返回完整回复树。评论响应包含 `authorAvatarUrl`、`parentCommentId`、`rootCommentId`、`depth`、`deleted`、`hasReplies` 和 `replies`，前端以 Reddit 风格的头像、树状连接线和折叠分支展示层级。删除评论采用软删除；若被删除评论下仍有回复，接口返回“已删除”占位节点但不暴露原正文。用户只能编辑自己的评论，且已有任意子回复记录的评论禁止编辑；拥有 `interaction:manage` 的管理员或数据管理员可删除不当评论。收藏和点赞通过 `POST /api/images/{id}/favorite|like` 开启，通过 `DELETE` 取消，用户与图片维度保持唯一，重复操作保持幂等。
 

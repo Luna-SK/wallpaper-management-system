@@ -7,6 +7,7 @@ import java.security.NoSuchAlgorithmException;
 import java.time.Instant;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
+import java.util.ArrayList;
 import java.util.Collection;
 import java.util.HashMap;
 import java.util.HashSet;
@@ -38,6 +39,7 @@ import com.luna.wallpaper.interaction.InteractionService;
 import com.luna.wallpaper.settings.ImageVersionSettings;
 import com.luna.wallpaper.settings.SoftDeleteCleanupSettings;
 import com.luna.wallpaper.settings.SystemSettingService;
+import com.luna.wallpaper.settings.UploadDeduplicationSettings;
 import com.luna.wallpaper.settings.UploadLimitService;
 import com.luna.wallpaper.settings.UploadLimitService.UploadLimitSettings;
 import com.luna.wallpaper.settings.WatermarkSettings;
@@ -50,6 +52,8 @@ import com.luna.wallpaper.taxonomy.TagMapper;
 
 @Service
 class ImageService {
+
+	private static final int MAX_IMAGE_TITLE_LENGTH = 255;
 
 	private final ImageAssetMapper images;
 	private final ImageVersionMapper versions;
@@ -89,15 +93,17 @@ class ImageService {
 
 	@Transactional(readOnly = true)
 	ImagePageResponse list(String keyword, String categoryId, String tagId, String status, boolean favoriteOnly,
-			String viewerId, int page, int size) {
+			String viewerId, String sortBy, String sortDirection, int page, int size) {
 		String query = keyword == null || keyword.isBlank() ? null : keyword.trim();
 		ImageStatus statusFilter = ImageStatus.parseOrNull(status);
+		ImageSort sort = ImageSort.parse(sortBy, sortDirection);
 		int safePage = Math.max(1, page);
 		int safeSize = Math.min(Math.max(1, size), 100);
 		long total = images.countSearch(query, blankToNull(categoryId), blankToNull(tagId), statusFilter,
 				favoriteOnly, viewerId);
 		List<ImageAsset> result = total == 0 ? List.of() : loadImages(images.searchIds(query, blankToNull(categoryId),
-				blankToNull(tagId), statusFilter, favoriteOnly, viewerId, (long) (safePage - 1) * safeSize, safeSize));
+				blankToNull(tagId), statusFilter, favoriteOnly, viewerId, sort.fieldName(), sort.directionSql(),
+				(long) (safePage - 1) * safeSize, safeSize));
 		Map<String, ImageInteractionSummary> interactions = interactionService.summaries(
 				result.stream().map(ImageAsset::id).toList(), viewerId);
 		return new ImagePageResponse(result.stream()
@@ -120,7 +126,7 @@ class ImageService {
 		UploadBatchResponse session = createUploadSession(
 				new UploadSessionCreateRequest(files.size() == 1 ? "SINGLE" : "BATCH", categoryId, tagIds, files.size()));
 		for (MultipartFile file : files) {
-			session = stageUploadSessionItem(session.id(), file);
+			session = stageUploadSessionItem(session.id(), file, null);
 		}
 		return confirmUploadSession(session.id());
 	}
@@ -144,18 +150,25 @@ class ImageService {
 		replaceUploadBatchTags(batch);
 		auditLogService.record("image.upload.session.create", "UPLOAD_BATCH", batch.id(),
 				Map.of("mode", mode, "total", totalCount));
-		return UploadBatchResponse.from(batch, List.of());
+		return uploadBatchResponse(batch, List.of());
 	}
 
 	@Transactional
 	UploadBatchResponse stageUploadSessionItem(String sessionId, MultipartFile file) {
+		return stageUploadSessionItem(sessionId, file, null);
+	}
+
+	@Transactional
+	UploadBatchResponse stageUploadSessionItem(String sessionId, MultipartFile file, String title) {
 		UploadBatch batch = getUploadSession(sessionId);
 		ensureCanStage(batch);
+		String normalizedTitle = normalizeUploadTitle(title);
+		validateUploadTitle(normalizedTitle);
 		List<UploadBatchItem> existingItems = batchItems.selectByBatchIdOrdered(sessionId);
 		if (existingItems.size() >= batch.totalCount()) {
 			throw new IllegalArgumentException("上传文件数量已达到本次会话上限");
 		}
-		UploadBatchItem item = new UploadBatchItem(batch.id(), filename(file));
+		UploadBatchItem item = new UploadBatchItem(batch.id(), filename(file), normalizedTitle);
 		batchItems.insert(item);
 		stageItem(batch, item, file, existingItems);
 		return uploadSession(batch.id());
@@ -169,7 +182,13 @@ class ImageService {
 	@Transactional(readOnly = true)
 	UploadBatchResponse uploadSession(String id) {
 		UploadBatch batch = getUploadSession(id);
-		return UploadBatchResponse.from(batch, batchItems.selectByBatchIdOrdered(id));
+		return uploadBatchResponse(batch, batchItems.selectByBatchIdOrdered(id));
+	}
+
+	@Transactional(readOnly = true)
+	boolean uploadDeduplicationEnabled() {
+		return Boolean.parseBoolean(settings.get(UploadDeduplicationSettings.ENABLED,
+				String.valueOf(UploadDeduplicationSettings.DEFAULT_ENABLED)));
 	}
 
 	@Transactional
@@ -182,11 +201,16 @@ class ImageService {
 		item.retryFailed("请重新选择原文件上传，系统不会保存失败文件的临时内容");
 		batchItems.updateById(item);
 		auditLogService.record("image.batch.item.retry", "UPLOAD_BATCH_ITEM", item.id(), Map.of());
-		return UploadBatchResponse.from(batch, batchItems.selectByBatchIdOrdered(batch.id()));
+		return uploadBatchResponse(batch, batchItems.selectByBatchIdOrdered(batch.id()));
 	}
 
 	@Transactional
 	UploadBatchResponse retryUploadSessionItem(String sessionId, String itemId, MultipartFile file) {
+		return retryUploadSessionItem(sessionId, itemId, file, null);
+	}
+
+	@Transactional
+	UploadBatchResponse retryUploadSessionItem(String sessionId, String itemId, MultipartFile file, String title) {
 		UploadBatch batch = getUploadSession(sessionId);
 		ensureCanStage(batch);
 		UploadBatchItem item = Optional.ofNullable(batchItems.selectById(itemId))
@@ -197,7 +221,9 @@ class ImageService {
 		if (!item.status().isRetryable()) {
 			throw new IllegalArgumentException("只有失败文件可以重试");
 		}
-		item.retrying(filename(file));
+		String normalizedTitle = title == null ? item.title() : normalizeUploadTitle(title);
+		validateUploadTitle(normalizedTitle);
+		item.retrying(filename(file), normalizedTitle);
 		List<UploadBatchItem> existingItems = batchItems.selectByBatchIdOrdered(sessionId).stream()
 				.filter(existing -> !existing.id().equals(item.id()))
 				.toList();
@@ -222,14 +248,16 @@ class ImageService {
 		}
 		for (UploadBatchItem item : items) {
 			if (item.status() == UploadBatchItemStatus.STAGED) {
-				var existing = images.findBySha256AndStatusNot(item.sha256(), ImageStatus.DELETED);
-				if (existing.isPresent()) {
-					storage.deleteQuietly(item.storedImage());
-					item.duplicated(existing.get().id());
-					batchItems.updateById(item);
-					continue;
+				if (uploadDeduplicationEnabled()) {
+					var existing = images.findBySha256AndStatusNot(item.sha256(), ImageStatus.DELETED);
+					if (existing.isPresent()) {
+						storage.deleteQuietly(item.storedImage());
+						item.duplicated();
+						batchItems.updateById(item);
+						continue;
+					}
 				}
-				ImageAsset image = createImage(item.candidateImageId(), item.storedImage(), uploadTaxonomy);
+				ImageAsset image = createImage(item.candidateImageId(), item.title(), item.storedImage(), uploadTaxonomy);
 				item.confirmed(image.id());
 				batchItems.updateById(item);
 			}
@@ -238,7 +266,7 @@ class ImageService {
 		batch.markConfirmed();
 		batches.updateById(batch);
 		auditLogService.record("image.upload.session.confirm", "UPLOAD_BATCH", batch.id(), Map.of("total", items.size()));
-		return UploadBatchResponse.from(batch, batchItems.selectByBatchIdOrdered(batch.id()));
+		return uploadBatchResponse(batch, batchItems.selectByBatchIdOrdered(batch.id()));
 	}
 
 	@Transactional
@@ -248,7 +276,7 @@ class ImageService {
 			return uploadSession(id);
 		}
 		cancelUploadSession(batch, false);
-		return UploadBatchResponse.from(batch, batchItems.selectByBatchIdOrdered(batch.id()));
+		return uploadBatchResponse(batch, batchItems.selectByBatchIdOrdered(batch.id()));
 	}
 
 	@Transactional
@@ -535,28 +563,32 @@ class ImageService {
 		try {
 			item.receivedSize(file.getSize());
 			validateUploadSize(file, existingItems);
-			String sha256 = sha256(file);
-			var existingImage = images.findBySha256AndStatusNot(sha256, ImageStatus.DELETED);
-			if (existingImage.isPresent()) {
-				item.duplicated(existingImage.get().id(), sha256);
-				batchItems.updateById(item);
-			}
-			else if (existingItems.stream().anyMatch(existing -> sha256.equals(existing.sha256())
-					&& existing.status().isConfirmable())) {
-				item.duplicated(null, sha256);
-				batchItems.updateById(item);
-			}
-			else {
-				String candidateImageId = UUID.randomUUID().toString();
-				stored = storage.store(file, candidateImageId);
-				try {
-					item.staged(candidateImageId, stored);
+			if (uploadDeduplicationEnabled()) {
+				String sha256 = sha256(file);
+				var existingImage = images.findBySha256AndStatusNot(sha256, ImageStatus.DELETED);
+				if (existingImage.isPresent()) {
+					item.duplicated(sha256);
 					batchItems.updateById(item);
+					refreshUploadBatch(batch);
+					return;
 				}
-				catch (RuntimeException ex) {
-					storage.deleteQuietly(stored);
-					throw ex;
+				if (existingItems.stream().anyMatch(existing -> sha256.equals(existing.sha256())
+						&& existing.status().isConfirmable())) {
+					item.duplicated(sha256);
+					batchItems.updateById(item);
+					refreshUploadBatch(batch);
+					return;
 				}
+			}
+			String candidateImageId = UUID.randomUUID().toString();
+			stored = storage.store(file, candidateImageId);
+			try {
+				item.staged(candidateImageId, stored);
+				batchItems.updateById(item);
+			}
+			catch (RuntimeException ex) {
+				storage.deleteQuietly(stored);
+				throw ex;
 			}
 		}
 		catch (Exception ex) {
@@ -590,8 +622,8 @@ class ImageService {
 		}
 	}
 
-	private ImageAsset createImage(String imageId, StoredImage stored, UploadTaxonomy uploadTaxonomy) {
-		ImageAsset image = new ImageAsset(imageId, titleFrom(stored.originalFilename()), stored.originalFilename(), stored.sha256(), stored.mimeType(),
+	private ImageAsset createImage(String imageId, String title, StoredImage stored, UploadTaxonomy uploadTaxonomy) {
+		ImageAsset image = new ImageAsset(imageId, titleOrFilename(title, stored.originalFilename()), stored.originalFilename(), stored.sha256(), stored.mimeType(),
 				stored.sizeBytes(), stored.width(), stored.height());
 		image.replaceTaxonomy(uploadTaxonomy.category(), uploadTaxonomy.tags());
 		images.insert(image);
@@ -687,6 +719,50 @@ class ImageService {
 		int processed = success + failed + duplicate;
 		batch.refreshCounts(success, failed, duplicate, processed);
 		batches.updateById(batch);
+	}
+
+	private UploadBatchResponse uploadBatchResponse(UploadBatch batch, List<UploadBatchItem> items) {
+		List<UploadBatchItem> duplicateItems = items.stream()
+				.filter(item -> item.status() == UploadBatchItemStatus.DUPLICATE && item.sha256() != null && !item.sha256().isBlank())
+				.toList();
+		if (duplicateItems.isEmpty()) {
+			return UploadBatchResponse.from(batch, items);
+		}
+		Set<String> duplicateSha256s = new LinkedHashSet<>();
+		for (UploadBatchItem item : duplicateItems) {
+			duplicateSha256s.add(item.sha256());
+		}
+		Map<String, List<ImageAsset>> duplicateImagesBySha256 = new HashMap<>();
+		for (ImageAsset image : images.selectBySha256InAndStatusNot(duplicateSha256s, ImageStatus.DELETED)) {
+			duplicateImagesBySha256.computeIfAbsent(image.sha256(), ignored -> new ArrayList<>()).add(image);
+		}
+		Set<String> sessionImageIds = new HashSet<>();
+		Map<String, List<UploadBatchItem>> sessionItemsBySha256 = new HashMap<>();
+		for (UploadBatchItem item : items) {
+			if (item.imageId() != null && !item.imageId().isBlank()) {
+				sessionImageIds.add(item.imageId());
+			}
+			if (item.sha256() != null && !item.sha256().isBlank()
+					&& item.status() != UploadBatchItemStatus.FAILED
+					&& item.status() != UploadBatchItemStatus.CANCELLED) {
+				sessionItemsBySha256.computeIfAbsent(item.sha256(), ignored -> new ArrayList<>()).add(item);
+			}
+		}
+		Map<String, List<ImageAsset>> duplicateImagesByItemId = new HashMap<>();
+		Map<String, List<UploadBatchItem>> duplicateSessionItemsByItemId = new HashMap<>();
+		for (UploadBatchItem item : duplicateItems) {
+			List<ImageAsset> libraryDuplicates = duplicateImagesBySha256.getOrDefault(item.sha256(), List.of()).stream()
+					.filter(image -> !sessionImageIds.contains(image.id()))
+					.toList();
+			duplicateImagesByItemId.put(item.id(), libraryDuplicates);
+			if (libraryDuplicates.isEmpty()) {
+				List<UploadBatchItem> sessionDuplicates = sessionItemsBySha256.getOrDefault(item.sha256(), List.of()).stream()
+						.filter(candidate -> !candidate.id().equals(item.id()))
+						.toList();
+				duplicateSessionItemsByItemId.put(item.id(), sessionDuplicates);
+			}
+		}
+		return UploadBatchResponse.from(batch, items, duplicateImagesByItemId, duplicateSessionItemsByItemId);
 	}
 
 	private UploadBatch getUploadSession(String id) {
@@ -882,8 +958,31 @@ class ImageService {
 	}
 
 	private static String titleFrom(String filename) {
-		int dot = filename.lastIndexOf('.');
-		return dot > 0 ? filename.substring(0, dot) : filename;
+		String cleaned = filename == null || filename.isBlank() ? "image" : filename.replace("\\", "/");
+		int slash = cleaned.lastIndexOf('/');
+		if (slash >= 0) {
+			cleaned = cleaned.substring(slash + 1);
+		}
+		int dot = cleaned.lastIndexOf('.');
+		return dot > 0 ? cleaned.substring(0, dot) : cleaned;
+	}
+
+	private static String titleOrFilename(String title, String filename) {
+		String normalized = normalizeUploadTitle(title);
+		return normalized == null ? titleFrom(filename) : normalized;
+	}
+
+	private static String normalizeUploadTitle(String title) {
+		if (title == null || title.isBlank()) {
+			return null;
+		}
+		return title.trim();
+	}
+
+	private static void validateUploadTitle(String title) {
+		if (title != null && title.length() > MAX_IMAGE_TITLE_LENGTH) {
+			throw new IllegalArgumentException("图片标题不能超过 255 个字符");
+		}
 	}
 
 	private static String uniqueZipFilename(String filename, Map<String, Integer> usedNames) {

@@ -6,7 +6,6 @@ import sys
 from collections import Counter
 from collections.abc import Iterator, Sequence
 from dataclasses import dataclass
-from dataclasses import replace
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -28,7 +27,6 @@ from .models import (
     ImportRecord,
     RETRYABLE_STATUSES,
     ScannedImage,
-    TITLE_UPDATE_STATUSES,
 )
 from .report import write_csv_report
 from .settings import Settings
@@ -92,17 +90,18 @@ def run(argv: Sequence[str] | None = None) -> None:
     run_dir = settings.resolved_run_dir
     state_store = StateStore(state_file_for(data_dir, run_dir))
     report_path = settings.resolved_report_file or default_report_file(run_dir)
-    plan = prepare_import_plan(
-        scanned_images,
-        state_store.latest_by_path,
-        resume=settings.resume,
-        retry_failed=settings.retry_failed,
-    )
-
-    print_header(settings, data_dir, state_store.path, report_path, plan)
 
     with ApiClient(settings) as client:
         client.authenticate()
+        deduplication_enabled = client.upload_deduplication_enabled()
+        plan = prepare_import_plan(
+            scanned_images,
+            state_store.latest_by_path,
+            resume=settings.resume,
+            retry_failed=settings.retry_failed,
+            deduplication_enabled=deduplication_enabled,
+        )
+        print_header(settings, data_dir, state_store.path, report_path, plan, deduplication_enabled)
         taxonomy = load_taxonomy(client, settings)
 
         if settings.dry_run:
@@ -112,12 +111,6 @@ def run(argv: Sequence[str] | None = None) -> None:
 
         try:
             append_skipped_records(state_store, plan)
-            update_titles_for_records(
-                client,
-                [record for record in plan.records() if record.status == STATUS_SKIPPED_COMPLETED],
-                plan,
-                state_store,
-            )
             upload_planned_images(client, settings, taxonomy, plan, state_store)
         except GracefulInterrupt:
             write_csv_report(report_path, plan.records())
@@ -220,6 +213,7 @@ def prepare_import_plan(
     *,
     resume: bool,
     retry_failed: bool,
+    deduplication_enabled: bool = True,
 ) -> ImportPlan:
     records_by_path: dict[str, ImportRecord] = {}
     upload_images: list[ScannedImage] = []
@@ -229,15 +223,16 @@ def prepare_import_plan(
         previous = latest_records.get(image.relative_path)
         matching_previous = previous if previous and previous.matches(image) else None
 
-        first_seen = first_seen_by_sha.get(image.sha256)
-        if first_seen is not None:
-            records_by_path[image.relative_path] = ImportRecord.from_image(
-                image,
-                STATUS_SKIPPED_LOCAL_DUPLICATE,
-                error_message=f"本地内容重复，首次出现：{first_seen.relative_path}",
-            )
-            continue
-        first_seen_by_sha[image.sha256] = image
+        if deduplication_enabled:
+            first_seen = first_seen_by_sha.get(image.sha256)
+            if first_seen is not None:
+                records_by_path[image.relative_path] = ImportRecord.from_image(
+                    image,
+                    STATUS_SKIPPED_LOCAL_DUPLICATE,
+                    error_message=f"本地内容重复，首次出现：{first_seen.relative_path}",
+                )
+                continue
+            first_seen_by_sha[image.sha256] = image
 
         if retry_failed:
             if matching_previous and matching_previous.status in RETRYABLE_STATUSES:
@@ -267,13 +262,21 @@ def prepare_import_plan(
     return ImportPlan(scanned_images=scanned_images, records_by_path=records_by_path, upload_images=upload_images)
 
 
-def print_header(settings: Settings, data_dir: Path, state_path: Path, report_path: Path, plan: ImportPlan) -> None:
+def print_header(
+    settings: Settings,
+    data_dir: Path,
+    state_path: Path,
+    report_path: Path,
+    plan: ImportPlan,
+    deduplication_enabled: bool,
+) -> None:
     mode = "预览" if settings.dry_run else "真实上传"
     counts = Counter(record.status for record in plan.records())
     print(f"API: {settings.normalized_api_base_url}")
     print(f"数据目录: {data_dir}")
     print(f"运行模式: {mode}")
     print(f"批次大小: {settings.batch_size}")
+    print(f"上传去重: {deduplication_enabled}")
     print(f"断点续传: {settings.resume}")
     print(f"只重试失败: {settings.retry_failed}")
     print(f"状态文件: {state_path}")
@@ -398,7 +401,6 @@ def upload_folder(
         for record in records:
             plan.update(record)
         state_store.append_many(records)
-        records = update_titles_for_records(client, records, plan, state_store)
         print_batch_summary(records)
 
 
@@ -415,7 +417,7 @@ def upload_chunk(client: ApiClient, category_id: str, images: Sequence[ScannedIm
             raise ImporterError("创建上传会话后端响应缺少 id。")
         session_id = str(batch["id"])
         for image in images:
-            batch = client.stage_upload_item(session_id, image.file_path)
+            batch = client.stage_upload_item(session_id, image.file_path, image.desired_title)
     except ImporterError:
         if session_id:
             try:
@@ -526,79 +528,17 @@ def interrupted_records(images: Sequence[ScannedImage], session_id: str, message
     ]
 
 
-def update_titles_for_records(
-    client: ApiClient,
-    records: list[ImportRecord],
-    plan: ImportPlan,
-    state_store: StateStore,
-) -> list[ImportRecord]:
-    updated_records: list[ImportRecord] = []
-    for record in records:
-        try:
-            updated = update_title_for_record(client, record)
-        except KeyboardInterrupt as exc:
-            raise GracefulInterrupt("已取消；没有未确认上传会话需要取消，已写入报告。") from exc
-        if updated is not record:
-            plan.update(updated)
-            append_title_checkpoint(state_store, updated)
-        updated_records.append(updated)
-    return updated_records
-
-
-def update_title_for_record(client: ApiClient, record: ImportRecord) -> ImportRecord:
-    if record.status not in TITLE_UPDATE_STATUSES or not record.image_id or not record.desired_title:
-        return record
-    try:
-        detail = client.image_detail(record.image_id)
-        if detail.get("title") == record.desired_title:
-            return replace(record, title_updated=True, title_error="")
-        payload = image_update_payload(detail, record.desired_title)
-        client.update_image(record.image_id, payload)
-        return replace(record, title_updated=True, title_error="")
-    except ImporterError as exc:
-        return replace(record, title_updated=False, title_error=str(exc))
-
-
-def image_update_payload(detail: JsonObject, title: str) -> JsonObject:
-    category = detail.get("category")
-    tags = detail.get("tags")
-    tag_list = tags if isinstance(tags, list) else []
-    return {
-        "title": title,
-        "status": detail.get("status"),
-        "categoryId": category.get("id") if isinstance(category, dict) else None,
-        "tagIds": [
-            str(tag["id"])
-            for tag in tag_list
-            if isinstance(tag, dict) and tag.get("id")
-        ],
-    }
-
-
-def append_title_checkpoint(state_store: StateStore, record: ImportRecord) -> None:
-    if record.status != STATUS_SKIPPED_COMPLETED:
-        state_store.append(record)
-        return
-    previous = state_store.latest_by_path.get(record.relative_path)
-    if previous and previous.status in COMPLETED_STATUSES:
-        state_store.append(replace(record, status=previous.status))
-
-
 def print_batch_summary(records: list[ImportRecord]) -> None:
     counts = Counter(record.status for record in records)
-    title_failures = [record for record in records if record.title_error]
     print(
         "  完成: "
         f"uploaded={counts.get(STATUS_UPLOADED, 0)} "
         f"duplicate={counts.get(STATUS_DUPLICATE, 0)} "
-        f"failed={counts.get(STATUS_FAILED, 0)} "
-        f"title_failed={len(title_failures)}"
+        f"failed={counts.get(STATUS_FAILED, 0)}"
     )
     for record in records:
         if record.status == STATUS_FAILED:
             print(f"  [失败] {record.relative_path}: {record.error_message or '上传失败'}")
-        if record.title_error:
-            print(f"  [标题失败] {record.relative_path}: {record.title_error}")
 
 
 def print_summary(records: list[ImportRecord], report_path: Path) -> None:
@@ -610,8 +550,7 @@ def print_summary(records: list[ImportRecord], report_path: Path) -> None:
         f"failed={counts.get(STATUS_FAILED, 0)} "
         f"interrupted={counts.get(STATUS_INTERRUPTED, 0)} "
         f"skipped_completed={counts.get(STATUS_SKIPPED_COMPLETED, 0)} "
-        f"skipped_local_duplicate={counts.get(STATUS_SKIPPED_LOCAL_DUPLICATE, 0)} "
-        f"title_failed={sum(1 for record in records if record.title_error)}"
+        f"skipped_local_duplicate={counts.get(STATUS_SKIPPED_LOCAL_DUPLICATE, 0)}"
     )
     print(f"报告：{report_path}")
 

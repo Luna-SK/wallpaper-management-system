@@ -373,8 +373,8 @@ onMounted(refresh)
         <div class="workspace-tab-panel">
           <div class="toolbar-row">
             <el-radio-group v-model="categoryScope">
-              <el-radio-button label="ACTIVE">启用</el-radio-button>
-              <el-radio-button label="DISABLED">已停用</el-radio-button>
+              <el-radio-button value="ACTIVE">启用</el-radio-button>
+              <el-radio-button value="DISABLED">已停用</el-radio-button>
             </el-radio-group>
             <el-input v-model="categoryKeyword" placeholder="搜索分类" :prefix-icon="Search" clearable style="max-width: 320px" />
             <el-button type="primary" :icon="Plus" @click="openCategory()">新增分类</el-button>
@@ -423,8 +423,8 @@ onMounted(refresh)
               <el-button link type="primary" @click="openGroup()">新增</el-button>
             </div>
             <el-radio-group v-model="groupScope" class="scope-toggle" @change="handleGroupScopeChange">
-              <el-radio-button label="ACTIVE">启用</el-radio-button>
-              <el-radio-button label="DISABLED">已停用</el-radio-button>
+              <el-radio-button value="ACTIVE">启用</el-radio-button>
+              <el-radio-button value="DISABLED">已停用</el-radio-button>
             </el-radio-group>
             <button
               v-for="group in groupRows"
@@ -461,8 +461,8 @@ onMounted(refresh)
 
             <div class="toolbar-row">
               <el-radio-group v-model="tagScope">
-                <el-radio-button label="ACTIVE">启用</el-radio-button>
-                <el-radio-button label="DISABLED">已停用</el-radio-button>
+                <el-radio-button value="ACTIVE">启用</el-radio-button>
+                <el-radio-button value="DISABLED">已停用</el-radio-button>
               </el-radio-group>
               <el-input v-model="tagKeyword" placeholder="搜索标签" :prefix-icon="Search" clearable style="max-width: 320px" />
             </div>

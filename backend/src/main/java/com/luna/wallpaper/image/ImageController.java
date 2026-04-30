@@ -28,6 +28,7 @@ import com.luna.wallpaper.image.ImageDtos.ImageResponse;
 import com.luna.wallpaper.image.ImageDtos.ImageUpdateRequest;
 import com.luna.wallpaper.image.ImageDtos.ImageVersionResponse;
 import com.luna.wallpaper.image.ImageDtos.UploadBatchResponse;
+import com.luna.wallpaper.image.ImageDtos.UploadSettingsResponse;
 import com.luna.wallpaper.image.ImageDtos.UploadSessionCreateRequest;
 import com.luna.wallpaper.rbac.AuthenticatedUser;
 
@@ -46,9 +47,11 @@ class ImageController {
 	ImagePageResponse images(@RequestParam(required = false) String keyword,
 			@RequestParam(required = false) String categoryId, @RequestParam(required = false) String tagId,
 			@RequestParam(required = false) String status, @RequestParam(defaultValue = "false") boolean favoriteOnly,
+			@RequestParam(required = false) String sortBy, @RequestParam(required = false) String sortDirection,
 			Authentication authentication,
 			@RequestParam(defaultValue = "1") int page, @RequestParam(defaultValue = "20") int size) {
-		return service.list(keyword, categoryId, tagId, status, favoriteOnly, currentUserId(authentication), page, size);
+		return service.list(keyword, categoryId, tagId, status, favoriteOnly, currentUserId(authentication),
+				sortBy, sortDirection, page, size);
 	}
 
 	@GetMapping("/images/{id}")
@@ -160,6 +163,12 @@ class ImageController {
 		return service.upload(files, categoryId, tagIds);
 	}
 
+	@GetMapping("/image-upload-settings")
+	@PreAuthorize("hasAuthority('image:upload')")
+	UploadSettingsResponse uploadSettings() {
+		return new UploadSettingsResponse(service.uploadDeduplicationEnabled());
+	}
+
 	@PostMapping("/image-upload-sessions")
 	@PreAuthorize("hasAuthority('image:upload')")
 	UploadBatchResponse createUploadSession(@RequestBody UploadSessionCreateRequest request) {
@@ -168,15 +177,16 @@ class ImageController {
 
 	@PostMapping(path = "/image-upload-sessions/{id}/items", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
 	@PreAuthorize("hasAuthority('image:upload')")
-	UploadBatchResponse stageUploadSessionItem(@PathVariable String id, @RequestParam("file") MultipartFile file) {
-		return service.stageUploadSessionItem(id, file);
+	UploadBatchResponse stageUploadSessionItem(@PathVariable String id, @RequestParam("file") MultipartFile file,
+			@RequestParam(required = false) String title) {
+		return service.stageUploadSessionItem(id, file, title);
 	}
 
 	@PostMapping(path = "/image-upload-sessions/{id}/items/{itemId}/retry", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
 	@PreAuthorize("hasAuthority('image:upload')")
 	UploadBatchResponse retryUploadSessionItem(@PathVariable String id, @PathVariable String itemId,
-			@RequestParam("file") MultipartFile file) {
-		return service.retryUploadSessionItem(id, itemId, file);
+			@RequestParam("file") MultipartFile file, @RequestParam(required = false) String title) {
+		return service.retryUploadSessionItem(id, itemId, file, title);
 	}
 
 	@PostMapping("/image-upload-sessions/{id}/confirm")

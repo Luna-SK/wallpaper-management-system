@@ -1,0 +1,16 @@
+databaseChangeLog:
+  - changeSet:
+      id: 001-add-image-title-sort-key
+      author: codex
+      changes:
+        - addColumn:
+            tableName: images
+            columns:
+              - column:
+                  name: title_sort_key
+                  type: varchar(512)
+        - createIndex:
+            tableName: images
+            indexName: idx_images_title_sort_key
+            columns:
+              - column: { name: title_sort_key }

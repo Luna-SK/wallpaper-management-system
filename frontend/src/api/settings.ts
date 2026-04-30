@@ -5,6 +5,7 @@ export interface SystemSettings {
   maxBatchSizeMb: number
   maxFileHardLimitMb: number
   maxBatchHardLimitMb: number
+  uploadDeduplicationEnabled: boolean
   previewQuality: 'ORIGINAL' | 'HIGH' | 'STANDARD'
   softDeleteRetentionDays: number
   softDeleteCleanupEnabled: boolean

@@ -45,6 +45,7 @@ class SystemSettingsController {
 				uploadLimits.maxBatchSizeMb(),
 				uploadLimits.maxFileHardLimitMb(),
 				uploadLimits.maxBatchHardLimitMb(),
+				booleanSetting(UploadDeduplicationSettings.ENABLED, UploadDeduplicationSettings.DEFAULT_ENABLED),
 				settings.get(PREVIEW_QUALITY, "ORIGINAL"),
 				intSetting(SoftDeleteCleanupSettings.RETENTION_DAYS, 180),
 				booleanSetting(SoftDeleteCleanupSettings.CLEANUP_ENABLED, false),
@@ -79,6 +80,9 @@ class SystemSettingsController {
 		UploadLimitService.UploadLimitSettings uploadLimits =
 				uploadLimitService.validateForSave(request.maxFileSizeMb(), request.maxBatchSizeMb());
 		int retention = requireRange(request.softDeleteRetentionDays(), 1, 3650, "软删除保留期必须在 1-3650 天之间");
+		boolean uploadDeduplicationEnabled = request.uploadDeduplicationEnabled() == null
+				? booleanSetting(UploadDeduplicationSettings.ENABLED, UploadDeduplicationSettings.DEFAULT_ENABLED)
+				: request.uploadDeduplicationEnabled();
 		String quality = request.previewQuality() == null ? "ORIGINAL" : request.previewQuality().trim().toUpperCase();
 		if (!quality.equals("ORIGINAL") && !quality.equals("HIGH") && !quality.equals("STANDARD")) {
 			throw new IllegalArgumentException("预览质量只能是 ORIGINAL、HIGH 或 STANDARD");
@@ -139,6 +143,7 @@ class SystemSettingsController {
 				"自动清理执行计划必须是有效的 Spring cron 表达式");
 		settings.put("upload.max_file_size_mb", String.valueOf(uploadLimits.maxFileSizeMb()));
 		settings.put("upload.max_batch_size_mb", String.valueOf(uploadLimits.maxBatchSizeMb()));
+		settings.put(UploadDeduplicationSettings.ENABLED, String.valueOf(uploadDeduplicationEnabled));
 		settings.put(PREVIEW_QUALITY, quality);
 		settings.put(SoftDeleteCleanupSettings.RETENTION_DAYS, String.valueOf(retention));
 		settings.put(SoftDeleteCleanupSettings.CLEANUP_ENABLED, String.valueOf(Boolean.TRUE.equals(request.softDeleteCleanupEnabled())));
@@ -156,7 +161,8 @@ class SystemSettingsController {
 		settings.put(SessionLifecycleSettings.ABSOLUTE_LIFETIME_ENABLED, String.valueOf(sessionAbsoluteLifetimeEnabled));
 		settings.put(SessionLifecycleSettings.ABSOLUTE_LIFETIME_DAYS, String.valueOf(sessionAbsoluteLifetimeDays));
 		auditLogService.record("settings.update", "SYSTEM_SETTINGS", "system",
-				Map.of("previewQuality", quality, "watermarkEnabled", watermarkEnabled,
+				Map.of("previewQuality", quality, "uploadDeduplicationEnabled", uploadDeduplicationEnabled,
+						"watermarkEnabled", watermarkEnabled,
 						"watermarkPreviewEnabled", watermarkPreviewEnabled, "watermarkMode", watermarkMode,
 						"passwordResetEmailEnabled", passwordResetEmailEnabled,
 						"sessionIdleTimeoutEnabled", sessionIdleTimeoutEnabled,
@@ -226,7 +232,8 @@ class SystemSettingsController {
 		return text.isBlank() ? WatermarkSettings.DEFAULT_TEXT : text;
 	}
 
-	record SystemSettingsRequest(Integer maxFileSizeMb, Integer maxBatchSizeMb, String previewQuality,
+	record SystemSettingsRequest(Integer maxFileSizeMb, Integer maxBatchSizeMb, Boolean uploadDeduplicationEnabled,
+			String previewQuality,
 			Integer softDeleteRetentionDays, Boolean softDeleteCleanupEnabled, String softDeleteCleanupCron,
 			Boolean watermarkEnabled, Boolean watermarkPreviewEnabled, String watermarkText, String watermarkMode,
 			String watermarkPosition, Integer watermarkOpacityPercent, String watermarkTileDensity,
@@ -235,7 +242,7 @@ class SystemSettingsController {
 	}
 
 	record SystemSettingsResponse(int maxFileSizeMb, int maxBatchSizeMb, int maxFileHardLimitMb,
-			int maxBatchHardLimitMb, String previewQuality, int softDeleteRetentionDays,
+			int maxBatchHardLimitMb, boolean uploadDeduplicationEnabled, String previewQuality, int softDeleteRetentionDays,
 			boolean softDeleteCleanupEnabled, String softDeleteCleanupCron, boolean watermarkEnabled,
 			boolean watermarkPreviewEnabled, String watermarkText, String watermarkMode, String watermarkPosition,
 			int watermarkOpacityPercent, String watermarkTileDensity, boolean passwordResetEmailEnabled,
