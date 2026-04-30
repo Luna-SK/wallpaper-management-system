@@ -27,7 +27,7 @@ class Settings(BaseSettings):
     tag_group_name: str = Field(default="瑕疵", alias="TAG_GROUP_NAME")
     dry_run: bool = Field(default=True, alias="DRY_RUN")
     batch_size: int = Field(default=50, alias="BATCH_SIZE")
-    skip_completed: bool = Field(default=False, alias="SKIP_COMPLETED")
+    skip_completed: bool = Field(default=True, alias="SKIP_COMPLETED")
     retry_failed: bool = Field(default=False, alias="RETRY_FAILED")
     run_dir: Path = Field(default=Path(".import-runs"), alias="RUN_DIR")
     report_file: Path | None = Field(default=None, alias="REPORT_FILE")

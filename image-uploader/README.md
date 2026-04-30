@@ -45,7 +45,7 @@ uv run image-uploader --no-dry-run
 | `DRY_RUN` | 可选 | `true` | `true` 只预览、校验并生成报告，不上传；首次运行建议保持 `true`，确认报告后再改为 `false` |
 | `BATCH_SIZE` | 可选 | `50` | 每个上传会话包含的最大图片数，必须大于 0；普通本机和 Docker 环境保留默认即可，调太大可能增加单次会话压力 |
 | `REQUEST_TIMEOUT_SECONDS` | 可选 | `120` | 后端 API 请求超时时间，单位为秒；网络慢、图片较大或远程上传时可适当调大 |
-| `SKIP_COMPLETED` | 可选 | `false` | 跳过已完成开关。设为 `true` 时，重复执行会跳过本地 checkpoint 中已成功上传或已确认重复且文件未变化的图片 |
+| `SKIP_COMPLETED` | 可选 | `true` | 跳过已完成开关。默认适合断点续传和重复执行同一批导入，会跳过本地 checkpoint 中已成功上传或已确认重复且文件未变化的图片；如果后端数据库已清空或需要完整重传，设为 `false` 或删除对应 `.import-runs` 状态文件 |
 | `RETRY_FAILED` | 可选 | `false` | 失败重试开关。设为 `true` 时只处理上次失败或中断且文件未变化的图片，适合修复配置、网络或后端问题后重跑 |
 | `RUN_DIR` | 可选 | `.import-runs` | 本地 checkpoint 和自动报告目录，属于运行产物；通常保留默认，不要提交到 Git |
 | `REPORT_FILE` | 可选 | 空 | 指定本次 CSV 报告输出路径；留空时在 `RUN_DIR` 中自动生成 `report-<timestamp>.csv` |
@@ -57,6 +57,8 @@ uv run image-uploader --no-dry-run
 大量上传时，脚本使用 `USERNAME/PASSWORD` 登录后会在访问令牌过期时自动调用 `/api/auth/refresh` 续期，并重试一次原请求。手动 `AUTHORIZATION_HEADER` 无法自动续期，过期后需要重新填写。
 
 脚本会在导入前读取系统的“上传去重”开关并打印当前状态；该开关只由后端执行。所有未被 `SKIP_COMPLETED` 或 `RETRY_FAILED` 过滤的文件都会提交给后端上传会话，由后端根据系统设置决定入库或判重。
+
+如果刚清空后端数据并准备完整重传，记得把 `SKIP_COMPLETED=false`，或删除 `RUN_DIR` 中对应数据目录的 `state-*.jsonl`。否则脚本会按本地 checkpoint 跳过已完成记录。
 
 ## 跳过已完成与失败重试
 
@@ -74,6 +76,9 @@ uv run image-uploader --no-dry-run
 # 跳过此前已成功上传或已确认重复的同一文件
 uv run image-uploader --skip-completed --no-dry-run
 
+# 完整重传当前扫描到的文件，不跳过本地已完成记录
+uv run image-uploader --no-skip-completed --no-dry-run
+
 # 只重试上次失败或中断的同一文件
 uv run image-uploader --retry-failed --no-dry-run
 
@@ -90,7 +95,7 @@ uv run image-uploader --report .import-runs/latest-report.csv
 | `duplicate` | 后端判定为重复图片 |
 | `failed` | 上传失败，可用 `--retry-failed` 重试 |
 | `interrupted` | 用户按下 `Ctrl+C`，当前批次已取消或状态已记录 |
-| `skipped_completed` | `--skip-completed` 或 `SKIP_COMPLETED=true` 下跳过此前已完成文件 |
+| `skipped_completed` | `SKIP_COMPLETED=true` 或 `--skip-completed` 下跳过此前已完成文件 |
 
 报告会包含 `desiredTitle` 列。脚本会按标签生成友好标题，并在上传文件时直接提交给后端，例如 `破洞001`、`破洞002`，多个标签会生成 `水渍-油渍-污渍001`。编号按相同标签组合独立递增，超过 `999` 后会自然扩展为 `1000`、`1001`。
 
@@ -102,7 +107,7 @@ uv run image-uploader --report .import-runs/latest-report.csv
 
 - 尚未确认的上传会话会调用取消接口，清理暂存对象。
 - 如果中断发生在确认请求附近，脚本会先查询会话状态；已确认则记录后端结果，未确认则取消。
-- 已确认入库的图片不会回滚；下次可使用 `--skip-completed --no-dry-run` 继续导入未完成项。
+- 已确认入库的图片不会回滚；下次默认会跳过已完成项，也可使用 `--skip-completed --no-dry-run` 明确继续导入未完成项。
 - 中断后仍会写入 checkpoint 和 CSV 报告，终端不会输出 Python traceback，退出码为 `130`。
 
 ## 数据目录结构

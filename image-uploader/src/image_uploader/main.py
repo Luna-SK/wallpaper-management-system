@@ -142,7 +142,21 @@ def load_settings(argv: Sequence[str] | None = None) -> Settings:
 
 def parse_args(argv: Sequence[str] | None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Import textile defect images into the wallpaper manager.")
-    parser.add_argument("--skip-completed", action="store_true", default=None, help="skip unchanged completed checkpoint records")
+    skip_completed = parser.add_mutually_exclusive_group()
+    skip_completed.add_argument(
+        "--skip-completed",
+        dest="skip_completed",
+        action="store_true",
+        default=None,
+        help="skip unchanged completed checkpoint records",
+    )
+    skip_completed.add_argument(
+        "--no-skip-completed",
+        dest="skip_completed",
+        action="store_false",
+        default=None,
+        help="upload all scanned files instead of skipping completed checkpoint records",
+    )
     parser.add_argument("--retry-failed", action="store_true", default=None, help="only retry unchanged failed files")
     parser.add_argument("--run-dir", help="directory for checkpoint and generated reports")
     parser.add_argument("--report", help="CSV report path")
