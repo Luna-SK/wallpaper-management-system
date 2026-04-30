@@ -34,28 +34,31 @@ uv run image-uploader --no-dry-run
 
 ## 配置
 
-| 变量 | 说明 |
-|------|------|
-| `API_BASE_URL` | 后端 API 地址，本地默认 `http://localhost:18090/api` |
-| `USERNAME` / `PASSWORD` | 推荐配置；脚本会自动登录并维护 `Authorization` 请求头 |
-| `AUTHORIZATION_HEADER` | 高级用法，完整 HTTP 认证头，例如 `Bearer eyJ...` |
-| `DATA_DIR` | 图片数据目录的绝对路径 |
-| `CATEGORY_CODE` / `CATEGORY_NAME` | 必须已存在的分类，默认 `TEXTILE_DEFECT / 纺织瑕疵` |
-| `TAG_GROUP_CODE` / `TAG_GROUP_NAME` | 必须已存在的标签组，默认 `DEFECT / 瑕疵` |
-| `DRY_RUN` | `true` 为预览模式，`false` 才真实上传 |
-| `BATCH_SIZE` | 每个上传会话包含的最大图片数，默认 `50` |
-| `RESUME` | `true` 时跳过本地状态中已成功上传或已确认重复且文件未变化的图片 |
-| `RETRY_FAILED` | `true` 时只重试上次失败且文件未变化的图片 |
-| `RUN_DIR` | 本地 checkpoint 和自动报告目录，默认 `.import-runs` |
-| `REPORT_FILE` | 指定 CSV 报告路径；留空时自动生成 `report-<timestamp>.csv` |
+| 变量 | 必填 | 默认值 | 说明 |
+|------|------|--------|------|
+| `API_BASE_URL` | 可选 | `http://localhost:18090/api` | 后端 API 地址。本机 Docker 或本地后端通常保留默认；上传到远程环境时改成远程后端的 `/api` 地址 |
+| `USERNAME` / `PASSWORD` | 条件必填 | 空 | 未配置 `AUTHORIZATION_HEADER` 时必须填写。推荐使用管理员账号；本机 Docker 的 `admin` 密码来自部署脚本输出，使用用户名密码登录时脚本可自动 refresh token |
+| `AUTHORIZATION_HEADER` | 条件必填 | 空 | 不使用用户名密码登录时填写完整 HTTP `Authorization` 请求头，例如 `Bearer eyJ...`，不是只填 token；仅建议高级或临时调试场景使用 |
+| `DATA_DIR` | 必填 | 无 | 图片数据目录，建议填绝对路径；目录下必须包含 `0` 到 `20` 子目录，脚本会递归扫描这些编号目录 |
+| `CATEGORY_CODE` / `CATEGORY_NAME` | 可选 | `TEXTILE_DEFECT / 纺织瑕疵` | 要复用的图片分类。脚本只校验并使用已有分类，不会自动创建或改名 |
+| `TAG_GROUP_CODE` / `TAG_GROUP_NAME` | 可选 | `DEFECT / 瑕疵` | 要复用的标签组。脚本只校验并使用已有标签组及其标签，不会自动创建或改名 |
+| `DRY_RUN` | 可选 | `true` | `true` 只预览、校验并生成报告，不上传；首次运行建议保持 `true`，确认报告后再改为 `false` |
+| `BATCH_SIZE` | 可选 | `50` | 每个上传会话包含的最大图片数，必须大于 0；普通本机和 Docker 环境保留默认即可，调太大可能增加单次会话压力 |
+| `REQUEST_TIMEOUT_SECONDS` | 可选 | `120` | 后端 API 请求超时时间，单位为秒；网络慢、图片较大或远程上传时可适当调大 |
+| `SKIP_COMPLETED` | 可选 | `false` | 跳过已完成开关。设为 `true` 时，重复执行会跳过本地 checkpoint 中已成功上传或已确认重复且文件未变化的图片 |
+| `RETRY_FAILED` | 可选 | `false` | 失败重试开关。设为 `true` 时只处理上次失败或中断且文件未变化的图片，适合修复配置、网络或后端问题后重跑 |
+| `RUN_DIR` | 可选 | `.import-runs` | 本地 checkpoint 和自动报告目录，属于运行产物；通常保留默认，不要提交到 Git |
+| `REPORT_FILE` | 可选 | 空 | 指定本次 CSV 报告输出路径；留空时在 `RUN_DIR` 中自动生成 `report-<timestamp>.csv` |
 
-本机 Docker 推荐只填写 `USERNAME=admin` 和一键部署脚本输出的 `admin` 密码，不需要手动复制令牌。若确需手动认证，请填写完整的 `AUTHORIZATION_HEADER`；旧版 `.env` 中的 `ACCESS_TOKEN` 仍会兼容读取，但不再推荐使用。
+`USERNAME/PASSWORD` 和 `AUTHORIZATION_HEADER` 二选一即可；推荐使用 `USERNAME/PASSWORD`，因为脚本可以自动 refresh token。
+
+本机 Docker 推荐只填写 `USERNAME=admin` 和一键部署脚本输出的 `admin` 密码，不需要手动复制令牌。若确需手动认证，请填写完整的 `AUTHORIZATION_HEADER`。
 
 大量上传时，脚本使用 `USERNAME/PASSWORD` 登录后会在访问令牌过期时自动调用 `/api/auth/refresh` 续期，并重试一次原请求。手动 `AUTHORIZATION_HEADER` 无法自动续期，过期后需要重新填写。
 
-脚本会在导入前读取系统的“上传去重”开关。开关关闭时，本次扫描中内容相同的文件也会全部进入上传计划；开关开启时，脚本会先跳过同批次 SHA256 重复文件，后端仍作为最终判重来源。
+脚本会在导入前读取系统的“上传去重”开关并打印当前状态；该开关只由后端执行。所有未被 `SKIP_COMPLETED` 或 `RETRY_FAILED` 过滤的文件都会提交给后端上传会话，由后端根据系统设置决定入库或判重。
 
-## 断点续传与失败重试
+## 跳过已完成与失败重试
 
 真实上传时，工具会把每个文件的最终状态追加写入本地 JSONL checkpoint：
 
@@ -69,7 +72,7 @@ uv run image-uploader --no-dry-run
 
 ```bash
 # 跳过此前已成功上传或已确认重复的同一文件
-uv run image-uploader --resume --no-dry-run
+uv run image-uploader --skip-completed --no-dry-run
 
 # 只重试上次失败或中断的同一文件
 uv run image-uploader --retry-failed --no-dry-run
@@ -87,8 +90,7 @@ uv run image-uploader --report .import-runs/latest-report.csv
 | `duplicate` | 后端判定为重复图片 |
 | `failed` | 上传失败，可用 `--retry-failed` 重试 |
 | `interrupted` | 用户按下 `Ctrl+C`，当前批次已取消或状态已记录 |
-| `skipped_completed` | `--resume` 下跳过此前已完成文件 |
-| `skipped_local_duplicate` | 系统“上传去重”开启时，本次扫描中 SHA256 重复，只保留第一次出现的文件上传 |
+| `skipped_completed` | `--skip-completed` 或 `SKIP_COMPLETED=true` 下跳过此前已完成文件 |
 
 报告会包含 `desiredTitle` 列。脚本会按标签生成友好标题，并在上传文件时直接提交给后端，例如 `破洞001`、`破洞002`，多个标签会生成 `水渍-油渍-污渍001`。编号按相同标签组合独立递增，超过 `999` 后会自然扩展为 `1000`、`1001`。
 
@@ -100,7 +102,7 @@ uv run image-uploader --report .import-runs/latest-report.csv
 
 - 尚未确认的上传会话会调用取消接口，清理暂存对象。
 - 如果中断发生在确认请求附近，脚本会先查询会话状态；已确认则记录后端结果，未确认则取消。
-- 已确认入库的图片不会回滚；下次可使用 `--resume --no-dry-run` 继续导入未完成项。
+- 已确认入库的图片不会回滚；下次可使用 `--skip-completed --no-dry-run` 继续导入未完成项。
 - 中断后仍会写入 checkpoint 和 CSV 报告，终端不会输出 Python traceback，退出码为 `130`。
 
 ## 数据目录结构
@@ -125,5 +127,5 @@ data/
 - 老项目所有标签名保持不变。
 - 若分类、标签组或任一标签缺失，脚本会提示缺失项并退出，不会自动创建或改名。
 - 上传使用新项目的上传会话接口，标题随每个上传 item 一起提交；是否去重由系统设置中的“上传去重”开关控制。
-- 本地重复图片默认只报告并跳过，不会为同一后端图片反复提交不同标题，也不会修改已有图片分类或标签。
+- 脚本不做本地图片判重；同一批次中内容相同的文件也会提交给后端，由后端上传去重开关决定如何处理。
 - 本工具不直连数据库，不需要 `taxonomy:manage` 权限。

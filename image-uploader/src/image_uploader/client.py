@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import mimetypes
-import sys
 from pathlib import Path
 from typing import Any, NoReturn
 from urllib.parse import urljoin
@@ -38,13 +37,6 @@ class ApiClient:
         if authorization_header:
             self.manual_authorization = True
             self.client.headers.update({"Authorization": authorization_header})
-            return
-
-        legacy_token = self.settings.legacy_access_token.strip()
-        if legacy_token:
-            self.manual_authorization = True
-            print("提示：ACCESS_TOKEN 已兼容读取，建议改用 AUTHORIZATION_HEADER 或 USERNAME/PASSWORD。", file=sys.stderr)
-            self.client.headers.update({"Authorization": f"Bearer {legacy_token}"})
             return
 
         response = self._request(

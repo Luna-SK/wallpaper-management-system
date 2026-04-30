@@ -18,7 +18,6 @@ class Settings(BaseSettings):
 
     api_base_url: str = Field(default="http://localhost:18090/api", alias="API_BASE_URL")
     authorization_header: str = Field(default="", alias="AUTHORIZATION_HEADER")
-    legacy_access_token: str = Field(default="", alias="ACCESS_TOKEN")
     username: str = Field(default="", alias="USERNAME")
     password: str = Field(default="", alias="PASSWORD")
     data_dir: Path | None = Field(default=None, alias="DATA_DIR")
@@ -28,7 +27,7 @@ class Settings(BaseSettings):
     tag_group_name: str = Field(default="瑕疵", alias="TAG_GROUP_NAME")
     dry_run: bool = Field(default=True, alias="DRY_RUN")
     batch_size: int = Field(default=50, alias="BATCH_SIZE")
-    resume: bool = Field(default=False, alias="RESUME")
+    skip_completed: bool = Field(default=False, alias="SKIP_COMPLETED")
     retry_failed: bool = Field(default=False, alias="RETRY_FAILED")
     run_dir: Path = Field(default=Path(".import-runs"), alias="RUN_DIR")
     report_file: Path | None = Field(default=None, alias="REPORT_FILE")
@@ -41,7 +40,7 @@ class Settings(BaseSettings):
             return None
         return value
 
-    @field_validator("authorization_header", "legacy_access_token", mode="before")
+    @field_validator("authorization_header", mode="before")
     @classmethod
     def blank_auth_value(cls, value: object) -> object:
         if isinstance(value, str):
@@ -71,7 +70,7 @@ class Settings(BaseSettings):
     def validate_for_run(self) -> None:
         if not self.normalized_api_base_url:
             raise ImporterError("请在 .env 中配置 API_BASE_URL。")
-        if not self.authorization_header and not self.legacy_access_token and (not self.username.strip() or not self.password):
+        if not self.authorization_header and (not self.username.strip() or not self.password):
             raise ImporterError("请配置 USERNAME 和 PASSWORD，或高级用法 AUTHORIZATION_HEADER。")
         if self.batch_size <= 0:
             raise ImporterError("BATCH_SIZE 必须大于 0。")

@@ -34,24 +34,6 @@ def test_authorization_header_is_used_directly(tmp_path) -> None:
     assert seen_headers == ["Bearer manual-token"]
 
 
-def test_legacy_access_token_is_still_supported(tmp_path, capsys) -> None:
-    seen_headers: list[str] = []
-
-    def handler(request: httpx.Request) -> httpx.Response:
-        seen_headers.append(request.headers.get("Authorization", ""))
-        return httpx.Response(200, json=[])
-
-    client = ApiClient(settings(tmp_path, legacy_access_token="legacy-token"), transport=httpx.MockTransport(handler))
-    try:
-        client.authenticate()
-        client.categories()
-    finally:
-        client.close()
-
-    assert seen_headers == ["Bearer legacy-token"]
-    assert "ACCESS_TOKEN 已兼容读取" in capsys.readouterr().err
-
-
 def test_username_password_login_sets_bearer_token(tmp_path) -> None:
     seen_headers: list[str] = []
 

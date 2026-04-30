@@ -22,7 +22,6 @@ from .models import (
     STATUS_INTERRUPTED,
     STATUS_PLANNED,
     STATUS_SKIPPED_COMPLETED,
-    STATUS_SKIPPED_LOCAL_DUPLICATE,
     STATUS_UPLOADED,
     ImportRecord,
     RETRYABLE_STATUSES,
@@ -97,9 +96,8 @@ def run(argv: Sequence[str] | None = None) -> None:
         plan = prepare_import_plan(
             scanned_images,
             state_store.latest_by_path,
-            resume=settings.resume,
+            skip_completed=settings.skip_completed,
             retry_failed=settings.retry_failed,
-            deduplication_enabled=deduplication_enabled,
         )
         print_header(settings, data_dir, state_store.path, report_path, plan, deduplication_enabled)
         taxonomy = load_taxonomy(client, settings)
@@ -110,7 +108,6 @@ def run(argv: Sequence[str] | None = None) -> None:
             return
 
         try:
-            append_skipped_records(state_store, plan)
             upload_planned_images(client, settings, taxonomy, plan, state_store)
         except GracefulInterrupt:
             write_csv_report(report_path, plan.records())
@@ -130,8 +127,8 @@ def load_settings(argv: Sequence[str] | None = None) -> Settings:
         raise ImporterError(f".env 配置格式不正确：{errors}") from exc
 
     updates: dict[str, object] = {}
-    if args.resume is not None:
-        updates["resume"] = args.resume
+    if args.skip_completed is not None:
+        updates["skip_completed"] = args.skip_completed
     if args.retry_failed is not None:
         updates["retry_failed"] = args.retry_failed
     if args.run_dir is not None:
@@ -145,7 +142,7 @@ def load_settings(argv: Sequence[str] | None = None) -> Settings:
 
 def parse_args(argv: Sequence[str] | None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Import textile defect images into the wallpaper manager.")
-    parser.add_argument("--resume", action="store_true", default=None, help="skip unchanged completed files")
+    parser.add_argument("--skip-completed", action="store_true", default=None, help="skip unchanged completed checkpoint records")
     parser.add_argument("--retry-failed", action="store_true", default=None, help="only retry unchanged failed files")
     parser.add_argument("--run-dir", help="directory for checkpoint and generated reports")
     parser.add_argument("--report", help="CSV report path")
@@ -211,28 +208,15 @@ def prepare_import_plan(
     scanned_images: list[ScannedImage],
     latest_records: dict[str, ImportRecord],
     *,
-    resume: bool,
+    skip_completed: bool,
     retry_failed: bool,
-    deduplication_enabled: bool = True,
 ) -> ImportPlan:
     records_by_path: dict[str, ImportRecord] = {}
     upload_images: list[ScannedImage] = []
-    first_seen_by_sha: dict[str, ScannedImage] = {}
 
     for image in scanned_images:
         previous = latest_records.get(image.relative_path)
         matching_previous = previous if previous and previous.matches(image) else None
-
-        if deduplication_enabled:
-            first_seen = first_seen_by_sha.get(image.sha256)
-            if first_seen is not None:
-                records_by_path[image.relative_path] = ImportRecord.from_image(
-                    image,
-                    STATUS_SKIPPED_LOCAL_DUPLICATE,
-                    error_message=f"本地内容重复，首次出现：{first_seen.relative_path}",
-                )
-                continue
-            first_seen_by_sha[image.sha256] = image
 
         if retry_failed:
             if matching_previous and matching_previous.status in RETRYABLE_STATUSES:
@@ -248,7 +232,7 @@ def prepare_import_plan(
                 records_by_path[image.relative_path] = ImportRecord.from_image(image, STATUS_PLANNED)
             continue
 
-        if resume and matching_previous and matching_previous.status in COMPLETED_STATUSES:
+        if skip_completed and matching_previous and matching_previous.status in COMPLETED_STATUSES:
             records_by_path[image.relative_path] = ImportRecord.from_image(
                 image,
                 STATUS_SKIPPED_COMPLETED,
@@ -277,7 +261,7 @@ def print_header(
     print(f"运行模式: {mode}")
     print(f"批次大小: {settings.batch_size}")
     print(f"上传去重: {deduplication_enabled}")
-    print(f"断点续传: {settings.resume}")
+    print(f"跳过已完成: {settings.skip_completed}")
     print(f"只重试失败: {settings.retry_failed}")
     print(f"状态文件: {state_path}")
     print(f"报告文件: {report_path}")
@@ -286,8 +270,7 @@ def print_header(
         "计划: "
         f"upload={len(plan.upload_images)} "
         f"planned={counts.get(STATUS_PLANNED, 0)} "
-        f"skipped_completed={counts.get(STATUS_SKIPPED_COMPLETED, 0)} "
-        f"skipped_local_duplicate={counts.get(STATUS_SKIPPED_LOCAL_DUPLICATE, 0)}"
+        f"skipped_completed={counts.get(STATUS_SKIPPED_COMPLETED, 0)}"
     )
     print("目录映射:")
     for item in FOLDER_TAGS:
@@ -345,15 +328,6 @@ def find_seed_resource(resources: list[JsonObject], code: str, name: str, label:
     if not resource.get("id"):
         raise ImporterError(f"项目种子{label}响应缺少 id：{code} / {name}")
     return resource
-
-
-def append_skipped_records(state_store: StateStore, plan: ImportPlan) -> None:
-    records = [
-        record
-        for record in plan.records()
-        if record.status == STATUS_SKIPPED_LOCAL_DUPLICATE
-    ]
-    state_store.append_many(records)
 
 
 def upload_planned_images(
@@ -549,8 +523,7 @@ def print_summary(records: list[ImportRecord], report_path: Path) -> None:
         f"duplicate={counts.get(STATUS_DUPLICATE, 0)} "
         f"failed={counts.get(STATUS_FAILED, 0)} "
         f"interrupted={counts.get(STATUS_INTERRUPTED, 0)} "
-        f"skipped_completed={counts.get(STATUS_SKIPPED_COMPLETED, 0)} "
-        f"skipped_local_duplicate={counts.get(STATUS_SKIPPED_LOCAL_DUPLICATE, 0)}"
+        f"skipped_completed={counts.get(STATUS_SKIPPED_COMPLETED, 0)}"
     )
     print(f"报告：{report_path}")
 
