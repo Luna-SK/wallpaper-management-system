@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from pydantic import Field, field_validator
+from pydantic import Field, PrivateAttr, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from .errors import ImporterError
@@ -32,6 +32,14 @@ class Settings(BaseSettings):
     run_dir: Path = Field(default=Path(".import-runs"), alias="RUN_DIR")
     report_file: Path | None = Field(default=None, alias="REPORT_FILE")
     request_timeout_seconds: float = Field(default=120.0, alias="REQUEST_TIMEOUT_SECONDS")
+    _env_file_label: str = PrivateAttr(default=".env")
+
+    def set_env_file_label(self, label: str) -> None:
+        self._env_file_label = label
+
+    @property
+    def env_file_label(self) -> str:
+        return self._env_file_label
 
     @field_validator("report_file", mode="before")
     @classmethod
@@ -54,7 +62,7 @@ class Settings(BaseSettings):
     @property
     def resolved_data_dir(self) -> Path:
         if self.data_dir is None:
-            raise ImporterError("请在 .env 中配置 DATA_DIR，指向包含 0 到 20 子目录的数据目录。")
+            raise ImporterError(f"请在 {self.env_file_label} 中配置 DATA_DIR，指向包含 0 到 20 子目录的数据目录。")
         return self.data_dir.expanduser().resolve()
 
     @property
@@ -69,7 +77,7 @@ class Settings(BaseSettings):
 
     def validate_for_run(self) -> None:
         if not self.normalized_api_base_url:
-            raise ImporterError("请在 .env 中配置 API_BASE_URL。")
+            raise ImporterError(f"请在 {self.env_file_label} 中配置 API_BASE_URL。")
         if not self.authorization_header and (not self.username.strip() or not self.password):
             raise ImporterError("请配置 USERNAME 和 PASSWORD，或高级用法 AUTHORIZATION_HEADER。")
         if self.batch_size <= 0:

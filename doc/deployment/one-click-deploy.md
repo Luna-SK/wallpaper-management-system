@@ -10,13 +10,25 @@
 - 生产 HTTPS 需要域名已解析到服务器公网 IP，并开放 `80`、`443` 入站端口。
 - 生产服务器建议先关闭安全组中的 MySQL、Redis、RustFS 和后端调试端口；本项目生产 Compose 默认也不会发布这些端口。
 
-## 依赖与失败提示
+## 最低依赖与推荐规格
 
 最少依赖：
 
 - Windows：Docker Desktop、Docker Compose v2、PowerShell 5.1+。
 - macOS / Linux：Docker Desktop 或 Docker Engine、Docker Compose v2、`sh` 和基础 Unix 工具。
 - 宿主机不需要安装 Java、Node、Maven 或 npm；默认构建发生在 Docker 镜像内部，使用预构建镜像时只需要拉取镜像。
+
+资源规格建议：
+
+| 场景 | 最低配置 | 推荐配置 | 说明 |
+|------|----------|----------|------|
+| 本地演示 | 2 CPU、4 GiB 内存、20 GiB 可用磁盘 | 4 CPU、8 GiB 内存、40 GiB+ 可用磁盘 | 适合完整启动 MySQL、Redis、RustFS、backend 和 frontend |
+| Linux 云服务器小规模演示 | 1-2 vCPU、2 GiB 内存、30 GiB 可用磁盘 | 2 vCPU、4 GiB 内存、40 GiB+ 可用磁盘 | 最低配置建议只使用预构建镜像，不建议在服务器本地构建 |
+| 大批量图片导入或多人演示 | 2 vCPU、4 GiB 内存、40 GiB+ 可用磁盘 | 4 vCPU、8 GiB 内存、80 GiB+ 可用磁盘 | 图片上传会占用后端、对象存储和磁盘 I/O，规格越低越应降低批次大小 |
+
+小内存 ECS 不建议直接执行本地镜像构建；优先使用 `--use-prebuilt-images` 拉取预构建镜像，或在本机按目标架构预构建镜像后上传到服务器。
+
+## 失败提示
 
 脚本遇到依赖不满足或 Docker 执行失败时，会输出中文友好提示后退出，不会把 Docker/Compose 的长错误直接刷到终端。底层详情会写入 `ops/docker/deploy-error.log`，常见提示包括：
 

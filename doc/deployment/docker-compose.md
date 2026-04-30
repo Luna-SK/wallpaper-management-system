@@ -12,6 +12,20 @@
 - `caddy`：可选 HTTPS 反向代理，只在启用 `compose.https.yaml` 时启动。
 - `backup`：按 Docker Compose 备份配置档手动执行数据库备份。
 
+## 运行时版本
+
+| 组件 | 版本/来源 | 说明 |
+|------|-----------|------|
+| Backend | Java 25 / Spring Boot 4 | 后端镜像使用 Java 25 运行时 |
+| Frontend build | Node.js 25 | 前端镜像构建阶段使用 Node.js 25 |
+| Frontend runtime | Nginx 1.29 Alpine | 提供静态资源并反向代理 `/api` |
+| MySQL | 8.4 | 应用主数据库 |
+| Redis | 7 | 缓存和短期令牌辅助存储 |
+| RustFS | 1.0.0-alpha.98 | S3 兼容对象存储 |
+| Caddy | Docker 镜像默认版本 | 仅在启用 `compose.https.yaml` 时作为 HTTPS 入口 |
+
+生产 HTTP/HTTPS 部署只公开 Web 入口。MySQL、Redis、RustFS 和后端接口默认只在 Docker Compose 内部网络中访问，不应直接暴露到公网。
+
 ## Compose 文件与端口
 
 新项目不复用旧项目 Docker Compose。统一使用 `wallpaper` 作为 Compose 项目名：

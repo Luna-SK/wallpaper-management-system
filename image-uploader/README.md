@@ -9,6 +9,8 @@
 - 已启动的新项目后端服务
 - 账号至少需要 `image:upload` 权限，并能访问分类与标签列表接口
 
+大批量上传到远程或低配服务器时，建议先保持 `DRY_RUN=true` 验证分类、标签和报告，再真实上传。服务器内存或 I/O 较弱时，把 `BATCH_SIZE` 调小到 `5-10`，并把 `REQUEST_TIMEOUT_SECONDS` 调大到 `300` 或更高，避免单个上传会话处理过久触发代理或客户端超时。
+
 ## 快速开始
 
 ```bash
@@ -31,6 +33,24 @@ uv run image-uploader
 ```bash
 uv run image-uploader --no-dry-run
 ```
+
+## 多环境配置文件
+
+默认情况下，CLI 会读取当前目录下的 `.env`。如果需要同时维护本地、测试、云服务器等多套配置，可以复制 `.env.example` 为多个私有配置文件，并在运行时显式指定：
+
+```bash
+uv run image-uploader --env-file <配置文件路径>
+uv run image-uploader --env-file <配置文件路径> --no-dry-run
+```
+
+命令行参数仍然优先于配置文件，例如：
+
+```bash
+uv run image-uploader --env-file <配置文件路径> --no-dry-run --skip-completed
+uv run image-uploader --env-file <配置文件路径> --retry-failed
+```
+
+推荐使用 `--env-file` 读取多环境配置，不推荐用 `set -a; . <file>; set +a` 把配置导入 shell 环境。部分 shell 自带特殊变量名，可能和配置项同名并覆盖文件内容，排查起来很绕。
 
 ## 配置
 

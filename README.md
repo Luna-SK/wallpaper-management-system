@@ -30,6 +30,24 @@ fix(taxonomy): hide disabled tags in image library
 docs(workflow): add development handoff guide
 ```
 
+## 运行环境与配置要求
+
+Docker 一键部署最低依赖：
+
+- Docker Desktop，或 Linux 服务器上的 Docker Engine。
+- Docker Compose v2，即 `docker compose version` 可用。
+- Windows 需要 PowerShell 5.1+；macOS / Linux 需要 `sh` 和基础 Unix 工具。
+
+Docker 部署不要求宿主机安装 Java、Node.js、Maven 或 npm；默认构建发生在 Docker 镜像内部，使用预构建镜像时只需要 Docker 拉取并启动镜像。
+
+本地开发依赖：
+
+- 后端：Java 25；Maven 使用仓库内 Maven Wrapper。
+- 前端：Node.js 25、npm。
+- 图片导入工具：Python 3.11+、uv。
+
+演示部署的最低和推荐规格、生产端口暴露策略、预构建镜像建议见 [doc/deployment/one-click-deploy.md](doc/deployment/one-click-deploy.md)。Docker Compose 服务版本与运行时说明见 [doc/deployment/docker-compose.md](doc/deployment/docker-compose.md)。
+
 ## 快速开始
 
 ### 一键 Docker 部署

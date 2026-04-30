@@ -120,11 +120,14 @@ def run(argv: Sequence[str] | None = None) -> None:
 
 def load_settings(argv: Sequence[str] | None = None) -> Settings:
     args = parse_args(argv)
+    env_file = Path(args.env_file).expanduser() if args.env_file else Path(".env")
+    if args.env_file and not env_file.is_file():
+        raise ImporterError(f"配置文件不存在：{env_file}")
     try:
-        settings = Settings()
+        settings = Settings(_env_file=env_file)
     except ValidationError as exc:
         errors = "; ".join(error["msg"] for error in exc.errors())
-        raise ImporterError(f".env 配置格式不正确：{errors}") from exc
+        raise ImporterError(f"{env_file} 配置格式不正确：{errors}") from exc
 
     updates: dict[str, object] = {}
     if args.skip_completed is not None:
@@ -137,11 +140,14 @@ def load_settings(argv: Sequence[str] | None = None) -> Settings:
         updates["report_file"] = Path(args.report)
     if args.dry_run is not None:
         updates["dry_run"] = args.dry_run
-    return settings.model_copy(update=updates)
+    settings = settings.model_copy(update=updates)
+    settings.set_env_file_label(str(env_file))
+    return settings
 
 
 def parse_args(argv: Sequence[str] | None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Import textile defect images into the wallpaper manager.")
+    parser.add_argument("--env-file", help="configuration file path; defaults to .env")
     skip_completed = parser.add_mutually_exclusive_group()
     skip_completed.add_argument(
         "--skip-completed",
