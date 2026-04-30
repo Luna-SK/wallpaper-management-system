@@ -123,7 +123,7 @@
 
 图片互动接口使用 `image:view` 权限。登录用户可对可查看图片评论、收藏和点赞；评论分页通过 `GET /api/images/{id}/comments` 返回，发布、编辑和删除评论分别使用 `POST`、`PATCH` 和 `DELETE`。评论支持楼中楼回复，发布回复时传入 `parentCommentId` 和当前父评论 `parentUpdatedAt`，若父评论已被更新则拒绝提交并提示刷新；响应按顶层评论分页，并在当前页顶层评论下返回完整回复树。评论响应包含 `authorAvatarUrl`、`parentCommentId`、`rootCommentId`、`depth`、`deleted`、`hasReplies` 和 `replies`，前端以 Reddit 风格的头像、树状连接线和折叠分支展示层级。删除评论采用软删除；若被删除评论下仍有回复，接口返回“已删除”占位节点但不暴露原正文。用户只能编辑自己的评论，且已有任意子回复记录的评论禁止编辑；拥有 `interaction:manage` 的管理员或数据管理员可删除不当评论。收藏和点赞通过 `POST /api/images/{id}/favorite|like` 开启，通过 `DELETE` 取消，用户与图片维度保持唯一，重复操作保持幂等。
 
-用户反馈接口要求登录。普通用户通过 `POST /api/feedback` 提交反馈，可选关联图片 ID，通过 `GET /api/feedback` 查看自己的反馈，并可用 `POST /api/feedback/{id}/close` 关闭自己的未关闭反馈。拥有 `interaction:manage` 权限的用户可通过 `GET /api/feedback/admin` 按状态和关键词查看全部反馈，并用 `PATCH /api/feedback/admin/{id}` 更新状态与处理回复。反馈状态包括 `OPEN`、`IN_PROGRESS`、`RESOLVED`、`CLOSED`。
+用户反馈接口要求登录。普通用户通过 `POST /api/feedback` 提交反馈，可选关联图片 ID，通过 `GET /api/feedback` 查看自己的反馈，并可用 `POST /api/feedback/{id}/close` 关闭自己的未关闭反馈。提交反馈页的关联图片选择器复用 `GET /api/images` 按标题搜索 `ACTIVE` 图片，候选项显示缩略图；已选图片预览展示缩略图、标题、原文件名、分类、尺寸、大小、上传时间、MIME 类型和分组标签，标签超过 6 个时以 `+N` 折叠并悬浮显示剩余标签。拥有 `interaction:manage` 权限的用户可通过 `GET /api/feedback/admin` 按状态和关键词查看全部反馈，并用 `PATCH /api/feedback/admin/{id}` 更新状态与处理回复。反馈状态包括 `OPEN`、`IN_PROGRESS`、`RESOLVED`、`CLOSED`。
 
 在线图像编辑使用 `image:edit` 权限。前端通过 `GET /api/images/{id}/edit-source` 读取无水印当前版本作为编辑源，通过 `POST /api/images/{id}/edit` 提交编辑后的图片文件和操作摘要；后端创建新的 `image_versions` 记录并更新当前版本，原始对象不会被覆盖。
 

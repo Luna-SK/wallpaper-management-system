@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, reactive, ref } from 'vue'
+import { computed, onBeforeUnmount, onMounted, reactive, ref } from 'vue'
 import { ElMessage } from 'element-plus'
 import { isAxiosError } from 'axios'
 import {
@@ -11,7 +11,7 @@ import {
   type FeedbackRecord,
   type FeedbackStatus,
 } from '../api/interactions'
-import { getImages, type ImageRecord } from '../api/images'
+import { getImages, imageBlobUrl, type ImageRecord } from '../api/images'
 import { useAuthStore } from '../stores/auth'
 
 const auth = useAuthStore()
@@ -30,11 +30,48 @@ const submitting = ref(false)
 const imageOptions = ref<ImageRecord[]>([])
 const imageSearchLoading = ref(false)
 let imageSearchToken = 0
+let imageSearchDebounceTimer: ReturnType<typeof setTimeout> | null = null
+const imageOptionThumbnailUrls = reactive<Record<string, string>>({})
+const imageOptionThumbnailKeys = reactive<Record<string, string>>({})
+const imageOptionThumbnailLoading = reactive<Record<string, boolean>>({})
+const imageOptionThumbnailFailed = reactive<Record<string, boolean>>({})
+const selectedFeedbackImage = ref<ImageRecord | null>(null)
+const selectedImageThumbnailUrl = ref('')
+const selectedImageThumbnailLoading = ref(false)
+const selectedImageThumbnailFailed = ref(false)
+let selectedImageThumbnailToken = 0
 const handlingId = ref('')
 const handleForm = reactive<{ status: FeedbackStatus; response: string }>({ status: 'IN_PROGRESS', response: '' })
 const handleDialogVisible = ref(false)
 const selectedFeedback = ref<FeedbackRecord | null>(null)
 const canManage = computed(() => auth.hasPermission('interaction:manage'))
+const recentMineFeedback = computed(() => rows.value.slice(0, 5))
+const selectedImageTagLimit = 6
+type SelectedImageTagGroup = { key: string; label: string; names: string[] }
+
+function groupImageTags(tags: ImageRecord['tags']): SelectedImageTagGroup[] {
+  const groups = new Map<string, SelectedImageTagGroup>()
+  tags.forEach((tag) => {
+    const label = tag.groupName?.trim() || '未分组'
+    const key = tag.groupId || label
+    const group = groups.get(key) ?? { key, label, names: [] }
+    group.names.push(tag.name)
+    groups.set(key, group)
+  })
+  return Array.from(groups.values())
+}
+
+const selectedImageTagGroups = computed(() => {
+  const image = selectedFeedbackImage.value
+  if (!image?.tags.length) return []
+  return groupImageTags(image.tags.slice(0, selectedImageTagLimit))
+})
+const selectedImageHiddenTagGroups = computed(() => {
+  const image = selectedFeedbackImage.value
+  if (!image || image.tags.length <= selectedImageTagLimit) return []
+  return groupImageTags(image.tags.slice(selectedImageTagLimit))
+})
+const selectedImageHiddenTagCount = computed(() => Math.max(0, (selectedFeedbackImage.value?.tags.length ?? 0) - selectedImageTagLimit))
 
 function errorMessage(error: unknown, fallback: string) {
   if (isAxiosError<{ message?: string }>(error)) {
@@ -82,7 +119,123 @@ function imageOptionMeta(image: ImageRecord) {
   return `${image.originalFilename} · ${category} · ${formatBytes(image.sizeBytes)}`
 }
 
-async function searchFeedbackImages(query: string) {
+function imageDimensions(image: ImageRecord) {
+  if (image.width && image.height) return `${image.width} × ${image.height}`
+  return '未知尺寸'
+}
+
+function imageOptionThumbnailKey(image: ImageRecord) {
+  return `${image.id}:${image.updatedAt ?? ''}`
+}
+
+function revokeImageOptionThumbnail(imageId: string) {
+  if (imageOptionThumbnailUrls[imageId]) {
+    URL.revokeObjectURL(imageOptionThumbnailUrls[imageId])
+    delete imageOptionThumbnailUrls[imageId]
+  }
+  delete imageOptionThumbnailKeys[imageId]
+  delete imageOptionThumbnailLoading[imageId]
+  delete imageOptionThumbnailFailed[imageId]
+}
+
+function clearImageOptionThumbnails() {
+  Object.keys(imageOptionThumbnailUrls).forEach(revokeImageOptionThumbnail)
+  Object.keys(imageOptionThumbnailLoading).forEach((imageId) => delete imageOptionThumbnailLoading[imageId])
+  Object.keys(imageOptionThumbnailFailed).forEach((imageId) => delete imageOptionThumbnailFailed[imageId])
+}
+
+function revokeSelectedImageThumbnail() {
+  if (selectedImageThumbnailUrl.value) {
+    URL.revokeObjectURL(selectedImageThumbnailUrl.value)
+    selectedImageThumbnailUrl.value = ''
+  }
+  selectedImageThumbnailLoading.value = false
+  selectedImageThumbnailFailed.value = false
+}
+
+function clearSelectedFeedbackImage() {
+  selectedImageThumbnailToken++
+  selectedFeedbackImage.value = null
+  revokeSelectedImageThumbnail()
+}
+
+function pruneImageOptionThumbnails(images: ImageRecord[]) {
+  const activeKeys = new Map(images.map((image) => [image.id, imageOptionThumbnailKey(image)]))
+  const knownIds = new Set([
+    ...Object.keys(imageOptionThumbnailUrls),
+    ...Object.keys(imageOptionThumbnailLoading),
+    ...Object.keys(imageOptionThumbnailFailed),
+  ])
+  knownIds.forEach((imageId) => {
+    const activeKey = activeKeys.get(imageId)
+    if (!activeKey || imageOptionThumbnailKeys[imageId] !== activeKey) {
+      revokeImageOptionThumbnail(imageId)
+    }
+  })
+}
+
+async function loadImageOptionThumbnail(image: ImageRecord, token: number) {
+  const thumbnailKey = imageOptionThumbnailKey(image)
+  if (imageOptionThumbnailUrls[image.id] && imageOptionThumbnailKeys[image.id] === thumbnailKey) return
+  if (imageOptionThumbnailLoading[image.id]) return
+  imageOptionThumbnailLoading[image.id] = true
+  delete imageOptionThumbnailFailed[image.id]
+  try {
+    const thumbnailUrl = await imageBlobUrl(image.id, 'thumbnail', thumbnailKey)
+    const stillVisible = token === imageSearchToken
+      && imageOptions.value.some((item) => item.id === image.id && imageOptionThumbnailKey(item) === thumbnailKey)
+    if (!stillVisible) {
+      URL.revokeObjectURL(thumbnailUrl)
+      return
+    }
+    const previousUrl = imageOptionThumbnailUrls[image.id]
+    imageOptionThumbnailUrls[image.id] = thumbnailUrl
+    imageOptionThumbnailKeys[image.id] = thumbnailKey
+    if (previousUrl) {
+      URL.revokeObjectURL(previousUrl)
+    }
+  } catch {
+    if (token === imageSearchToken) {
+      imageOptionThumbnailFailed[image.id] = true
+    }
+  } finally {
+    if (token === imageSearchToken) {
+      imageOptionThumbnailLoading[image.id] = false
+    } else {
+      delete imageOptionThumbnailLoading[image.id]
+    }
+  }
+}
+
+function loadImageOptionThumbnails(images: ImageRecord[], token: number) {
+  images.forEach((image) => {
+    void loadImageOptionThumbnail(image, token)
+  })
+}
+
+async function loadSelectedImageThumbnail(image: ImageRecord) {
+  const token = ++selectedImageThumbnailToken
+  revokeSelectedImageThumbnail()
+  selectedImageThumbnailLoading.value = true
+  try {
+    const thumbnailUrl = await imageBlobUrl(image.id, 'thumbnail', imageOptionThumbnailKey(image))
+    if (token !== selectedImageThumbnailToken || selectedFeedbackImage.value?.id !== image.id) {
+      URL.revokeObjectURL(thumbnailUrl)
+      return
+    }
+    selectedImageThumbnailUrl.value = thumbnailUrl
+  } catch {
+    if (token === selectedImageThumbnailToken) {
+      selectedImageThumbnailFailed.value = true
+    }
+  } finally {
+    if (token === selectedImageThumbnailToken) {
+      selectedImageThumbnailLoading.value = false
+    }
+  }
+}
+
+async function runFeedbackImageSearch(query: string) {
   const token = ++imageSearchToken
   imageSearchLoading.value = true
   try {
@@ -94,10 +247,13 @@ async function searchFeedbackImages(query: string) {
     })
     if (token === imageSearchToken) {
       imageOptions.value = page.items
+      pruneImageOptionThumbnails(page.items)
+      loadImageOptionThumbnails(page.items, token)
     }
   } catch (error) {
     if (token === imageSearchToken) {
       imageOptions.value = []
+      pruneImageOptionThumbnails([])
       ElMessage.error(errorMessage(error, '图片候选加载失败'))
     }
   } finally {
@@ -107,10 +263,51 @@ async function searchFeedbackImages(query: string) {
   }
 }
 
-function handleImageSelectVisibleChange(visible: boolean) {
-  if (visible && imageOptions.value.length === 0) {
-    void searchFeedbackImages('')
+function searchFeedbackImages(query: string) {
+  if (imageSearchDebounceTimer) {
+    clearTimeout(imageSearchDebounceTimer)
   }
+  imageSearchDebounceTimer = setTimeout(() => {
+    imageSearchDebounceTimer = null
+    void runFeedbackImageSearch(query)
+  }, 250)
+}
+
+function handleImageSelectVisibleChange(visible: boolean) {
+  if (visible) {
+    if (imageOptions.value.length === 0) {
+      void runFeedbackImageSearch('')
+      return
+    }
+    const token = ++imageSearchToken
+    pruneImageOptionThumbnails(imageOptions.value)
+    loadImageOptionThumbnails(imageOptions.value, token)
+    return
+  }
+  if (!visible) {
+    if (imageSearchDebounceTimer) {
+      clearTimeout(imageSearchDebounceTimer)
+      imageSearchDebounceTimer = null
+    }
+    imageSearchToken++
+    imageSearchLoading.value = false
+    clearImageOptionThumbnails()
+  }
+}
+
+function handleFeedbackImageChange(value: string | number | boolean | undefined) {
+  const imageId = typeof value === 'string' ? value : ''
+  if (!imageId) {
+    clearSelectedFeedbackImage()
+    return
+  }
+  const image = imageOptions.value.find((item) => item.id === imageId) ?? null
+  if (!image) {
+    clearSelectedFeedbackImage()
+    return
+  }
+  selectedFeedbackImage.value = image
+  void loadSelectedImageThumbnail(image)
 }
 
 async function loadMine() {
@@ -212,6 +409,7 @@ async function submitFeedback() {
     form.content = ''
     form.imageId = ''
     imageOptions.value = []
+    clearSelectedFeedbackImage()
     statusFilter.value = ''
     pagination.page = 1
     prependMineFeedback(created)
@@ -312,6 +510,18 @@ onMounted(async () => {
     await loadAdmin()
   }
 })
+
+onBeforeUnmount(() => {
+  if (imageSearchDebounceTimer) {
+    clearTimeout(imageSearchDebounceTimer)
+    imageSearchDebounceTimer = null
+  }
+  imageSearchToken++
+  imageSearchLoading.value = false
+  clearImageOptionThumbnails()
+  selectedImageThumbnailToken++
+  revokeSelectedImageThumbnail()
+})
 </script>
 
 <template>
@@ -321,50 +531,151 @@ onMounted(async () => {
         <el-tab-pane label="提交反馈" name="submit">
           <div class="workspace-tab-panel">
             <div class="workspace-table-scroll-region">
-              <section class="feedback-submit-panel">
-                <el-form label-width="86px">
-                  <el-form-item label="类型">
-                    <el-select v-model="form.type">
-                      <el-option label="一般反馈" value="GENERAL" />
-                      <el-option label="图片问题" value="IMAGE" />
-                      <el-option label="功能建议" value="SUGGESTION" />
-                      <el-option label="缺陷报告" value="BUG" />
-                    </el-select>
-                  </el-form-item>
-                  <el-form-item label="关联图片">
-                    <el-select
-                      v-model="form.imageId"
-                      class="feedback-image-select"
-                      clearable
-                      filterable
-                      remote
-                      reserve-keyword
-                      :remote-method="searchFeedbackImages"
-                      :loading="imageSearchLoading"
-                      placeholder="可选，搜索并选择图片"
-                      no-data-text="暂无可选图片"
-                      no-match-text="未找到匹配图片"
-                      @visible-change="handleImageSelectVisibleChange"
-                    >
-                      <el-option v-for="image in imageOptions" :key="image.id" :label="image.title" :value="image.id">
-                        <div class="feedback-image-option">
-                          <strong>{{ image.title }}</strong>
-                          <span>{{ imageOptionMeta(image) }}</span>
+              <div class="feedback-submit-workspace">
+                <section class="feedback-submit-panel">
+                  <el-form label-width="86px">
+                    <el-form-item label="类型">
+                      <el-select v-model="form.type">
+                        <el-option label="一般反馈" value="GENERAL" />
+                        <el-option label="图片问题" value="IMAGE" />
+                        <el-option label="功能建议" value="SUGGESTION" />
+                        <el-option label="缺陷报告" value="BUG" />
+                      </el-select>
+                    </el-form-item>
+                    <el-form-item label="关联图片">
+                      <el-select
+                        v-model="form.imageId"
+                        class="feedback-image-select"
+                        clearable
+                        filterable
+                        remote
+                        reserve-keyword
+                        :remote-method="searchFeedbackImages"
+                        :loading="imageSearchLoading"
+                        placeholder="可选，搜索并选择图片"
+                        no-data-text="暂无可选图片"
+                        no-match-text="未找到匹配图片"
+                        @change="handleFeedbackImageChange"
+                        @visible-change="handleImageSelectVisibleChange"
+                      >
+                        <el-option
+                          v-for="image in imageOptions"
+                          :key="image.id"
+                          :label="image.title"
+                          :value="image.id"
+                          class="feedback-image-select-option"
+                          style="height: 58px; padding-top: 6px; padding-bottom: 6px"
+                        >
+                          <div class="feedback-image-option">
+                            <div class="feedback-image-option-thumb">
+                              <img v-if="imageOptionThumbnailUrls[image.id]" :src="imageOptionThumbnailUrls[image.id]" alt="" />
+                              <span v-else>{{ imageOptionThumbnailFailed[image.id] ? '无图' : '加载中' }}</span>
+                            </div>
+                            <div class="feedback-image-option-main">
+                              <strong>{{ image.title }}</strong>
+                              <span>{{ imageOptionMeta(image) }}</span>
+                            </div>
+                          </div>
+                        </el-option>
+                      </el-select>
+                    </el-form-item>
+                    <el-form-item label="标题">
+                      <el-input v-model="form.title" maxlength="160" show-word-limit />
+                    </el-form-item>
+                    <el-form-item label="内容">
+                      <el-input v-model="form.content" type="textarea" :rows="6" maxlength="2000" show-word-limit />
+                    </el-form-item>
+                    <el-form-item>
+                      <el-button type="primary" :loading="submitting" @click="submitFeedback">提交反馈</el-button>
+                    </el-form-item>
+                  </el-form>
+                </section>
+
+                <aside class="feedback-submit-context">
+                  <section class="feedback-context-section">
+                    <div class="feedback-context-head">
+                      <strong>关联图片预览</strong>
+                      <span>确认问题对象</span>
+                    </div>
+                    <div v-if="selectedFeedbackImage" class="feedback-selected-image">
+                      <div class="feedback-selected-image-thumb">
+                        <img v-if="selectedImageThumbnailUrl" :src="selectedImageThumbnailUrl" alt="" />
+                        <span v-else>{{ selectedImageThumbnailFailed ? '无图' : selectedImageThumbnailLoading ? '加载中' : '暂无预览' }}</span>
+                      </div>
+                      <div class="feedback-selected-image-meta">
+                        <strong :title="selectedFeedbackImage.title">{{ selectedFeedbackImage.title }}</strong>
+                        <span :title="selectedFeedbackImage.originalFilename">{{ selectedFeedbackImage.originalFilename }}</span>
+                        <div class="feedback-selected-image-facts">
+                          <span>{{ selectedFeedbackImage.category?.name ?? '未分类' }}</span>
+                          <span>{{ imageDimensions(selectedFeedbackImage) }}</span>
+                          <span>{{ formatBytes(selectedFeedbackImage.sizeBytes) }}</span>
                         </div>
-                      </el-option>
-                    </el-select>
-                  </el-form-item>
-                  <el-form-item label="标题">
-                    <el-input v-model="form.title" maxlength="160" show-word-limit />
-                  </el-form-item>
-                  <el-form-item label="内容">
-                    <el-input v-model="form.content" type="textarea" :rows="4" maxlength="2000" show-word-limit />
-                  </el-form-item>
-                  <el-form-item>
-                    <el-button type="primary" :loading="submitting" @click="submitFeedback">提交反馈</el-button>
-                  </el-form-item>
-                </el-form>
-              </section>
+                        <div class="feedback-selected-image-details">
+                          <div>
+                            <small>上传时间</small>
+                            <strong>{{ formatDateTime(selectedFeedbackImage.createdAt) }}</strong>
+                          </div>
+                          <div>
+                            <small>类型</small>
+                            <strong :title="selectedFeedbackImage.mimeType">{{ selectedFeedbackImage.mimeType }}</strong>
+                          </div>
+                        </div>
+                        <div class="feedback-selected-image-tags">
+                          <small>标签</small>
+                          <div v-if="selectedImageTagGroups.length" class="feedback-selected-image-tag-groups">
+                            <span
+                              v-for="group in selectedImageTagGroups"
+                              :key="group.key"
+                              class="feedback-selected-image-tag-group"
+                              :title="`${group.label}：${group.names.join('、')}`"
+                            >
+                              <strong>{{ group.label }}：</strong>{{ group.names.join('、') }}
+                            </span>
+                            <el-tooltip
+                              v-if="selectedImageHiddenTagCount"
+                              effect="light"
+                              placement="top"
+                              popper-class="feedback-selected-image-tag-tooltip"
+                            >
+                              <template #content>
+                                <div class="feedback-selected-image-tag-tooltip-content">
+                                  <div v-for="group in selectedImageHiddenTagGroups" :key="group.key">
+                                    <strong>{{ group.label }}：</strong>{{ group.names.join('、') }}
+                                  </div>
+                                </div>
+                              </template>
+                              <span class="feedback-selected-image-tag-more">+{{ selectedImageHiddenTagCount }}</span>
+                            </el-tooltip>
+                          </div>
+                          <span v-else class="feedback-selected-image-tag-empty">暂无标签</span>
+                        </div>
+                      </div>
+                    </div>
+                    <div v-else class="feedback-context-empty">
+                      可选择一张图片帮助定位问题
+                    </div>
+                  </section>
+
+                  <section class="feedback-context-section">
+                    <div class="feedback-context-head">
+                      <strong>我的近期反馈</strong>
+                      <span>最近 {{ recentMineFeedback.length }} 条</span>
+                    </div>
+                    <div v-if="recentMineFeedback.length" class="feedback-recent-list">
+                      <div v-for="item in recentMineFeedback" :key="item.id" class="feedback-recent-item">
+                        <div class="feedback-recent-main">
+                          <strong :title="item.title">{{ item.title }}</strong>
+                          <span>{{ formatDateTime(item.createdAt) }}</span>
+                        </div>
+                        <el-tag :type="statusTagType(item.status)" size="small" effect="light">{{ statusLabel(item.status) }}</el-tag>
+                      </div>
+                    </div>
+                    <div v-else class="feedback-context-empty">
+                      暂无历史反馈
+                    </div>
+                  </section>
+                </aside>
+              </div>
             </div>
           </div>
         </el-tab-pane>
@@ -518,23 +829,112 @@ onMounted(async () => {
   flex-direction: column;
 }
 
+.feedback-submit-workspace {
+  display: grid;
+  gap: 28px;
+  grid-template-columns: minmax(420px, 0.95fr) minmax(320px, 0.65fr);
+  min-height: 100%;
+}
+
 .feedback-submit-panel {
-  max-width: 760px;
+  max-width: 780px;
+  min-width: 0;
+}
+
+.feedback-submit-context {
+  border-left: 1px solid #e2e8f0;
+  display: flex;
+  flex-direction: column;
+  gap: 24px;
+  min-width: 0;
+  padding-left: 28px;
+}
+
+.feedback-context-section {
+  display: grid;
+  gap: 12px;
+  min-width: 0;
+}
+
+.feedback-context-head {
+  align-items: baseline;
+  display: flex;
+  gap: 10px;
+  justify-content: space-between;
+  min-width: 0;
+}
+
+.feedback-context-head strong {
+  color: #17201f;
+  font-size: 14px;
+}
+
+.feedback-context-head span {
+  color: #66736f;
+  font-size: 12px;
+}
+
+.feedback-context-empty {
+  align-items: center;
+  background: #f8fafc;
+  border: 1px dashed #cbd5e1;
+  border-radius: 8px;
+  color: #64748b;
+  display: flex;
+  font-size: 13px;
+  justify-content: center;
+  min-height: 112px;
+  padding: 18px;
 }
 
 .feedback-image-select {
   width: 100%;
 }
 
+.feedback-image-select-option {
+  height: 58px;
+  padding-bottom: 6px;
+  padding-top: 6px;
+}
+
 .feedback-image-option {
+  align-items: center;
   display: flex;
+  gap: 10px;
   min-width: 0;
+  width: 100%;
+}
+
+.feedback-image-option-thumb {
+  align-items: center;
+  aspect-ratio: 4 / 3;
+  background: #eef2f7;
+  border: 1px solid #e2e8f0;
+  border-radius: 6px;
+  color: #94a3b8;
+  display: flex;
+  flex: 0 0 44px;
+  font-size: 11px;
+  justify-content: center;
+  overflow: hidden;
+}
+
+.feedback-image-option-thumb img {
+  display: block;
+  height: 100%;
+  object-fit: cover;
+  width: 100%;
+}
+
+.feedback-image-option-main {
+  display: flex;
   flex-direction: column;
   justify-content: center;
   line-height: 1.35;
+  min-width: 0;
 }
 
-.feedback-image-option strong {
+.feedback-image-option-main strong {
   overflow: hidden;
   color: #17201f;
   font-weight: 650;
@@ -542,12 +942,186 @@ onMounted(async () => {
   white-space: nowrap;
 }
 
-.feedback-image-option span {
+.feedback-image-option-main span {
   overflow: hidden;
   color: #66736f;
   font-size: 12px;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.feedback-selected-image {
+  display: grid;
+  gap: 12px;
+  min-width: 0;
+}
+
+.feedback-selected-image-thumb {
+  align-items: center;
+  aspect-ratio: 16 / 10;
+  background: #eef2f7;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  color: #94a3b8;
+  display: flex;
+  font-size: 13px;
+  justify-content: center;
+  overflow: hidden;
+  width: 100%;
+}
+
+.feedback-selected-image-thumb img {
+  display: block;
+  height: 100%;
+  object-fit: contain;
+  width: 100%;
+}
+
+.feedback-selected-image-meta {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+}
+
+.feedback-selected-image-meta strong,
+.feedback-recent-main strong {
+  color: #17201f;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.feedback-selected-image-meta span,
+.feedback-recent-main span {
+  color: #66736f;
+  font-size: 12px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.feedback-selected-image-facts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.feedback-selected-image-facts span {
+  background: #f1f5f9;
+  border-radius: 999px;
+  color: #475569;
+  max-width: 100%;
+  padding: 3px 8px;
+}
+
+.feedback-selected-image-details {
+  display: grid;
+  gap: 8px;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  padding-top: 2px;
+}
+
+.feedback-selected-image-details div,
+.feedback-selected-image-tags {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+
+.feedback-selected-image-details small,
+.feedback-selected-image-tags small {
+  color: #94a3b8;
+  font-size: 12px;
+  line-height: 1.3;
+}
+
+.feedback-selected-image-details strong {
+  color: #475569;
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 1.35;
+}
+
+.feedback-selected-image-tag-groups {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  min-width: 0;
+}
+
+.feedback-selected-image-tags .feedback-selected-image-tag-group,
+.feedback-selected-image-tags .feedback-selected-image-tag-more,
+.feedback-selected-image-tags .feedback-selected-image-tag-empty {
+  background: #f8fafc;
+  border: 1px solid #e2e8f0;
+  border-radius: 6px;
+  color: #475569;
+  font-size: 12px;
+  line-height: 1.35;
+  max-width: 100%;
+  overflow: hidden;
+  padding: 4px 7px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.feedback-selected-image-tags .feedback-selected-image-tag-empty {
+  background: transparent;
+  border-color: transparent;
+  color: #94a3b8;
+  padding-left: 0;
+}
+
+.feedback-selected-image-tag-group strong {
+  color: #334155;
+  font-size: 12px;
+  font-weight: 650;
+}
+
+:global(.feedback-selected-image-tag-tooltip) {
+  max-width: 320px;
+}
+
+:global(.feedback-selected-image-tag-tooltip-content) {
+  display: grid;
+  gap: 5px;
+}
+
+:global(.feedback-selected-image-tag-tooltip-content div) {
+  color: #475569;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+}
+
+:global(.feedback-selected-image-tag-tooltip-content strong) {
+  color: #334155;
+  font-weight: 650;
+}
+
+.feedback-recent-list {
+  display: grid;
+  gap: 8px;
+}
+
+.feedback-recent-item {
+  align-items: center;
+  border-bottom: 1px solid #edf2f7;
+  display: grid;
+  gap: 10px;
+  grid-template-columns: minmax(0, 1fr) auto;
+  min-width: 0;
+  padding: 0 0 8px;
+}
+
+.feedback-recent-item:last-child {
+  border-bottom: 0;
+  padding-bottom: 0;
+}
+
+.feedback-recent-main {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
 }
 
 .feedback-linked-image {
@@ -585,6 +1159,17 @@ onMounted(async () => {
 }
 
 @media (max-width: 720px) {
+  .feedback-submit-workspace {
+    grid-template-columns: 1fr;
+  }
+
+  .feedback-submit-context {
+    border-left: 0;
+    border-top: 1px solid #e2e8f0;
+    padding-left: 0;
+    padding-top: 20px;
+  }
+
   .pagination-row {
     justify-content: flex-start;
   }
