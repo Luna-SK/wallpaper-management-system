@@ -1,0 +1,119 @@
+databaseChangeLog:
+  - changeSet:
+      id: 001-seed-roles-permissions-and-users
+      author: wallpaper
+      changes:
+        - sql:
+            splitStatements: true
+            sql: |
+              INSERT INTO roles (id, code, name, description, enabled, created_at, updated_at)
+              VALUES
+                ('00000000-0000-0000-0000-000000000001', 'SYSTEM_ADMIN', '系统管理员', '管理系统配置、用户、角色、权限和全部图片数据', true, '2026-04-24 00:00:00', '2026-04-24 00:00:00'),
+                ('00000000-0000-0000-0000-000000000002', 'DATA_MANAGER', '数据管理员', '管理图片、分类、标签、导入任务和数据质量', true, '2026-04-24 00:00:00', '2026-04-24 00:00:00'),
+                ('00000000-0000-0000-0000-000000000003', 'EDITOR', '标签编辑人员', '上传、编辑和维护授权范围内的图片分类标签', true, '2026-04-24 00:00:00', '2026-04-24 00:00:00'),
+                ('00000000-0000-0000-0000-000000000004', 'VIEWER', '普通浏览用户', '检索、预览和收藏授权范围内的图片', true, '2026-04-24 00:00:00', '2026-04-24 00:00:00');
+
+              INSERT INTO permissions (id, code, name, resource, action)
+              VALUES
+                ('20000000-0000-0000-0000-000000000001', 'image:view', '图片查看', 'image', 'view'),
+                ('20000000-0000-0000-0000-000000000002', 'image:upload', '图片上传', 'image', 'upload'),
+                ('20000000-0000-0000-0000-000000000003', 'image:edit', '图片编辑', 'image', 'edit'),
+                ('20000000-0000-0000-0000-000000000004', 'image:delete', '图片删除', 'image', 'delete'),
+                ('20000000-0000-0000-0000-000000000005', 'taxonomy:manage', '分类标签管理', 'taxonomy', 'manage'),
+                ('20000000-0000-0000-0000-000000000006', 'user:manage', '用户管理', 'user', 'manage'),
+                ('20000000-0000-0000-0000-000000000007', 'role:manage', '角色管理', 'role', 'manage'),
+                ('20000000-0000-0000-0000-000000000008', 'audit:view', '审计查看', 'audit', 'view'),
+                ('20000000-0000-0000-0000-000000000009', 'audit:manage', '审计归档管理', 'audit', 'manage'),
+                ('20000000-0000-0000-0000-000000000010', 'setting:manage', '系统设置', 'setting', 'manage'),
+                ('20000000-0000-0000-0000-000000000011', 'backup:manage', '备份管理', 'backup', 'manage'),
+                ('20000000-0000-0000-0000-000000000012', 'interaction:manage', '互动反馈管理', 'interaction', 'manage');
+
+              INSERT INTO app_users (id, username, display_name, email, phone, password_hash, status, created_at, updated_at)
+              VALUES
+                ('30000000-0000-0000-0000-000000000001', 'admin', '系统管理员', 'admin@example.local', null, '{bcrypt}$2y$10$RWOHNbbbuDOH6a0H6nESD.4zAfEllkf2t1Gs591h7Ubug4B0Y7rlG', 'ACTIVE', '2026-04-24 00:00:00', '2026-04-24 00:00:00'),
+                ('30000000-0000-0000-0000-000000000002', 'manager', '数据管理员', 'manager@example.local', null, '{bcrypt}$2y$10$RWOHNbbbuDOH6a0H6nESD.4zAfEllkf2t1Gs591h7Ubug4B0Y7rlG', 'ACTIVE', '2026-04-24 00:00:00', '2026-04-24 00:00:00'),
+                ('30000000-0000-0000-0000-000000000003', 'editor', '标签编辑人员', null, null, '{bcrypt}$2y$10$RWOHNbbbuDOH6a0H6nESD.4zAfEllkf2t1Gs591h7Ubug4B0Y7rlG', 'ACTIVE', '2026-04-24 00:00:00', '2026-04-24 00:00:00'),
+                ('30000000-0000-0000-0000-000000000004', 'viewer', '普通浏览用户', null, null, '{bcrypt}$2y$10$RWOHNbbbuDOH6a0H6nESD.4zAfEllkf2t1Gs591h7Ubug4B0Y7rlG', 'ACTIVE', '2026-04-24 00:00:00', '2026-04-24 00:00:00');
+
+              INSERT INTO user_roles (user_id, role_id)
+              VALUES
+                ('30000000-0000-0000-0000-000000000001', '00000000-0000-0000-0000-000000000001'),
+                ('30000000-0000-0000-0000-000000000002', '00000000-0000-0000-0000-000000000002'),
+                ('30000000-0000-0000-0000-000000000003', '00000000-0000-0000-0000-000000000003'),
+                ('30000000-0000-0000-0000-000000000004', '00000000-0000-0000-0000-000000000004');
+
+              INSERT INTO role_permissions (role_id, permission_id)
+              SELECT '00000000-0000-0000-0000-000000000001', id FROM permissions;
+              INSERT INTO role_permissions (role_id, permission_id)
+              SELECT '00000000-0000-0000-0000-000000000002', id FROM permissions
+              WHERE code IN ('image:view','image:upload','image:edit','image:delete','taxonomy:manage','audit:view','interaction:manage');
+              INSERT INTO role_permissions (role_id, permission_id)
+              SELECT '00000000-0000-0000-0000-000000000003', id FROM permissions
+              WHERE code IN ('image:view','image:upload','image:edit','taxonomy:manage');
+              INSERT INTO role_permissions (role_id, permission_id)
+              SELECT '00000000-0000-0000-0000-000000000004', id FROM permissions
+              WHERE code IN ('image:view');
+
+  - changeSet:
+      id: 002-seed-taxonomy
+      author: wallpaper
+      changes:
+        - insert:
+            tableName: categories
+            columns:
+              - column: { name: id, value: "10000000-0000-0000-0000-000000000001" }
+              - column: { name: code, value: "TEXTILE_DEFECT" }
+              - column: { name: name, value: "纺织瑕疵" }
+              - column: { name: sort_order, valueNumeric: 10 }
+              - column: { name: enabled, valueBoolean: true }
+              - column: { name: created_at, valueDate: "2026-04-24T00:00:00" }
+              - column: { name: updated_at, valueDate: "2026-04-24T00:00:00" }
+        - insert:
+            tableName: tag_groups
+            columns:
+              - column: { name: id, value: "12000000-0000-0000-0000-000000000001" }
+              - column: { name: code, value: "DEFECT" }
+              - column: { name: name, value: "瑕疵" }
+              - column: { name: sort_order, valueNumeric: 10 }
+              - column: { name: enabled, valueBoolean: true }
+              - column: { name: created_at, valueDate: "2026-04-24T00:00:00" }
+              - column: { name: updated_at, valueDate: "2026-04-24T00:00:00" }
+        - loadData:
+            tableName: tags
+            file: db/changelog/seed/textile-defect-tags.csv
+            encoding: UTF-8
+
+  - changeSet:
+      id: 003-seed-system-settings
+      author: wallpaper
+      changes:
+        - sql:
+            splitStatements: false
+            sql: |
+              INSERT INTO system_settings (setting_key, setting_value, updated_at)
+              VALUES
+                ('upload.max_file_size_mb', '50', CURRENT_TIMESTAMP(6)),
+                ('upload.max_batch_size_mb', '500', CURRENT_TIMESTAMP(6)),
+                ('upload.deduplication.enabled', 'false', CURRENT_TIMESTAMP(6)),
+                ('preview.quality', 'ORIGINAL', CURRENT_TIMESTAMP(6)),
+                ('soft_delete.retention_days', '180', CURRENT_TIMESTAMP(6)),
+                ('soft_delete.cleanup.enabled', 'false', CURRENT_TIMESTAMP(6)),
+                ('soft_delete.cleanup.cron', '0 0 3 * * SUN', CURRENT_TIMESTAMP(6)),
+                ('watermark.enabled', 'true', CURRENT_TIMESTAMP(6)),
+                ('watermark.preview.enabled', 'false', CURRENT_TIMESTAMP(6)),
+                ('watermark.text', '仅供授权使用', CURRENT_TIMESTAMP(6)),
+                ('watermark.mode', 'CORNER', CURRENT_TIMESTAMP(6)),
+                ('watermark.position', 'BOTTOM_RIGHT', CURRENT_TIMESTAMP(6)),
+                ('watermark.opacity_percent', '16', CURRENT_TIMESTAMP(6)),
+                ('watermark.tile_density', 'SPARSE', CURRENT_TIMESTAMP(6)),
+                ('audit.retention.days', '180', CURRENT_TIMESTAMP(6)),
+                ('audit.archive.enabled', 'true', CURRENT_TIMESTAMP(6)),
+                ('audit.archive.cron', '0 30 2 * * *', CURRENT_TIMESTAMP(6)),
+                ('audit.archive.storage', 'RUSTFS', CURRENT_TIMESTAMP(6)),
+                ('audit.archive.batch_size', '1000', CURRENT_TIMESTAMP(6)),
+                ('image.version.max_retained', '5', CURRENT_TIMESTAMP(6)),
+                ('session.idle_timeout.enabled', 'true', CURRENT_TIMESTAMP(6)),
+                ('session.idle_timeout_minutes', '120', CURRENT_TIMESTAMP(6)),
+                ('session.absolute_lifetime.enabled', 'true', CURRENT_TIMESTAMP(6)),
+                ('session.absolute_lifetime_days', '7', CURRENT_TIMESTAMP(6)),
+                ('password_reset.email.enabled', 'false', CURRENT_TIMESTAMP(6));

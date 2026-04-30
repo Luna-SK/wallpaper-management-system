@@ -1,45 +1,7 @@
 databaseChangeLog:
+  # New-project baseline only. Existing databases that ran the old migration chain
+  # must be backed up and recreated before using this changelog.
   - include:
-      file: db/changelog/001-initial-schema.yaml
+      file: db/changelog/001-baseline-schema.yaml
   - include:
-      file: db/changelog/002-seed-data.yaml
-  - include:
-      file: db/changelog/003-functional-api-support.yaml
-  - include:
-      file: db/changelog/004-single-image-category.yaml
-  - include:
-      file: db/changelog/005-mybatis-plus-schema-refine.yaml
-  - include:
-      file: db/changelog/006-tag-groups-taxonomy-refine.yaml
-  - include:
-      file: db/changelog/007-tag-group-disable-consistency.yaml
-  - include:
-      file: db/changelog/008-auth-rbac.yaml
-  - include:
-      file: db/changelog/009-watermark-settings.yaml
-  - include:
-      file: db/changelog/010-image-version-settings.yaml
-  - include:
-      file: db/changelog/011-watermark-experience-settings.yaml
-  - include:
-      file: db/changelog/012-session-lifecycle-settings.yaml
-  - include:
-      file: db/changelog/013-password-reset-tokens.yaml
-  - include:
-      file: db/changelog/014-unique-user-email.yaml
-  - include:
-      file: db/changelog/015-user-interactions-feedback.yaml
-  - include:
-      file: db/changelog/016-password-reset-email-settings.yaml
-  - include:
-      file: db/changelog/017-comment-threaded-replies.yaml
-  - include:
-      file: db/changelog/018-user-avatars.yaml
-  - include:
-      file: db/changelog/019-disable-password-reset-email-by-default.yaml
-  - include:
-      file: db/changelog/020-image-title-sort-key.yaml
-  - include:
-      file: db/changelog/021-upload-batch-item-title.yaml
-  - include:
-      file: db/changelog/022-allow-duplicate-image-sha256.yaml
+      file: db/changelog/002-baseline-seed-data.yaml

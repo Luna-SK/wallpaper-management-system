@@ -8,8 +8,9 @@ import {
   Setting,
   User,
 } from '@element-plus/icons-vue'
-import { ElMessage } from 'element-plus'
+import { ElMessage } from 'element-plus/es/components/message/index'
 import type { UploadFile, UploadInstance } from 'element-plus'
+import 'element-plus/es/components/message/style/css'
 import { isAxiosError } from 'axios'
 import { computed, nextTick, onBeforeUnmount, reactive, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'

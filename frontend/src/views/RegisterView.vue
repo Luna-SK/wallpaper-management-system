@@ -1,5 +1,7 @@
 <script setup lang="ts">
-import { ElMessage, type FormInstance, type FormRules } from 'element-plus'
+import { ElMessage } from 'element-plus/es/components/message/index'
+import type { FormInstance, FormRules } from 'element-plus'
+import 'element-plus/es/components/message/style/css'
 import { Lock, Message, Phone, User } from '@element-plus/icons-vue'
 import { isAxiosError } from 'axios'
 import { computed, reactive, ref } from 'vue'

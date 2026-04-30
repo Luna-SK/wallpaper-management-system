@@ -1,16 +1,21 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, ref } from 'vue'
-import { ElMessage } from 'element-plus'
+import { ElMessage } from 'element-plus/es/components/message/index'
+import 'element-plus/es/components/message/style/css'
 import { isAxiosError } from 'axios'
-import * as echarts from 'echarts'
-import type { ECharts, EChartsOption } from 'echarts'
+import type { EChartsOption } from 'echarts'
+import type { EChartsType } from 'echarts/core'
 import { getStatistics, type Statistics, type StatisticsRankingItem } from '../api/images'
+
+type EChartsModule = typeof import('../utils/statisticsEcharts')
 
 const loading = ref(false)
 const trendChartEl = ref<HTMLElement | null>(null)
 const categoryChartEl = ref<HTMLElement | null>(null)
-let trendChart: ECharts | null = null
-let categoryChart: ECharts | null = null
+let trendChart: EChartsType | null = null
+let categoryChart: EChartsType | null = null
+let echartsModule: EChartsModule | null = null
+let echartsModulePromise: Promise<EChartsModule> | null = null
 
 const stats = ref<Statistics>({
   imageTotal: 0,
@@ -70,7 +75,11 @@ async function load() {
   try {
     stats.value = await getStatistics()
     await nextTick()
-    renderCharts()
+    try {
+      await renderCharts()
+    } catch (error) {
+      ElMessage.error(errorMessage(error, '统计图表渲染失败'))
+    }
   } catch (error) {
     ElMessage.error(errorMessage(error, '统计数据加载失败'))
   } finally {
@@ -78,14 +87,23 @@ async function load() {
   }
 }
 
-function renderCharts() {
-  renderTrendChart()
-  renderCategoryChart()
+async function loadEcharts() {
+  if (echartsModule) return echartsModule
+  echartsModulePromise ??= import('../utils/statisticsEcharts')
+  echartsModule = await echartsModulePromise
+  return echartsModule
 }
 
-function renderTrendChart() {
+async function renderCharts() {
+  const echarts = await loadEcharts()
+  renderTrendChart(echarts)
+  renderCategoryChart(echarts)
+}
+
+function renderTrendChart(echarts: EChartsModule) {
   if (!trendChartEl.value) return
-  trendChart ??= echarts.init(trendChartEl.value)
+  const chart = trendChart ?? echarts.initStatisticsChart(trendChartEl.value)
+  trendChart = chart
   const option: EChartsOption = {
     color: ['#0f766e', '#7c3aed'],
     grid: { top: 28, right: 18, bottom: 32, left: 42 },
@@ -120,12 +138,13 @@ function renderTrendChart() {
       },
     ],
   }
-  trendChart.setOption(option, true)
+  chart.setOption(option, true)
 }
 
-function renderCategoryChart() {
+function renderCategoryChart(echarts: EChartsModule) {
   if (!categoryChartEl.value) return
-  categoryChart ??= echarts.init(categoryChartEl.value)
+  const chart = categoryChart ?? echarts.initStatisticsChart(categoryChartEl.value)
+  categoryChart = chart
   const option: EChartsOption = {
     color: ['#0f766e', '#2563eb', '#7c3aed', '#ca8a04', '#dc2626', '#64748b'],
     tooltip: { trigger: 'item' },
@@ -150,7 +169,7 @@ function renderCategoryChart() {
       },
     ],
   }
-  categoryChart.setOption(option, true)
+  chart.setOption(option, true)
 }
 
 function resizeCharts() {

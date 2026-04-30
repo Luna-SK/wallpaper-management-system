@@ -1,18 +1,19 @@
 import { createRouter, createWebHistory, type RouteRecordRaw } from 'vue-router'
 import { useAuthStore } from '../stores/auth'
 import AppLayout from '../layouts/AppLayout.vue'
-import LoginView from '../views/LoginView.vue'
-import RegisterView from '../views/RegisterView.vue'
-import ForgotPasswordView from '../views/ForgotPasswordView.vue'
-import ResetPasswordView from '../views/ResetPasswordView.vue'
-import ImageLibraryView from '../views/ImageLibraryView.vue'
-import TaxonomyView from '../views/TaxonomyView.vue'
-import UsersView from '../views/UsersView.vue'
-import LogsView from '../views/LogsView.vue'
-import StatisticsView from '../views/StatisticsView.vue'
-import SettingsView from '../views/SettingsView.vue'
-import FeedbackView from '../views/FeedbackView.vue'
-import ForbiddenView from '../views/ForbiddenView.vue'
+
+const LoginView = () => import('../views/LoginView.vue')
+const RegisterView = () => import('../views/RegisterView.vue')
+const ForgotPasswordView = () => import('../views/ForgotPasswordView.vue')
+const ResetPasswordView = () => import('../views/ResetPasswordView.vue')
+const ImageLibraryView = () => import('../views/ImageLibraryView.vue')
+const TaxonomyView = () => import('../views/TaxonomyView.vue')
+const UsersView = () => import('../views/UsersView.vue')
+const LogsView = () => import('../views/LogsView.vue')
+const StatisticsView = () => import('../views/StatisticsView.vue')
+const SettingsView = () => import('../views/SettingsView.vue')
+const FeedbackView = () => import('../views/FeedbackView.vue')
+const ForbiddenView = () => import('../views/ForbiddenView.vue')
 
 declare module 'vue-router' {
   interface RouteMeta {

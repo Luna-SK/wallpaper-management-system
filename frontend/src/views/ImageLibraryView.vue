@@ -13,8 +13,15 @@ import {
   type PropType,
   type VNode,
 } from 'vue'
-import { ElButton, ElInput, ElMessage, ElMessageBox } from 'element-plus'
+import { ElButton } from 'element-plus/es/components/button/index'
+import { ElInput } from 'element-plus/es/components/input/index'
+import { ElMessage } from 'element-plus/es/components/message/index'
+import { ElMessageBox } from 'element-plus/es/components/message-box/index'
 import type { TableInstance, UploadFile, UploadFiles, UploadUserFile } from 'element-plus'
+import 'element-plus/es/components/button/style/css'
+import 'element-plus/es/components/input/style/css'
+import 'element-plus/es/components/message/style/css'
+import 'element-plus/es/components/message-box/style/css'
 import {
   ArrowLeft,
   ArrowRight,

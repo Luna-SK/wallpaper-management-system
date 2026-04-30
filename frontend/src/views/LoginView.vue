@@ -1,5 +1,6 @@
 <script setup lang="ts">
-import { ElMessage } from 'element-plus'
+import { ElMessage } from 'element-plus/es/components/message/index'
+import 'element-plus/es/components/message/style/css'
 import { Lock, User } from '@element-plus/icons-vue'
 import { isAxiosError } from 'axios'
 import { computed, onMounted, reactive, ref } from 'vue'
