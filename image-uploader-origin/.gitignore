@@ -1,9 +1,0 @@
-.env
-.env.*
-!.env.example
-.venv/
-.import-runs/
-report-*.csv
-__pycache__/
-*.py[cod]
-.pytest_cache/

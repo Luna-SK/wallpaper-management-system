@@ -134,6 +134,7 @@ cd frontend
 npm run typecheck
 npm run build
 npm run test
+npm run test:e2e
 ```
 
 Docker 配置：
@@ -146,9 +147,10 @@ docker compose -p wallpaper --env-file .env -f compose.yaml -f compose.build.yam
 导入工具：
 
 ```bash
-cd tools/image-importer
+cd image-uploader
+cp .env.example .env
 uv sync
-uv run wallpaper-import
+uv run image-uploader
 ```
 
 ## Git 提交规范

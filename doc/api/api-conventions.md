@@ -4,7 +4,9 @@
 
 统一前缀：`/api`
 
-统一响应：
+响应形态：
+
+Auth、System、审计归档/保留配置等接口，以及全局错误响应，使用带业务状态码的响应包裹：
 
 ```json
 {
@@ -15,7 +17,7 @@
 }
 ```
 
-分页响应：
+多数业务接口直接返回 DTO、分页对象或文件流，不额外包裹 `code/message/data`。分页响应通常为：
 
 ```json
 {
@@ -33,12 +35,18 @@
 - `POST /api/auth/refresh`
 - `POST /api/auth/reset-password/request`
 - `POST /api/auth/reset-password/confirm`
+- `POST /api/auth/password-reset/request`（兼容路径）
+- `POST /api/auth/password-reset/confirm`（兼容路径）
+- `GET /api/auth/password-reset-policy`
 - `POST /api/auth/logout`
 - `GET /api/auth/me`
+- `GET /api/auth/session-policy`
 - `PATCH /api/auth/profile`
 - `POST /api/auth/avatar`
 - `DELETE /api/auth/avatar`
 - `PATCH /api/auth/password`
+- `GET /api/system/health`
+- `GET /api/system/modules`
 - `GET /api/users`
 - `GET /api/users/{id}/avatar`
 - `POST /api/users`
@@ -63,6 +71,10 @@
 - `POST /api/image-upload-sessions/{id}/cancel`
 - `GET /api/image-upload-sessions/{id}`
 - `GET /api/image-upload-sessions/{id}/events`
+- `GET /api/image-upload-settings`
+- `GET /api/image-upload-batches/{id}`（兼容旧调用）
+- `GET /api/image-upload-batches/{id}/events`（兼容旧调用）
+- `POST /api/image-upload-batches/{id}/items/{itemId}/retry`（兼容旧调用）
 - `POST /api/images/batch`（兼容旧调用）
 - `GET /api/images`
 - `GET /api/images/{id}`
@@ -70,9 +82,18 @@
 - `POST /api/images/{id}/edit`
 - `GET /api/images/{id}/edit-source`
 - `GET /api/images/{id}/versions`
+- `GET /api/images/{id}/versions/{versionId}/thumbnail`
+- `GET /api/images/{id}/versions/{versionId}/preview`
 - `POST /api/images/{id}/versions/{versionId}/restore`
 - `DELETE /api/images/{id}/versions/{versionId}`
 - `DELETE /api/images/{id}`
+- `POST /api/images/batch-disable`
+- `POST /api/images/{id}/restore`
+- `POST /api/images/batch-restore`
+- `DELETE /api/images/{id}/purge`
+- `POST /api/images/batch-purge`
+- `POST /api/images/deleted/purge`
+- `POST /api/images/batch-download`
 - `GET /api/images/{id}/thumbnail`
 - `GET /api/images/{id}/preview`
 - `GET /api/images/{id}/download`
@@ -105,6 +126,7 @@
 - `POST /api/tags/{id}/restore`
 - `DELETE /api/tags/{id}/purge?force=true`
 - `GET /api/audit-logs`
+- `GET /api/audit-logs/export`
 - `GET /api/audit-log-retention`
 - `PATCH /api/audit-log-retention`
 - `GET /api/audit-log-archives`
@@ -113,7 +135,7 @@
 - `GET /api/system-settings`
 - `PATCH /api/system-settings`
 
-上传使用会话化接口：`POST /api/image-upload-sessions` 创建会话，`POST /api/image-upload-sessions/{id}/items` 上传文件到 RustFS 暂存区，`POST /api/image-upload-sessions/{id}/confirm` 确认入库，`POST /api/image-upload-sessions/{id}/cancel` 取消并清理未确认对象。创建会话必须包含 `categoryId`，并至少提交一个 `tagIds`；分类、标签和标签组都必须处于启用状态。上传 item 和 retry item 的 multipart 请求可额外提交 `title` 字段；标题为空时默认使用原文件名去掉扩展名，标题最长 255 个字符。重复图片只关联既有图片，不会覆盖既有图片标题。旧 `POST /api/images/batch` 仅作为兼容接口保留。
+上传使用会话化接口：`POST /api/image-upload-sessions` 创建会话，`POST /api/image-upload-sessions/{id}/items` 上传文件到 RustFS 暂存区，`POST /api/image-upload-sessions/{id}/confirm` 确认入库，`POST /api/image-upload-sessions/{id}/cancel` 取消并清理未确认对象。创建会话必须包含 `categoryId`，并至少提交一个 `tagIds`；分类、标签和标签组都必须处于启用状态。上传 item 和 retry item 的 multipart 请求可额外提交 `title` 字段；标题为空时默认使用原文件名去掉扩展名，标题最长 255 个字符。`GET /api/image-upload-settings` 返回后端上传去重开关；开关启用时重复图片只关联既有图片，不会覆盖既有图片标题。旧 `POST /api/images/batch` 和 `/api/image-upload-batches/*` 仅作为兼容接口保留。
 
 确认入库前，暂存文件不会出现在图片库。取消会话、过期会话和孤儿对象清理都会删除未被 `image_versions` 引用的 RustFS 对象。
 
@@ -151,7 +173,7 @@
 
 ## System Settings
 
-`GET /api/system-settings` 返回上传业务上限、后端上传硬上限、预览质量、已停用图片清理和水印版权保护配置：
+`GET /api/system-settings` 返回上传业务上限、后端上传硬上限、上传去重、预览质量、已停用图片清理和水印版权保护配置：
 
 ```json
 {
@@ -159,6 +181,7 @@
   "maxBatchSizeMb": 500,
   "maxFileHardLimitMb": 50,
   "maxBatchHardLimitMb": 500,
+  "uploadDeduplicationEnabled": false,
   "previewQuality": "ORIGINAL",
   "softDeleteRetentionDays": 180,
   "softDeleteCleanupEnabled": false,
@@ -178,7 +201,7 @@
 }
 ```
 
-`PATCH /api/system-settings` 需要 `setting:manage` 权限。上传业务上限不能超过硬上限；下载/导出水印与预览水印可独立开关，任一水印开启时必须填写不超过 64 个字符的水印文字；水印样式支持角落水印 `CORNER` 和斜向平铺 `TILED`，角落位置支持九宫格，透明度范围为 `5-40`，平铺密度支持 `SPARSE`、`NORMAL`、`DENSE`。邮件找回密码可独立开关且默认关闭，关闭后公开找回入口不可用，已有邮件重置链接也不能继续使用。空闲超时范围为 `15-1440` 分钟，绝对会话时长范围为 `1-30` 天，两个机制均可独立开关且默认开启。软删除自动清理 cron 使用 Spring 6 段表达式，默认每周日 03:00。保存后无需重启，下一次预览、下载、密码找回或会话校验会读取最新配置，下一次调度会读取最新 cron；后端启动后仍会补偿检查一次已到期的停用图片。
+`PATCH /api/system-settings` 需要 `setting:manage` 权限。上传业务上限不能超过硬上限；`uploadDeduplicationEnabled` 控制后端上传 SHA-256 去重；下载/导出水印与预览水印可独立开关，任一水印开启时必须填写不超过 64 个字符的水印文字；水印样式支持角落水印 `CORNER` 和斜向平铺 `TILED`，角落位置支持九宫格，透明度范围为 `5-40`，平铺密度支持 `SPARSE`、`NORMAL`、`DENSE`。邮件找回密码可独立开关且默认关闭，关闭后公开找回入口不可用，已有邮件重置链接也不能继续使用。空闲超时范围为 `15-1440` 分钟，绝对会话时长范围为 `1-30` 天，两个机制均可独立开关且默认开启。软删除自动清理 cron 使用 Spring 6 段表达式，默认每周日 03:00。保存后无需重启，下一次上传、预览、下载、密码找回或会话校验会读取最新配置，下一次调度会读取最新 cron；后端启动后仍会补偿检查一次已到期的停用图片。
 
 ## Audit Log Retention
 

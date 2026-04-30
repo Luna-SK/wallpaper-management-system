@@ -17,9 +17,7 @@
 
 ## 工程协作入口
 
-新建开发上下文时，以 `wzut-wallpaper-manager/` 为项目根目录，优先阅读：
-
-- `doc/development/workflow.md`：本地启动、验证、数据库迁移和 Git 提交流程。
+新建开发上下文时，以 `wzut-wallpaper-manager/` 为项目根目录，优先阅读 `doc/development/workflow.md`，了解本地启动、验证、数据库迁移和 Git 提交流程。
 
 提交信息采用 Conventional Commits：`<type>(<scope>): <subject>`，例如 `fix(taxonomy): hide disabled tags in image library`。
 
@@ -29,7 +27,7 @@
 - 四角色权限模型：系统管理员、数据管理员、标签编辑人员、普通浏览用户。
 - 图片上传、批量上传、原图保留、预览图、缩略图。
 - 分类、标签组和标签，一期内置 `纺织瑕疵` 分类、`瑕疵` 标签组及 35 个瑕疵标签。
-- 关键词、分类、标签、上传者、时间范围检索。
+- 标题关键词、分类、标签、状态、收藏筛选，以及图片库排序。
 - 鉴权访问、原图下载、操作日志、访问日志。
 - 图片评论、收藏、点赞和用户反馈工单。
 - 图片数量、上传量、浏览量、下载量、存储占用统计。

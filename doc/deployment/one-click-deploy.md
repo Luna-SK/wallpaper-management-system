@@ -2,6 +2,8 @@
 
 一键部署的目标是“一条命令完成环境生成、构建或拉取、启动和健康检查”。脚本不会提交真实 `.env`，也不会在已有 `ops/docker/.env` 存在时静默覆盖它；需要重新生成时显式加 `--force-env` 或 `-ForceEnv`。
 
+如果已有 `ops/docker/.env` 仍包含 `change-me` 占位值，脚本会友好退出并提示处理；演示机可以使用 `--force-env` / `-ForceEnv` 重新生成强随机配置。
+
 ## 前置条件
 
 - 已安装 Docker Desktop，或 Linux 服务器已安装 Docker Engine 与 Docker Compose v2。

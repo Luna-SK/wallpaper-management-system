@@ -10,6 +10,7 @@ npm run dev
 npm run typecheck
 npm run build
 npm run test
+npm run test:e2e
 ```
 
 默认开发地址为 `http://localhost:5173` 或 `http://127.0.0.1:5173`，前端业务请求保持 `/api`。
