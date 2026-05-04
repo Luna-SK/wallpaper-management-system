@@ -162,7 +162,10 @@ class ApiClient:
         detail = self._error_detail(response)
         if response.status_code == 401:
             if self.manual_authorization:
-                raise ImporterError(f"认证失败：{detail}。手动 AUTHORIZATION_HEADER 可能已过期，建议改用 USERNAME/PASSWORD。")
+                raise ImporterError(
+                    f"认证失败：{detail}。手动 AUTHORIZATION_HEADER 可能已过期，"
+                    "建议改用 IMAGE_UPLOADER_USERNAME/IMAGE_UPLOADER_PASSWORD。"
+                )
             raise ImporterError(f"认证失败：{detail}")
         if response.status_code == 403:
             raise ImporterError(f"权限不足：{detail}")

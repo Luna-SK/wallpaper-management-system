@@ -57,7 +57,7 @@ uv run image-uploader --env-file <配置文件路径> --retry-failed
 | 变量 | 必填 | 默认值 | 说明 |
 |------|------|--------|------|
 | `API_BASE_URL` | 可选 | `http://localhost:18090/api` | 后端 API 地址。本机 Docker 或本地后端通常保留默认；上传到远程环境时改成远程后端的 `/api` 地址 |
-| `USERNAME` / `PASSWORD` | 条件必填 | 空 | 未配置 `AUTHORIZATION_HEADER` 时必须填写。推荐使用管理员账号；本机 Docker 的 `admin` 密码来自部署脚本输出，使用用户名密码登录时脚本可自动 refresh token |
+| `IMAGE_UPLOADER_USERNAME` / `IMAGE_UPLOADER_PASSWORD` | 条件必填 | 空 | 未配置 `AUTHORIZATION_HEADER` 时必须填写。推荐使用管理员账号；本机 Docker 的 `admin` 密码来自部署脚本输出，使用用户名密码登录时脚本可自动 refresh token |
 | `AUTHORIZATION_HEADER` | 条件必填 | 空 | 不使用用户名密码登录时填写完整 HTTP `Authorization` 请求头，例如 `Bearer eyJ...`，不是只填 token；仅建议高级或临时调试场景使用 |
 | `DATA_DIR` | 必填 | 无 | 图片数据目录，建议填绝对路径；目录下必须包含 `0` 到 `20` 子目录，脚本会递归扫描这些编号目录 |
 | `CATEGORY_CODE` / `CATEGORY_NAME` | 可选 | `TEXTILE_DEFECT / 纺织瑕疵` | 要复用的图片分类。脚本只校验并使用已有分类，不会自动创建或改名 |
@@ -70,11 +70,13 @@ uv run image-uploader --env-file <配置文件路径> --retry-failed
 | `RUN_DIR` | 可选 | `.import-runs` | 本地 checkpoint 和自动报告目录，属于运行产物；通常保留默认，不要提交到 Git |
 | `REPORT_FILE` | 可选 | 空 | 指定本次 CSV 报告输出路径；留空时在 `RUN_DIR` 中自动生成 `report-<timestamp>.csv` |
 
-`USERNAME/PASSWORD` 和 `AUTHORIZATION_HEADER` 二选一即可；推荐使用 `USERNAME/PASSWORD`，因为脚本可以自动 refresh token。
+`IMAGE_UPLOADER_USERNAME/IMAGE_UPLOADER_PASSWORD` 和 `AUTHORIZATION_HEADER` 二选一即可；推荐使用 `IMAGE_UPLOADER_USERNAME/IMAGE_UPLOADER_PASSWORD`，因为脚本可以自动 refresh token。
 
-本机 Docker 推荐只填写 `USERNAME=admin` 和一键部署脚本输出的 `admin` 密码，不需要手动复制令牌。若确需手动认证，请填写完整的 `AUTHORIZATION_HEADER`。
+本机 Docker 推荐只填写 `IMAGE_UPLOADER_USERNAME=admin` 和一键部署脚本输出的 `admin` 密码，不需要手动复制令牌。若确需手动认证，请填写完整的 `AUTHORIZATION_HEADER`。
 
-大量上传时，脚本使用 `USERNAME/PASSWORD` 登录后会在访问令牌过期时自动调用 `/api/auth/refresh` 续期，并重试一次原请求。手动 `AUTHORIZATION_HEADER` 无法自动续期，过期后需要重新填写。
+大量上传时，脚本使用 `IMAGE_UPLOADER_USERNAME/IMAGE_UPLOADER_PASSWORD` 登录后会在访问令牌过期时自动调用 `/api/auth/refresh` 续期，并重试一次原请求。手动 `AUTHORIZATION_HEADER` 无法自动续期，过期后需要重新填写。
+
+旧变量 `USERNAME/PASSWORD` 仍会兼容读取，但只建议迁移旧私有配置时临时使用。Windows 和部分 shell 会预置 `USERNAME` 等通用变量，可能覆盖预期配置；新变量会优先于旧变量读取。
 
 脚本会在导入前读取系统的“上传去重”开关，并以 `后端上传去重（系统设置）` 显示当前状态；该开关只由后端执行，CLI 不提供本地图片内容去重开关。所有未被 `SKIP_COMPLETED` 或 `RETRY_FAILED` 过滤的文件都会提交给后端上传会话，由后端根据系统设置决定入库或判重。
 

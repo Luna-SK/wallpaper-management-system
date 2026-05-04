@@ -126,7 +126,7 @@ def test_manual_authorization_401_suggests_username_password(tmp_path) -> None:
     client = ApiClient(settings(tmp_path, authorization_header="Bearer old"), transport=httpx.MockTransport(handler))
     try:
         client.authenticate()
-        with pytest.raises(ImporterError, match="建议改用 USERNAME/PASSWORD"):
+        with pytest.raises(ImporterError, match="建议改用 IMAGE_UPLOADER_USERNAME/IMAGE_UPLOADER_PASSWORD"):
             client.categories()
     finally:
         client.close()

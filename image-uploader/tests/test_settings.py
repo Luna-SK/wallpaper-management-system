@@ -9,6 +9,8 @@ from image_uploader.settings import Settings
 CONFIG_ENV_NAMES = [
     "API_BASE_URL",
     "AUTHORIZATION_HEADER",
+    "IMAGE_UPLOADER_USERNAME",
+    "IMAGE_UPLOADER_PASSWORD",
     "USERNAME",
     "PASSWORD",
     "DATA_DIR",
@@ -39,8 +41,8 @@ def test_skip_completed_defaults_to_true() -> None:
 
 def test_blank_report_file_is_treated_as_default(monkeypatch, tmp_path) -> None:
     monkeypatch.setenv("DATA_DIR", str(tmp_path))
-    monkeypatch.setenv("USERNAME", "admin")
-    monkeypatch.setenv("PASSWORD", "password")
+    monkeypatch.setenv("IMAGE_UPLOADER_USERNAME", "admin")
+    monkeypatch.setenv("IMAGE_UPLOADER_PASSWORD", "password")
     monkeypatch.setenv("REPORT_FILE", "")
 
     settings = Settings()
@@ -50,8 +52,8 @@ def test_blank_report_file_is_treated_as_default(monkeypatch, tmp_path) -> None:
 
 def test_blank_authorization_header_is_treated_as_empty(monkeypatch, tmp_path) -> None:
     monkeypatch.setenv("DATA_DIR", str(tmp_path))
-    monkeypatch.setenv("USERNAME", "admin")
-    monkeypatch.setenv("PASSWORD", "password")
+    monkeypatch.setenv("IMAGE_UPLOADER_USERNAME", "admin")
+    monkeypatch.setenv("IMAGE_UPLOADER_PASSWORD", "password")
     monkeypatch.setenv("AUTHORIZATION_HEADER", "   ")
 
     settings = Settings()
@@ -64,7 +66,7 @@ def test_access_token_no_longer_satisfies_authentication(monkeypatch, tmp_path) 
 
     settings = Settings(data_dir=tmp_path, username="", password="", authorization_header="")
 
-    with pytest.raises(ImporterError, match="USERNAME 和 PASSWORD"):
+    with pytest.raises(ImporterError, match="IMAGE_UPLOADER_USERNAME 和 IMAGE_UPLOADER_PASSWORD"):
         settings.validate_for_run()
 
 
@@ -84,8 +86,8 @@ def test_default_env_file_is_loaded(monkeypatch, tmp_path) -> None:
         "\n".join(
             [
                 "API_BASE_URL=http://default.example/api",
-                "USERNAME=admin",
-                "PASSWORD=password",
+                "IMAGE_UPLOADER_USERNAME=admin",
+                "IMAGE_UPLOADER_PASSWORD=password",
                 f"DATA_DIR={data_dir}",
                 "DRY_RUN=true",
             ]
@@ -112,8 +114,8 @@ def test_env_file_argument_loads_specified_file(monkeypatch, tmp_path) -> None:
         "\n".join(
             [
                 "API_BASE_URL=http://custom.example/api",
-                "USERNAME=cloud-admin",
-                "PASSWORD=cloud-password",
+                "IMAGE_UPLOADER_USERNAME=cloud-admin",
+                "IMAGE_UPLOADER_PASSWORD=cloud-password",
                 f"DATA_DIR={data_dir}",
             ]
         ),
@@ -138,8 +140,8 @@ def test_cli_arguments_override_env_file(monkeypatch, tmp_path) -> None:
     env_file.write_text(
         "\n".join(
             [
-                "USERNAME=admin",
-                "PASSWORD=password",
+                "IMAGE_UPLOADER_USERNAME=admin",
+                "IMAGE_UPLOADER_PASSWORD=password",
                 f"DATA_DIR={data_dir}",
                 "DRY_RUN=true",
                 "SKIP_COMPLETED=false",
@@ -152,6 +154,41 @@ def test_cli_arguments_override_env_file(monkeypatch, tmp_path) -> None:
 
     assert settings.dry_run is False
     assert settings.skip_completed is True
+
+
+def test_prefixed_env_file_username_wins_over_windows_username(monkeypatch, tmp_path) -> None:
+    clear_config_environment(monkeypatch)
+    monkeypatch.setenv("USERNAME", "windows-user")
+    data_dir = tmp_path / "data"
+    data_dir.mkdir()
+    (tmp_path / ".env").write_text(
+        "\n".join(
+            [
+                "IMAGE_UPLOADER_USERNAME=admin",
+                "IMAGE_UPLOADER_PASSWORD=password",
+                f"DATA_DIR={data_dir}",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.chdir(tmp_path)
+
+    settings = load_settings([])
+
+    assert settings.username == "admin"
+    assert settings.password == "password"
+
+
+def test_legacy_username_password_environment_is_still_supported(monkeypatch, tmp_path) -> None:
+    clear_config_environment(monkeypatch)
+    monkeypatch.setenv("USERNAME", "legacy-admin")
+    monkeypatch.setenv("PASSWORD", "legacy-password")
+    monkeypatch.setenv("DATA_DIR", str(tmp_path))
+
+    settings = Settings()
+
+    assert settings.username == "legacy-admin"
+    assert settings.password == "legacy-password"
 
 
 def test_missing_env_file_argument_reports_path(tmp_path) -> None:
