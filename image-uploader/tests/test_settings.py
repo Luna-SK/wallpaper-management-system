@@ -1,7 +1,8 @@
 import pytest
 
 from image_uploader.errors import ImporterError
-from image_uploader.main import load_settings, parse_args
+from image_uploader.main import ImportPlan, load_settings, parse_args, print_header
+from image_uploader.models import STATUS_PLANNED, ImportRecord, ScannedImage
 from image_uploader.settings import Settings
 
 
@@ -170,3 +171,46 @@ def test_skip_completed_cli_can_enable_explicitly() -> None:
     args = parse_args(["--skip-completed"])
 
     assert args.skip_completed is True
+
+
+def test_help_can_be_rendered(capsys) -> None:
+    with pytest.raises(SystemExit) as exc:
+        parse_args(["--help"])
+
+    assert exc.value.code == 0
+    output = capsys.readouterr().out
+    assert "指定配置文件路径" in output
+    assert "本地 checkpoint" in output
+    assert "真实上传文件" in output
+
+
+def test_header_labels_backend_deduplication_and_checkpoint(capsys, tmp_path) -> None:
+    image = ScannedImage(
+        file_path=tmp_path / "0" / "a.jpg",
+        relative_path="0/a.jpg",
+        folder="0",
+        tag_names=("无疵点",),
+        desired_title="无疵点001",
+        size_bytes=10,
+        mtime_ns=100,
+        sha256="sha",
+    )
+    record = ImportRecord.from_image(image, STATUS_PLANNED)
+    settings = Settings(
+        _env_file=None,
+        data_dir=tmp_path,
+        username="admin",
+        password="password",
+        skip_completed=True,
+        retry_failed=False,
+    )
+    settings.set_env_file_label(".env.local")
+    plan = ImportPlan([image], {image.relative_path: record}, [image])
+
+    print_header(settings, tmp_path, tmp_path / "state.jsonl", tmp_path / "report.csv", plan, True)
+
+    output = capsys.readouterr().out
+    assert "配置文件: .env.local" in output
+    assert "后端上传去重（系统设置）: 开启" in output
+    assert "跳过已完成（本地 checkpoint）: 开启" in output
+    assert "仅重试失败/中断项: 关闭" in output

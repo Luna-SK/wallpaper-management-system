@@ -6,6 +6,7 @@ from image_uploader.models import (
     STATUS_INTERRUPTED,
     STATUS_PLANNED,
     STATUS_SKIPPED_COMPLETED,
+    STATUS_SKIPPED_NOT_RETRYABLE,
     STATUS_UPLOADED,
     ImportRecord,
     ScannedImage,
@@ -67,6 +68,29 @@ def test_retry_failed_only_selects_failed_records() -> None:
     assert plan.upload_images == [failed]
     assert plan.records_by_path[failed.relative_path].status == STATUS_PLANNED
     assert plan.records_by_path[uploaded.relative_path].status == STATUS_SKIPPED_COMPLETED
+
+
+def test_retry_failed_skips_files_without_retryable_checkpoint() -> None:
+    no_checkpoint = image("0/a.jpg", "a")
+    changed = image("1/b.jpg", "b")
+    latest = {
+        changed.relative_path: ImportRecord(
+            relative_path=changed.relative_path,
+            folder=changed.folder,
+            tag_names=changed.tag_names,
+            desired_title=changed.desired_title,
+            size_bytes=changed.size_bytes + 1,
+            mtime_ns=changed.mtime_ns,
+            sha256=changed.sha256,
+            status=STATUS_FAILED,
+        ),
+    }
+
+    plan = prepare_import_plan([no_checkpoint, changed], latest, skip_completed=False, retry_failed=True)
+
+    assert plan.upload_images == []
+    assert plan.records_by_path[no_checkpoint.relative_path].status == STATUS_SKIPPED_NOT_RETRYABLE
+    assert plan.records_by_path[changed.relative_path].status == STATUS_SKIPPED_NOT_RETRYABLE
 
 
 def test_retry_failed_selects_interrupted_records() -> None:

@@ -22,6 +22,7 @@ from .models import (
     STATUS_INTERRUPTED,
     STATUS_PLANNED,
     STATUS_SKIPPED_COMPLETED,
+    STATUS_SKIPPED_NOT_RETRYABLE,
     STATUS_UPLOADED,
     ImportRecord,
     RETRYABLE_STATUSES,
@@ -146,29 +147,34 @@ def load_settings(argv: Sequence[str] | None = None) -> Settings:
 
 
 def parse_args(argv: Sequence[str] | None) -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Import textile defect images into the wallpaper manager.")
-    parser.add_argument("--env-file", help="configuration file path; defaults to .env")
+    parser = argparse.ArgumentParser(description="将纺织瑕疵图片批量导入图片管理系统。")
+    parser.add_argument("--env-file", help="指定配置文件路径，默认读取 .env")
     skip_completed = parser.add_mutually_exclusive_group()
     skip_completed.add_argument(
         "--skip-completed",
         dest="skip_completed",
         action="store_true",
         default=None,
-        help="skip unchanged completed checkpoint records",
+        help="跳过本地 checkpoint 中已完成且文件未变化的记录；不等同于图片内容去重",
     )
     skip_completed.add_argument(
         "--no-skip-completed",
         dest="skip_completed",
         action="store_false",
         default=None,
-        help="upload all scanned files instead of skipping completed checkpoint records",
+        help="不跳过本地已完成记录，扫描到的文件都会按计划提交给后端",
     )
-    parser.add_argument("--retry-failed", action="store_true", default=None, help="only retry unchanged failed files")
-    parser.add_argument("--run-dir", help="directory for checkpoint and generated reports")
-    parser.add_argument("--report", help="CSV report path")
+    parser.add_argument(
+        "--retry-failed",
+        action="store_true",
+        default=None,
+        help="仅重试本地 checkpoint 中失败或中断且文件未变化的记录",
+    )
+    parser.add_argument("--run-dir", help="checkpoint 和自动报告目录")
+    parser.add_argument("--report", help="CSV 报告输出路径")
     dry_run = parser.add_mutually_exclusive_group()
-    dry_run.add_argument("--dry-run", dest="dry_run", action="store_true", default=None, help="preview only")
-    dry_run.add_argument("--no-dry-run", dest="dry_run", action="store_false", help="upload files")
+    dry_run.add_argument("--dry-run", dest="dry_run", action="store_true", default=None, help="预览模式，不上传文件")
+    dry_run.add_argument("--no-dry-run", dest="dry_run", action="store_false", help="真实上传文件")
     return parser.parse_args(argv)
 
 
@@ -249,7 +255,7 @@ def prepare_import_plan(
                     image_id=matching_previous.image_id,
                 )
             else:
-                records_by_path[image.relative_path] = ImportRecord.from_image(image, STATUS_PLANNED)
+                records_by_path[image.relative_path] = ImportRecord.from_image(image, STATUS_SKIPPED_NOT_RETRYABLE)
             continue
 
         if skip_completed and matching_previous and matching_previous.status in COMPLETED_STATUSES:
@@ -277,12 +283,13 @@ def print_header(
     mode = "预览" if settings.dry_run else "真实上传"
     counts = Counter(record.status for record in plan.records())
     print(f"API: {settings.normalized_api_base_url}")
+    print(f"配置文件: {settings.env_file_label}")
     print(f"数据目录: {data_dir}")
     print(f"运行模式: {mode}")
     print(f"批次大小: {settings.batch_size}")
-    print(f"上传去重: {deduplication_enabled}")
-    print(f"跳过已完成: {settings.skip_completed}")
-    print(f"只重试失败: {settings.retry_failed}")
+    print(f"后端上传去重（系统设置）: {on_off(deduplication_enabled)}")
+    print(f"跳过已完成（本地 checkpoint）: {on_off(settings.skip_completed)}")
+    print(f"仅重试失败/中断项: {on_off(settings.retry_failed)}")
     print(f"状态文件: {state_path}")
     print(f"报告文件: {report_path}")
     print(f"发现图片: {len(plan.scanned_images)}")
@@ -290,7 +297,8 @@ def print_header(
         "计划: "
         f"upload={len(plan.upload_images)} "
         f"planned={counts.get(STATUS_PLANNED, 0)} "
-        f"skipped_completed={counts.get(STATUS_SKIPPED_COMPLETED, 0)}"
+        f"skipped_completed={counts.get(STATUS_SKIPPED_COMPLETED, 0)} "
+        f"skipped_not_retryable={counts.get(STATUS_SKIPPED_NOT_RETRYABLE, 0)}"
     )
     print("目录映射:")
     for item in FOLDER_TAGS:
@@ -543,9 +551,14 @@ def print_summary(records: list[ImportRecord], report_path: Path) -> None:
         f"duplicate={counts.get(STATUS_DUPLICATE, 0)} "
         f"failed={counts.get(STATUS_FAILED, 0)} "
         f"interrupted={counts.get(STATUS_INTERRUPTED, 0)} "
-        f"skipped_completed={counts.get(STATUS_SKIPPED_COMPLETED, 0)}"
+        f"skipped_completed={counts.get(STATUS_SKIPPED_COMPLETED, 0)} "
+        f"skipped_not_retryable={counts.get(STATUS_SKIPPED_NOT_RETRYABLE, 0)}"
     )
     print(f"报告：{report_path}")
+
+
+def on_off(value: bool) -> str:
+    return "开启" if value else "关闭"
 
 
 def chunked(items: Sequence[ScannedImage], size: int) -> Iterator[list[ScannedImage]]:
